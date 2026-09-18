@@ -21,6 +21,8 @@ x-common-config: &common-config
     # by runtime/config.json through environment-variable placeholders.
     QQ_APP_ID: ${QQ_APP_ID:-}
     QQ_APP_SECRET: ${QQ_APP_SECRET:-}
+    # Xindu model gateway credential for the active glm-5.3-flash runtime model.
+    XINDU_API_KEY: ${XINDU_API_KEY:-}
     # Containers do not inherit the host's proxy environment. Forward the
     # standard variables so configured remote providers use the same route.
     HTTP_PROXY: ${HTTP_PROXY:-}
