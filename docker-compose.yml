@@ -17,6 +17,10 @@ x-common-config: &common-config
     # Git-over-SSH and GitHub's API are separate authentication paths. Set a
     # fine-grained PAT in an ignored .env file to activate GitHub MCP tools.
     GITHUB_PERSONAL_ACCESS_TOKEN: ${GITHUB_PERSONAL_ACCESS_TOKEN:-}
+    # QQ Bot credentials are kept in the ignored local .env file and resolved
+    # by runtime/config.json through environment-variable placeholders.
+    QQ_APP_ID: ${QQ_APP_ID:-}
+    QQ_APP_SECRET: ${QQ_APP_SECRET:-}
     # Containers do not inherit the host's proxy environment. Forward the
     # standard variables so configured remote providers use the same route.
     HTTP_PROXY: ${HTTP_PROXY:-}
