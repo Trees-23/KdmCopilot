@@ -300,7 +300,11 @@ class QQChannel(BaseChannel):
                 raise RuntimeError("QQ client not initialized")
 
             msg_id = msg.metadata.get("message_id")
-            chat_type = self._chat_type_cache.get(msg.chat_id, "c2c")
+            metadata_chat_type = msg.metadata.get("qq_chat_type")
+            if metadata_chat_type in {"group", "c2c"}:
+                chat_type = metadata_chat_type
+            else:
+                chat_type = self._chat_type_cache.get(msg.chat_id, "c2c")
             is_group = chat_type == "group"
 
             # 1) Send media
@@ -601,6 +605,7 @@ class QQChannel(BaseChannel):
                 metadata={
                     "message_id": data.id,
                     "attachments": att_meta,
+                    "qq_chat_type": chat_type,
                 },
                 is_dm=not is_group,
             )
