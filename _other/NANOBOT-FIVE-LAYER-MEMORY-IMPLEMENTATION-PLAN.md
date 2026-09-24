@@ -228,11 +228,117 @@ SYSTEM_CONTROL       停止、恢复、压缩、导出
 
 因此，推荐答案是：**ContextBuilder 负责“预取和注入最可能有用的少量记忆”，工具负责“模型执行过程中的深查、核验和扩展”**。
 
-## 7. nanobot-llm-wiki 集成方案
+## 7. Skill 与 Tool 的发现和上下文装载策略
+
+你提出的两个方向并不是完全互斥，但适合处理的对象不同：
+
+1. “把简略信息放到一个文档”适合做**目录/索引**；
+2. “提供 search 工具”适合做**动态发现和按需装载**。
+
+### 7.1 与当前 nanobot 的对比
+
+当前 nanobot 已经对 Skill 采用了一个半成品的渐进式方案：
+
+- `SkillsLoader.build_skills_summary()` 把 Skill 名称、description、路径和可用性放进系统上下文；
+- `always=true` 的 Skill 才会把完整内容常驻加载；
+- 其他 Skill 只给摘要，模型需要时通过 `read_file` 读取完整 `SKILL.md`；
+- `ToolRegistry.get_definitions()` 目前会把已注册工具的完整 schema 一次性提交给模型，并用稳定排序和缓存保持 prompt 稳定。
+
+因此，当前 Skill 已经接近方向一；Tool 目前仍是“全部注册、全部暴露”的方向。
+
+### 7.2 方向一：单一目录文档
+
+优点：实现简单、模型容易理解、可利用现有 prompt cache。
+
+问题：
+
+- 文档变大后，每轮都增加 token；
+- 文档更新会导致整个稳定上下文失效；
+- description、路径、依赖和权限容易过期；
+- 模型仍然需要另一次 `read_file` 才能得到完整 Skill；
+- 对工具来说，目录文档不能替代真实 JSON schema，无法保证参数校验。
+
+结论：保留“生成式目录”作为索引，但不把所有 Skill 正文和 Tool schema 放入一个大文档。目录应是机器生成的 metadata manifest，而不是手工维护的百科文档。
+
+建议目录字段：
+
+```json
+{
+  "name": "github-code-review",
+  "kind": "skill|tool",
+  "description": "...",
+  "capabilities": ["read_repo", "review_diff"],
+  "requirements": {"bins": ["git"], "env": []},
+  "risk": "read_only|write|external_side_effect",
+  "source": "builtin|workspace|mcp|plugin",
+  "version": "1.3.0",
+  "content_hash": "..."
+}
+```
+
+### 7.3 方向二：search 工具
+
+Search 工具适合工具数量和 Skill 数量较多的情况，但不能只返回名称。它至少需要支持：
+
+- capability/query 搜索；
+- 风险和权限过滤；
+- requirements 检查；
+- Skill 的完整内容或路径获取；
+- Tool 的完整 JSON schema 获取；
+- 版本和来源返回；
+- 结果分页和候选数量上限。
+
+工具发现不能停在“告诉模型工具名”。因为当前 `ToolRegistry` 只有已注册工具才能执行，模型也只有在请求中看到了 schema 才能可靠地产生参数。因此真正的动态工具发现需要增加一条激活流程：
+
+```text
+初始请求：核心工具 + tool_search schema
+  ↓
+模型调用 tool_search("查找 PDF 提取工具")
+  ↓
+系统从 ToolRegistry/MCP/plugin catalog 返回候选 schema
+  ↓
+当前 turn 动态激活候选工具
+  ↓
+下一次模型请求携带核心工具 + 已激活工具 schema
+  ↓
+模型正常调用真实工具
+```
+
+这比单纯新增一个 search function 更复杂，需要修改 AgentRunner 的工具 schema 生命周期、缓存 digest、MCP 工具加载和 Audit 事件。
+
+### 7.4 推荐方案：混合渐进式工具发现
+
+| 对象 | 常驻上下文 | 动态搜索 | 完整内容/Schema |
+|---|---|---|---|
+| 核心工具 | 保留少量高频、低风险工具 schema | 不需要 | 启动时注册 |
+| 非核心工具 | 只保留能力目录或不放 schema | `tool_search` | 搜索后动态激活 |
+| Skill | 保留短摘要和名称 | `skill_search` 或目录检索 | 命中后读取完整 `SKILL.md` |
+| 案例 | 不常驻 | `case_search` | 命中后加载摘要和关键步骤 |
+| Trace | 不常驻 | `trace_search` | 用户要求或失败恢复时读取 |
+
+首版建议不要立即把全部工具改成动态搜索，而是分两步：
+
+1. **先做 Skill 目录 + 按需正文加载**：沿用当前 `SkillsLoader`，将 summary 改成机器生成 manifest，增加 `skill_search`，不改变 ToolRegistry。
+2. **再做 Tool Search + 动态激活**：先将低频、重 schema、外部副作用强的 MCP/plugin 工具放入 discoverable 集合，核心文件、搜索、消息和安全控制工具保持常驻。
+
+### 7.5 工具分组建议
+
+- `core_always_on`：`read_file`、`list_dir`、基础搜索、状态查询、停止/恢复等。
+- `task_common`：shell、patch、web fetch 等，按 Agent 类型或 workspace 配置启用。
+- `discoverable`：MCP 工具、第三方 API、图片/音频、复杂 CLI、低频专业工具。
+- `restricted`：写入外部系统、删除、发送消息、凭据相关工具，必须经过权限和确认。
+
+### 7.6 选型结论
+
+最终选择：**Skill 使用“目录摘要 + 按需读取”；Tool 使用“核心工具常驻 + 非核心工具搜索后动态激活”；案例和 Trace 只通过搜索工具按需查询。**
+
+这比单一大文档更节省上下文，也比一开始让所有工具都动态化更符合当前 nanobot 的稳定性和兼容性要求。
+
+## 8. nanobot-llm-wiki 集成方案
 
 `nanobot-llm-wiki` 定位为第三层知识图谱，兼容承载第四层案例索引，不替代 Session 或 Audit。
 
-### 7.1 第一阶段接入
+### 8.1 第一阶段接入
 
 - 继续使用 Markdown 作为人类可读源文件。
 - 使用 SQLite FTS5、标签、别名和关系做第一版检索。
@@ -240,7 +346,7 @@ SYSTEM_CONTROL       停止、恢复、压缩、导出
 - 所有 Wiki 写入带 `trace_id`、来源 cursor、agent 身份和 namespace。
 - 继续禁止写入 API key、cookie、私钥、凭据和未经验证的猜测。
 
-### 7.2 页面类型建议
+### 8.2 页面类型建议
 
 ```text
 fact          稳定事实
@@ -252,16 +358,16 @@ case          已验证的任务案例
 anti_pattern  失败模式和禁止做法
 ```
 
-### 7.3 关系建议
+### 8.3 关系建议
 
 ```text
 tracks、depends_on、uses、supersedes、derived_from、validated_by、
 similar_to、implements、contradicts、owned_by、scoped_to
 ```
 
-## 8. 缓存与检索设计
+## 9. 缓存与检索设计
 
-### 8.1 缓存分层
+### 9.1 缓存分层
 
 - L0：当前 turn 内的 Python 对象。
 - L1：`SessionManager` 会话缓存。
@@ -270,7 +376,7 @@ similar_to、implements、contradicts、owned_by、scoped_to
 - L4：可选向量索引和 reranker。
 - L5：Audit/Trace 冷存储。
 
-### 8.2 混合排序
+### 9.2 混合排序
 
 ```text
 score =
@@ -284,7 +390,7 @@ score =
 
 不同意图使用不同权重：事实查询偏 lexical/authority，案例查询偏 task similarity/embedding，架构决策偏 authority/graph proximity。
 
-### 8.3 检索流程
+### 9.3 检索流程
 
 ```text
 意图路由
@@ -300,7 +406,7 @@ score =
 
 页面 chunk 应附带标题、项目、类型、来源、时间和关系上下文，避免只对裸文本做 embedding。
 
-## 9. Trace 派生和自进化闭环
+## 10. Trace 派生和自进化闭环
 
 ```text
 采集 Trace
@@ -319,14 +425,14 @@ score =
   → 接受或回滚
 ```
 
-### 9.1 Hermes 借鉴点
+### 10.1 Hermes 借鉴点
 
 - 使用真实执行 Trace 解释“为什么失败”，而不是只看成功率。
 - 按风险从低到高优化：Skill 文本 → 工具描述 → prompt section → 工具代码。
 - 使用 LLM judge、规则指标和测试门禁组合评估。
 - 任何生产变更走 Git 分支和人工 PR，不直接覆盖线上 Skill。
 
-### 9.2 SkillOpt 借鉴点
+### 10.2 SkillOpt 借鉴点
 
 - harvest 与 replay 分离。
 - 候选先进入 staging，再 adopt。
@@ -334,9 +440,9 @@ score =
 - 支持按 Skill 分组、单独采用和回滚。
 - 记录 evidence log，保留候选来源和评测过程。
 
-## 10. 遗忘、降权、归档和删除
+## 11. 遗忘、降权、归档和删除
 
-### 10.1 降权公式
+### 11.1 降权公式
 
 ```text
 effective_score =
@@ -347,7 +453,7 @@ effective_score =
   × (1 + log(1 + access_count))
 ```
 
-### 10.2 生命周期
+### 11.2 生命周期
 
 ```text
 candidate → active → stale → archived → deleted
@@ -355,7 +461,7 @@ candidate → active → stale → archived → deleted
              └─ reaffirm ┘
 ```
 
-### 10.3 保留规则
+### 11.3 保留规则
 
 永久保留：用户明确标记、仍有效的安全规则、未被取代的架构决策、当前项目关键事实。
 
@@ -365,17 +471,17 @@ candidate → active → stale → archived → deleted
 
 删除必须同步处理页面、关系、FTS/向量索引和案例引用；Audit 只保留最小化删除事件，不保留被删除的敏感正文。
 
-## 11. 与现有 nanobot 的集成点
+## 12. 与现有 nanobot 的集成点
 
-### 11.1 ContextBuilder
+### 12.1 ContextBuilder
 
 在 `build_system_sections()` 中增加按 intent 的 memory retrieval，保持 stable/dynamic 分段；知识和案例只进入 dynamic 部分，并受 token 上限控制。
 
-### 11.2 AgentLoop
+### 12.2 AgentLoop
 
 在 turn 初始化时生成路由结果，把路由结果放入运行上下文和 Audit，不默认写入长期记忆。
 
-### 11.3 Audit
+### 12.3 Audit
 
 新增或扩展事件记录：
 
@@ -388,15 +494,15 @@ candidate → active → stale → archived → deleted
 - case promoted/rejected；
 - skill evaluation result。
 
-### 11.4 MemoryStore/Dream
+### 12.4 MemoryStore/Dream
 
 Dream 继续维护 `SOUL.md`、`USER.md`、`MEMORY.md` 和 SKILL.md；新增派生 Wiki 的候选输出，但不直接编辑 Wiki SQLite。Wiki 记录应关联 history cursor 和 trace_id。
 
-### 11.5 SkillLoader/ToolRegistry
+### 12.5 SkillLoader/ToolRegistry
 
 SkillLoader 增加版本/hash/状态读取；ToolRegistry 增加工具示例、能力标签和风险等级，但保持稳定 schema 顺序，避免破坏 provider prompt cache。
 
-## 12. 分阶段实施路线
+## 13. 分阶段实施路线
 
 ### Phase 0：契约和观测
 
@@ -488,7 +594,7 @@ SkillLoader 增加版本/hash/状态读取；ToolRegistry 增加工具示例、�
 
 验收：连续运行不会造成记忆膨胀、权限越界或 Skill 漂移；出现回归可自动停止并回滚候选。
 
-## 13. 风险与控制措施
+## 14. 风险与控制措施
 
 | 风险 | 控制 |
 |---|---|
@@ -502,7 +608,7 @@ SkillLoader 增加版本/hash/状态读取；ToolRegistry 增加工具示例、�
 | 评测过拟合 | 独立 held-out 集、真实任务回放、长期线上指标 |
 | 数据无限增长 | TTL、半衰期、访问热度、冷热分层和归档 |
 
-## 14. 建议的第一批任务
+## 15. 建议的第一批任务
 
 1. 创建统一 schema 和 memory scope 枚举，不改变默认行为。
 2. 为 Wiki 工具补充 `trace_id`、namespace、source refs 和权限校验。
@@ -512,7 +618,7 @@ SkillLoader 增加版本/hash/状态读取；ToolRegistry 增加工具示例、�
 6. 用 10～20 个真实但已脱敏的任务建立 baseline/held-out 数据集。
 7. 运行一次“只生成候选、不自动采用”的 SkillOpt 风格离线实验。
 
-## 15. 参考资料
+## 16. 参考资料
 
 - nanobot 源码：`nanobot/agent/memory.py`、`nanobot/session/manager.py`、`nanobot/agent/context.py`、`nanobot/agent/context_governance.py`、`nanobot/agent/skills.py`、`nanobot/agent/tools/registry.py`、`nanobot/audit/`
 - [Anthropic: Building effective agents](https://www.anthropic.com/engineering/building-effective-agents)
@@ -523,15 +629,15 @@ SkillLoader 增加版本/hash/状态读取；ToolRegistry 增加工具示例、�
 - `../SkillOpt-main/SkillOpt-main/docs/sleep/README.md`
 - `../nanobot-llm-wiki/README.md`
 
-## 16. 已确认决策与仍需确认事项
+## 17. 已确认决策与仍需确认事项
 
-### 16.1 已确认
+### 17.1 已确认
 
 1. Wiki 采用插件插入方式，优先通过 `nanobot-llm-wiki` 的插件/MCP/entry point 接入，不把 Wiki 实现硬编码进 nanobot 核心。
 2. 长期记忆允许低风险自动写入，但必须满足来源、脱敏、namespace、置信度和可回滚要求；删除、敏感内容和高影响决策仍需确认。
 3. 暂不更换向量方案。首版使用 SQLite、FTS5、标签、别名和图关系；只有在实际规模和召回指标证明不足时，才评估额外向量数据库。
 
-### 16.2 建议决策
+### 17.2 建议决策
 
 1. Trace 保留策略建议默认分层：结构化事件和摘要保留 90 天以上；含完整明文的 payload 默认保留 14 天；用户确认的知识、案例和架构决策长期保留。所有期限配置化，并允许按 workspace 覆盖。
 2. 首个自进化 Skill 建议选择“只读代码审查/仓库问题定位”类任务：频率较高、结果可用测试或人工 rubric 评估，不直接修改代码、不合并 PR，适合作为低风险 baseline。
@@ -540,7 +646,7 @@ SkillLoader 增加版本/hash/状态读取；ToolRegistry 增加工具示例、�
    - **workspace skill adopt**：把候选复制到当前 workspace 的 `skills/`，适合个人实验和快速试用，不经过远端 PR，治理和审查能力较弱。
    - 推荐默认：共享或内置 Skill 必须 Git PR；个人 workspace Skill 可人工确认后 adopt，但仍保留候选、评测和原版本备份。
 
-### 16.3 下一轮实施前需要确认
+### 17.3 下一轮实施前需要确认
 
 1. 90 天事件、14 天明文 payload 是否符合实际合规要求？
 2. 首个代码审查/仓库定位 Skill 是否有可用的 10～20 个脱敏任务？
