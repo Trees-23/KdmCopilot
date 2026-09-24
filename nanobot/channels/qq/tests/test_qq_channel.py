@@ -56,6 +56,9 @@ async def test_on_group_message_routes_to_group_chat_id() -> None:
     msg = await channel.bus.consume_inbound()
     assert msg.sender_id == "user1"
     assert msg.chat_id == "group123"
+    assert msg.metadata["message_id"] == "msg1"
+    assert msg.metadata["attachments"] == []
+    assert msg.metadata["qq_chat_type"] == "group"
 
 
 @pytest.mark.asyncio
@@ -78,6 +81,9 @@ async def test_on_c2c_message_passes_is_dm_true_to_base_handler() -> None:
     assert kwargs["chat_id"] == "user1"
     assert kwargs["content"] == "hello"
     assert kwargs["is_dm"] is True
+    assert kwargs["metadata"]["message_id"] == "msg-c2c"
+    assert kwargs["metadata"]["attachments"] == []
+    assert kwargs["metadata"]["qq_chat_type"] == "c2c"
 
 
 @pytest.mark.asyncio
@@ -101,6 +107,9 @@ async def test_on_group_message_passes_is_dm_false_to_base_handler() -> None:
     assert kwargs["chat_id"] == "group123"
     assert kwargs["content"] == "hello"
     assert kwargs["is_dm"] is False
+    assert kwargs["metadata"]["message_id"] == "msg-group"
+    assert kwargs["metadata"]["attachments"] == []
+    assert kwargs["metadata"]["qq_chat_type"] == "group"
 
 
 @pytest.mark.asyncio
@@ -154,6 +163,74 @@ async def test_send_c2c_message_uses_plain_text_c2c_api_with_msg_seq() -> None:
         "msg_seq": 2,
     }
     assert not channel._client.api.group_calls
+
+
+@pytest.mark.asyncio
+async def test_restart_notice_after_process_restart_uses_group_api_from_metadata() -> None:
+    """Persisted inbound metadata keeps a group notice on the group endpoint."""
+    channel = QQChannel(QQConfig(app_id="app", secret="secret", allow_from=["*"]), MessageBus())
+    channel._client = _FakeClient()
+    # Simulate a new process: the in-memory chat type cache is empty.
+
+    await channel.send(
+        OutboundMessage(
+            channel="qq",
+            chat_id="group123",
+            content="Restart completed.",
+            metadata={"message_id": "old-msg", "qq_chat_type": "group"},
+        )
+    )
+
+    assert len(channel._client.api.group_calls) == 1
+    assert channel._client.api.group_calls[0]["group_openid"] == "group123"
+    assert not channel._client.api.c2c_calls
+
+
+@pytest.mark.asyncio
+async def test_restart_notice_after_process_restart_uses_c2c_api_from_metadata() -> None:
+    """Persisted inbound metadata keeps a C2C notice on the C2C endpoint."""
+    channel = QQChannel(QQConfig(app_id="app", secret="secret", allow_from=["*"]), MessageBus())
+    channel._client = _FakeClient()
+
+    await channel.send(
+        OutboundMessage(
+            channel="qq",
+            chat_id="user123",
+            content="Restart completed.",
+            metadata={"message_id": "old-msg", "qq_chat_type": "c2c"},
+        )
+    )
+
+    assert len(channel._client.api.c2c_calls) == 1
+    assert channel._client.api.c2c_calls[0]["openid"] == "user123"
+    assert not channel._client.api.group_calls
+
+
+@pytest.mark.asyncio
+async def test_send_chat_type_falls_back_to_cache_then_c2c() -> None:
+    channel = QQChannel(QQConfig(app_id="app", secret="secret", allow_from=["*"]), MessageBus())
+    channel._client = _FakeClient()
+    channel._chat_type_cache["cached-group"] = "group"
+
+    await channel.send(
+        OutboundMessage(
+            channel="qq",
+            chat_id="cached-group",
+            content="cached",
+            metadata={"qq_chat_type": "unknown"},
+        )
+    )
+    await channel.send(
+        OutboundMessage(
+            channel="qq",
+            chat_id="unknown-chat",
+            content="default",
+            metadata={"qq_chat_type": "unknown"},
+        )
+    )
+
+    assert [call["group_openid"] for call in channel._client.api.group_calls] == ["cached-group"]
+    assert [call["openid"] for call in channel._client.api.c2c_calls] == ["unknown-chat"]
 
 
 @pytest.mark.asyncio
