@@ -26,7 +26,7 @@
 - `ContextBuilder` 将身份、bootstrap 文件、长期记忆、近期历史和 Skill 摘要组装为系统上下文。
 - `ContextGovernor` 负责 token 预算、工具结果裁剪、孤立 tool result 清理和非法工具调用修复。
 - `MemoryStore` 管理 `SOUL.md`、`USER.md`、`memory/MEMORY.md`、`memory/history.jsonl` 和 Dream cursor。
-- Dream 读取未处理历史，结合当前记忆文件，通过受限工具更新长期文件和 Skill，并以真实 Git diff 判断是否产生有效修改。
+- Dream 读取未处理历史，结合当前记忆文件，通过受限工具更新长期文件；对于 Skill 只生成候选版本，不直接覆盖正式 Skill，并以真实 Git diff 判断是否产生有效修改。
 - `SkillsLoader` 支持 builtin/workspace skill、frontmatter、`always`、依赖检查、disabled skill 和渐进式加载。
 - `ToolRegistry` 提供工具注册、稳定 schema 排序、参数校验、结构化错误和工具定义缓存。
 - Audit/Trace 提供 `trace_id`、`turn_id`、`run_id`、父子运行关系、工具调用事件、失败恢复、索引、查询、完整性校验和 WebUI 展示。
@@ -112,7 +112,7 @@ Wiki / Case Store / Skill Staging
 
 ### 4.2 Skill 与案例
 
-Skill 定义继续使用 `skills/<name>/SKILL.md`，增加版本和内容 hash；案例单独存储，不直接污染 SKILL.md：
+Skill 定义继续使用 `skills/<name>/SKILL.md`，增加版本和内容 hash；案例作为 Wiki 的 `case` 页面存储，不直接污染 SKILL.md：
 
 ```json
 {
@@ -148,7 +148,7 @@ Skill 定义继续使用 `skills/<name>/SKILL.md`，增加版本和内容 hash�
 |---|---|---|---|
 | 原始会话 | `workspace/sessions/*.jsonl` | 会话列表和元数据索引 | 只取最近尾部 |
 | 原始 Trace | `runtime/audit/v1` append-only JSONL segments | `state/audit-index.sqlite` 查询索引，可重建 | 默认不进入 |
-| Trace 摘要 | `memory/trace-summaries/*.md` 或 Wiki `trace_summary` 页面 | FTS、来源、状态、时间索引 | 按需摘要注入 |
+| Trace 摘要 | Wiki `trace_summary` 页面 | FTS、来源、状态、时间索引 | 按需摘要注入 |
 | 稳定事实/决策 | `SOUL.md`、`USER.md`、`memory/MEMORY.md`、Wiki 页面 Markdown | Wiki `wiki.db`、FTS5、关系表 | 按意图检索 |
 | 案例 | Wiki `page_type=case` 的 Markdown 页面 | Wiki `wiki.db` 的结构化字段、FTS5、关系索引 | 检索摘要后注入 |
 | Skill 正文 | `skills/<name>/SKILL.md` | Skill manifest、版本、hash、评测索引 | 摘要常驻，正文按需 |
@@ -605,7 +605,7 @@ candidate → active → stale → archived → deleted
 
 ### 13.4 MemoryStore/Dream
 
-Dream 继续维护 `SOUL.md`、`USER.md`、`MEMORY.md` 和 SKILL.md；新增派生 Wiki 的候选输出，但不直接编辑 Wiki SQLite。Wiki 记录应关联 history cursor 和 trace_id。
+Dream 继续维护 `SOUL.md`、`USER.md`、`MEMORY.md`；对于 SKILL.md 只生成候选版本，不直接覆盖正式 Skill。Dream 可生成派生 Wiki candidate，但不直接编辑 Wiki SQLite。Wiki 记录应关联 history cursor 和 trace_id。
 
 ### 13.5 SkillLoader/ToolRegistry
 
@@ -723,7 +723,7 @@ SkillLoader 增加版本/hash/状态读取；ToolRegistry 增加工具示例、�
 2. 为 Wiki 工具补充 `trace_id`、namespace、source refs 和权限校验。
 3. 在 Audit 中记录 retrieval/write/forget 事件。
 4. 实现一个只读 `MEMORY_READ` 路由器。
-5. 为一个 Skill 建立最小案例表和人工确认流程。
+5. 为一个 Skill 建立最小 Wiki 案例页面、索引字段和人工确认流程。
 6. 用 10～20 个真实但已脱敏的任务建立 baseline/held-out 数据集。
 7. 运行一次“只生成候选、不自动采用”的 SkillOpt 风格离线实验。
 
