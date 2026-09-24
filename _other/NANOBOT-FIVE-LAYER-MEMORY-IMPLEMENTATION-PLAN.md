@@ -172,11 +172,67 @@ SYSTEM_CONTROL       停止、恢复、压缩、导出
 
 路由层必须先于大规模检索，避免每轮都加载全部 Wiki、Trace 和 Skill。低置信度时优先只读检索或向用户澄清；写入、忘记、执行外部副作用和自动进化都必须走权限策略。
 
-## 6. nanobot-llm-wiki 集成方案
+## 6. 记忆何时进入上下文，以及如何进入
+
+五层记忆不应在每轮都全部注入。推荐采用“少量基础注入 + 路由后检索注入 + Agent 主动深查”的混合模式：
+
+```text
+收到用户消息
+  ↓
+加载当前会话尾部、活动目标、最近摘要
+  ↓
+意图路由和风险判断
+  ↓
+按 memory scope 检索 Wiki/Trace/Case
+  ↓
+把高置信、短摘要放入 dynamic context
+  ↓
+模型开始执行
+  ├─ 已有信息足够：直接回答或执行
+  └─ 需要细节：调用 memory/wiki/trace/case 工具继续查询
+```
+
+### 6.1 三种进入方式
+
+| 方式 | 适用内容 | 触发时机 | 设计要求 |
+|---|---|---|---|
+| 基础注入 | 当前会话尾部、活动目标、最近压缩摘要、极少量高稳定事实 | 每个 turn 的 ContextBuilder | 有硬 token 上限；不放完整 Trace 和案例 |
+| 路由检索注入 | 与当前意图强相关的事实、决策、案例摘要、失败提示 | 路由完成后、模型第一次调用前 | 由 scope、权限、置信度和预算共同过滤 |
+| Agent 主动工具查询 | 低置信度、长文档、完整 Trace、深层图谱、用户明确要求 | 模型执行期间 | 工具只返回摘要/分页结果；查询行为写入 Trace |
+
+### 6.2 推荐的具体注入内容
+
+- 第 1 层当前上下文：直接由 `Session.get_history()` 和 `ContextGovernor` 管理，每轮必有。
+- 第 2 层 Trace：默认不注入原始事件；只在 `TRACE_INSPECT`、失败恢复、评测和用户要求时，通过 `trace_search`/`trace_read` 查询。
+- 第 3 层知识图谱：不把整个 Wiki 放入 system prompt；路由后查询 3～8 个高分页面摘要，必要时再调用 `wiki_read`。
+- 第 4 层 Skill：Skill summary 可保留在稳定上下文；完整 SKILL.md 和案例仅在意图命中后加载，避免所有 Skill 常驻。
+- 第 5 层 Retention：不作为模型事实注入，而是作为检索过滤器、排序因子和写入门禁。
+
+### 6.3 为什么不是“全由工具查询”
+
+完全依赖 Agent 自己查，会出现模型不知道该查什么、忘记调用工具、先做出错误判断等问题。因此高稳定、低体量和高相关信息必须由 ContextBuilder 预先注入。
+
+### 6.4 为什么不是“全部由 ContextBuilder 注入”
+
+全部注入会造成上下文膨胀、旧事实冲突、敏感信息暴露和检索噪声。Trace 原文、长 Wiki 页面和完整案例应保持按需工具查询。
+
+### 6.5 首版推荐策略
+
+首版只实现：
+
+1. ContextBuilder 保留当前会话、活动目标和最近摘要；
+2. 路由器为 `MEMORY_READ`、`CASE_RETRIEVE`、`TRACE_INSPECT` 做小规模预检索；
+3. 以短摘要形式注入动态上下文；
+4. 提供 `wiki_search`、`wiki_read`、`case_search`、`trace_search` 工具供 Agent 深查；
+5. 所有检索结果携带来源 ID、置信度和时间，不把无来源文本当作事实。
+
+因此，推荐答案是：**ContextBuilder 负责“预取和注入最可能有用的少量记忆”，工具负责“模型执行过程中的深查、核验和扩展”**。
+
+## 7. nanobot-llm-wiki 集成方案
 
 `nanobot-llm-wiki` 定位为第三层知识图谱，兼容承载第四层案例索引，不替代 Session 或 Audit。
 
-### 6.1 第一阶段接入
+### 7.1 第一阶段接入
 
 - 继续使用 Markdown 作为人类可读源文件。
 - 使用 SQLite FTS5、标签、别名和关系做第一版检索。
@@ -184,7 +240,7 @@ SYSTEM_CONTROL       停止、恢复、压缩、导出
 - 所有 Wiki 写入带 `trace_id`、来源 cursor、agent 身份和 namespace。
 - 继续禁止写入 API key、cookie、私钥、凭据和未经验证的猜测。
 
-### 6.2 页面类型建议
+### 7.2 页面类型建议
 
 ```text
 fact          稳定事实
@@ -196,16 +252,16 @@ case          已验证的任务案例
 anti_pattern  失败模式和禁止做法
 ```
 
-### 6.3 关系建议
+### 7.3 关系建议
 
 ```text
 tracks、depends_on、uses、supersedes、derived_from、validated_by、
 similar_to、implements、contradicts、owned_by、scoped_to
 ```
 
-## 7. 缓存与检索设计
+## 8. 缓存与检索设计
 
-### 7.1 缓存分层
+### 8.1 缓存分层
 
 - L0：当前 turn 内的 Python 对象。
 - L1：`SessionManager` 会话缓存。
@@ -214,7 +270,7 @@ similar_to、implements、contradicts、owned_by、scoped_to
 - L4：可选向量索引和 reranker。
 - L5：Audit/Trace 冷存储。
 
-### 7.2 混合排序
+### 8.2 混合排序
 
 ```text
 score =
@@ -228,7 +284,7 @@ score =
 
 不同意图使用不同权重：事实查询偏 lexical/authority，案例查询偏 task similarity/embedding，架构决策偏 authority/graph proximity。
 
-### 7.3 检索流程
+### 8.3 检索流程
 
 ```text
 意图路由
@@ -244,7 +300,7 @@ score =
 
 页面 chunk 应附带标题、项目、类型、来源、时间和关系上下文，避免只对裸文本做 embedding。
 
-## 8. Trace 派生和自进化闭环
+## 9. Trace 派生和自进化闭环
 
 ```text
 采集 Trace
@@ -263,14 +319,14 @@ score =
   → 接受或回滚
 ```
 
-### 8.1 Hermes 借鉴点
+### 9.1 Hermes 借鉴点
 
 - 使用真实执行 Trace 解释“为什么失败”，而不是只看成功率。
 - 按风险从低到高优化：Skill 文本 → 工具描述 → prompt section → 工具代码。
 - 使用 LLM judge、规则指标和测试门禁组合评估。
 - 任何生产变更走 Git 分支和人工 PR，不直接覆盖线上 Skill。
 
-### 8.2 SkillOpt 借鉴点
+### 9.2 SkillOpt 借鉴点
 
 - harvest 与 replay 分离。
 - 候选先进入 staging，再 adopt。
@@ -278,9 +334,9 @@ score =
 - 支持按 Skill 分组、单独采用和回滚。
 - 记录 evidence log，保留候选来源和评测过程。
 
-## 9. 遗忘、降权、归档和删除
+## 10. 遗忘、降权、归档和删除
 
-### 9.1 降权公式
+### 10.1 降权公式
 
 ```text
 effective_score =
@@ -291,7 +347,7 @@ effective_score =
   × (1 + log(1 + access_count))
 ```
 
-### 9.2 生命周期
+### 10.2 生命周期
 
 ```text
 candidate → active → stale → archived → deleted
@@ -299,7 +355,7 @@ candidate → active → stale → archived → deleted
              └─ reaffirm ┘
 ```
 
-### 9.3 保留规则
+### 10.3 保留规则
 
 永久保留：用户明确标记、仍有效的安全规则、未被取代的架构决策、当前项目关键事实。
 
@@ -309,17 +365,17 @@ candidate → active → stale → archived → deleted
 
 删除必须同步处理页面、关系、FTS/向量索引和案例引用；Audit 只保留最小化删除事件，不保留被删除的敏感正文。
 
-## 10. 与现有 nanobot 的集成点
+## 11. 与现有 nanobot 的集成点
 
-### 10.1 ContextBuilder
+### 11.1 ContextBuilder
 
 在 `build_system_sections()` 中增加按 intent 的 memory retrieval，保持 stable/dynamic 分段；知识和案例只进入 dynamic 部分，并受 token 上限控制。
 
-### 10.2 AgentLoop
+### 11.2 AgentLoop
 
 在 turn 初始化时生成路由结果，把路由结果放入运行上下文和 Audit，不默认写入长期记忆。
 
-### 10.3 Audit
+### 11.3 Audit
 
 新增或扩展事件记录：
 
@@ -332,15 +388,15 @@ candidate → active → stale → archived → deleted
 - case promoted/rejected；
 - skill evaluation result。
 
-### 10.4 MemoryStore/Dream
+### 11.4 MemoryStore/Dream
 
 Dream 继续维护 `SOUL.md`、`USER.md`、`MEMORY.md` 和 SKILL.md；新增派生 Wiki 的候选输出，但不直接编辑 Wiki SQLite。Wiki 记录应关联 history cursor 和 trace_id。
 
-### 10.5 SkillLoader/ToolRegistry
+### 11.5 SkillLoader/ToolRegistry
 
 SkillLoader 增加版本/hash/状态读取；ToolRegistry 增加工具示例、能力标签和风险等级，但保持稳定 schema 顺序，避免破坏 provider prompt cache。
 
-## 11. 分阶段实施路线
+## 12. 分阶段实施路线
 
 ### Phase 0：契约和观测
 
@@ -432,7 +488,7 @@ SkillLoader 增加版本/hash/状态读取；ToolRegistry 增加工具示例、�
 
 验收：连续运行不会造成记忆膨胀、权限越界或 Skill 漂移；出现回归可自动停止并回滚候选。
 
-## 12. 风险与控制措施
+## 13. 风险与控制措施
 
 | 风险 | 控制 |
 |---|---|
@@ -446,7 +502,7 @@ SkillLoader 增加版本/hash/状态读取；ToolRegistry 增加工具示例、�
 | 评测过拟合 | 独立 held-out 集、真实任务回放、长期线上指标 |
 | 数据无限增长 | TTL、半衰期、访问热度、冷热分层和归档 |
 
-## 13. 建议的第一批任务
+## 14. 建议的第一批任务
 
 1. 创建统一 schema 和 memory scope 枚举，不改变默认行为。
 2. 为 Wiki 工具补充 `trace_id`、namespace、source refs 和权限校验。
@@ -456,7 +512,7 @@ SkillLoader 增加版本/hash/状态读取；ToolRegistry 增加工具示例、�
 6. 用 10～20 个真实但已脱敏的任务建立 baseline/held-out 数据集。
 7. 运行一次“只生成候选、不自动采用”的 SkillOpt 风格离线实验。
 
-## 14. 参考资料
+## 15. 参考资料
 
 - nanobot 源码：`nanobot/agent/memory.py`、`nanobot/session/manager.py`、`nanobot/agent/context.py`、`nanobot/agent/context_governance.py`、`nanobot/agent/skills.py`、`nanobot/agent/tools/registry.py`、`nanobot/audit/`
 - [Anthropic: Building effective agents](https://www.anthropic.com/engineering/building-effective-agents)
@@ -467,11 +523,25 @@ SkillLoader 增加版本/hash/状态读取；ToolRegistry 增加工具示例、�
 - `../SkillOpt-main/SkillOpt-main/docs/sleep/README.md`
 - `../nanobot-llm-wiki/README.md`
 
-## 15. 需要在实施前确认的决策
+## 16. 已确认决策与仍需确认事项
 
-1. Wiki 是否作为 nanobot 默认可选能力，还是仅通过插件/MCP 接入？
-2. Trace payload 的默认保留期限和 full 模式授权范围是什么？
-3. 用户确认是否是所有长期写入的硬门槛，还是允许低风险自动写入？
-4. 首个落地 Skill 选择什么高频、低风险任务？
-5. 是否允许引入向量数据库，还是先坚持 SQLite FTS + 图关系？
-6. 自进化结果是否统一通过 Git PR，还是允许 workspace skill 的人工 adopt？
+### 16.1 已确认
+
+1. Wiki 采用插件插入方式，优先通过 `nanobot-llm-wiki` 的插件/MCP/entry point 接入，不把 Wiki 实现硬编码进 nanobot 核心。
+2. 长期记忆允许低风险自动写入，但必须满足来源、脱敏、namespace、置信度和可回滚要求；删除、敏感内容和高影响决策仍需确认。
+3. 暂不更换向量方案。首版使用 SQLite、FTS5、标签、别名和图关系；只有在实际规模和召回指标证明不足时，才评估额外向量数据库。
+
+### 16.2 建议决策
+
+1. Trace 保留策略建议默认分层：结构化事件和摘要保留 90 天以上；含完整明文的 payload 默认保留 14 天；用户确认的知识、案例和架构决策长期保留。所有期限配置化，并允许按 workspace 覆盖。
+2. 首个自进化 Skill 建议选择“只读代码审查/仓库问题定位”类任务：频率较高、结果可用测试或人工 rubric 评估，不直接修改代码、不合并 PR，适合作为低风险 baseline。
+3. 建议区分两种采用方式：
+   - **Git PR 采用**：生成版本化分支和 PR，适合 builtin/shared skill、需要团队审查的变更，具备完整 diff、评测记录和回滚能力。
+   - **workspace skill adopt**：把候选复制到当前 workspace 的 `skills/`，适合个人实验和快速试用，不经过远端 PR，治理和审查能力较弱。
+   - 推荐默认：共享或内置 Skill 必须 Git PR；个人 workspace Skill 可人工确认后 adopt，但仍保留候选、评测和原版本备份。
+
+### 16.3 下一轮实施前需要确认
+
+1. 90 天事件、14 天明文 payload 是否符合实际合规要求？
+2. 首个代码审查/仓库定位 Skill 是否有可用的 10～20 个脱敏任务？
+3. workspace adopt 是否允许覆盖现有 Skill，还是必须生成新版本目录？
