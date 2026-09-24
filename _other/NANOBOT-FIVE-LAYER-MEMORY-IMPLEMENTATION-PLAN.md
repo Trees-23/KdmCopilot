@@ -106,6 +106,9 @@ Wiki / Case Store / Skill Staging
   "status": "candidate|active|stale|archived|deleted",
   "sensitivity": "public|private|secret",
   "owner": "...",
+  "supersedes": [],
+  "last_skill_review_at": null,
+  "activity_epoch": 0,
   "version": 1
 }
 ```
@@ -224,7 +227,7 @@ score =
 
 - **会话**：由 `SessionManager` 原子保存；压缩只改变 live suffix，历史归档另写 `history.jsonl`。
 - **Trace**：不修改旧事件；重试、恢复和更正追加新事件；索引可重建。
-- **Wiki/案例**：通过 `wiki_upsert` 更新页面，保留 `updated_at`、版本、来源和 supersedes 关系；删除默认先 archive。
+- **Wiki/案例**：通过 `wiki_upsert` 更新页面，保留 `updated_at`、版本、来源和 supersedes 关系；普通“忘记”默认转为修正、合并、降权或 archive，不直接硬删除。
 - **Skill**：不由运行中的 Agent 直接覆盖正式版本；生成 candidate，经过评测后通过 Git PR 或 workspace adopt 发布。
 - **Skill manifest/SQLite 索引**：由文件扫描或变更钩子重建，索引损坏不影响 Markdown 和 Skill 正文。
 
@@ -549,6 +552,32 @@ score =
 - 支持按 Skill 分组、单独采用和回滚。
 - 记录 evidence log，保留候选来源和评测过程。
 
+### 11.3 Skill 总结触发和去重
+
+Skill 总结不在每次会话结束时执行，也不因为超时就直接生成 Skill。首版采用固定的空闲触发窗口：**会话连续 45 分钟没有新消息后，只触发一次 Skill review 检查**。
+
+触发流程：
+
+```text
+会话持续进行
+  → 45 分钟无新消息
+  → 标记当前 activity epoch 为 idle
+  → 触发一次 Skill review
+  → Agent 判断是否存在可复用流程
+  → 无流程：结束
+  → 一次性经验：只保存 Case
+  → 稳定、可重复流程：生成 Skill candidate
+```
+
+下一条新消息会开启新的 `activity_epoch`，之后重新计算 45 分钟窗口。为避免重复总结，状态至少记录：
+
+- `activity_epoch`；
+- `last_skill_review_at`；
+- `skill_review_cursor`；
+- 本轮是否已经 review。
+
+Skill review 的准入条件：流程有多个步骤、结果可验证、不是一次性偶然操作、与现有 Skill 不重复，并且能抽象成跨任务可复用的方法。超时只负责触发检查，不能直接决定生成 Skill。
+
 ## 12. 遗忘、降权、归档和删除
 
 ### 12.1 降权公式
@@ -576,7 +605,7 @@ candidate → active → stale → archived → deleted
 
 自动归档：长期未访问、已被新事实替代、只具历史价值或只属于已结束项目的内容。
 
-硬删除：用户明确要求、发现秘密、权限违规、错误写入或数据主体删除请求。
+默认不硬删除：内容过时或冲突时优先合并、修正、标记 `supersedes`、降低置信度或归档。只有用户明确要求、发现秘密、权限违规、错误写入或数据主体删除请求时，才执行永久删除。
 
 删除必须同步处理页面、关系、FTS/向量索引和案例引用；Audit 只保留最小化删除事件，不保留被删除的敏感正文。
 
@@ -635,9 +664,9 @@ SkillLoader 增加版本/hash/状态读取；ToolRegistry 增加工具示例、�
 - 集成 `nanobot-llm-wiki` 工具或 MCP。
 - 实现页面类型、标签、关系和 source refs。
 - 增加 `MEMORY_READ/WRITE/FORGET` 路由。
-- 只读检索默认启用，写入和删除需明确意图。
+- 只读检索默认启用，低风险写入可自动执行，修正/合并/归档按策略执行，永久删除需明确意图。
 
-验收：事实可搜索、可读、可关联、可归档；删除后不再被检索；工具权限和审计完整。
+验收：事实可搜索、可读、可关联、可归档；修正或归档后检索结果符合新状态；工具权限和审计完整。
 
 ### Phase 2：按需检索和上下文注入
 
@@ -674,6 +703,7 @@ SkillLoader 增加版本/hash/状态读取；ToolRegistry 增加工具示例、�
 - 实现 stale、archive、reaffirm、forget 流程。
 - 将重复工作流候选转为 SKILL.md staging。
 - 增加 Skill 与案例的版本兼容检查。
+- 增加 45 分钟空闲窗口和每个 activity epoch 仅一次的 Skill review 检查。
 
 验收：重复事实不增长；旧事实可降权/归档；用户 forget 可穿透所有索引；Skill 更新可回滚。
 
@@ -743,12 +773,13 @@ SkillLoader 增加版本/hash/状态读取；ToolRegistry 增加工具示例、�
 ### 18.1 已确认
 
 1. Wiki 采用插件插入方式，优先通过 `nanobot-llm-wiki` 的插件/MCP/entry point 接入，不把 Wiki 实现硬编码进 nanobot 核心。
-2. 长期记忆允许低风险自动写入，但必须满足来源、脱敏、namespace、置信度和可回滚要求；删除、敏感内容和高影响决策仍需确认。
+2. 长期记忆允许低风险自动写入，但必须满足来源、脱敏、namespace、置信度和可回滚要求；普通内容默认通过合并、修正、降权和归档维护，不做永久删除。
 3. 暂不更换向量方案。首版使用 SQLite、FTS5、标签、别名和图关系；只有在实际规模和召回指标证明不足时，才评估额外向量数据库。
+4. 会话连续 45 分钟无新消息后，只触发一次 Skill review 检查；是否生成案例或 Skill candidate 由 Agent 根据可复用性判断。
 
 ### 18.2 建议决策
 
-1. Trace 保留策略建议默认分层：结构化事件和摘要保留 90 天以上；含完整明文的 payload 默认保留 14 天；用户确认的知识、案例和架构决策长期保留。所有期限配置化，并允许按 workspace 覆盖。
+1. Trace 保留策略建议默认分层：原始事件保留 18 天；含完整明文的 payload 默认保留 14 天；Trace 摘要、用户确认的知识、案例和架构决策长期保留。所有期限配置化，并允许按 workspace 覆盖。
 2. 首个自进化 Skill 建议选择“只读代码审查/仓库问题定位”类任务：频率较高、结果可用测试或人工 rubric 评估，不直接修改代码、不合并 PR，适合作为低风险 baseline。
 3. 建议区分两种采用方式：
    - **Git PR 采用**：生成版本化分支和 PR，适合 builtin/shared skill、需要团队审查的变更，具备完整 diff、评测记录和回滚能力。
@@ -757,6 +788,6 @@ SkillLoader 增加版本/hash/状态读取；ToolRegistry 增加工具示例、�
 
 ### 18.3 下一轮实施前需要确认
 
-1. 90 天事件、14 天明文 payload 是否符合实际合规要求？
+1. 18 天原始事件、14 天明文 payload 是否符合实际合规要求？
 2. 首个代码审查/仓库定位 Skill 是否有可用的 10～20 个脱敏任务？
 3. workspace adopt 是否允许覆盖现有 Skill，还是必须生成新版本目录？
