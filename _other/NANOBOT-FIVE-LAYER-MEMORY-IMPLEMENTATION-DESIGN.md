@@ -25,12 +25,12 @@
 | `AgentLoop`/`AgentRunner` | 已有消息消费、运行规范、工具循环、恢复和回调 | 保持主流程；在构建上下文前插入只读 memory scope，在 turn 完成后发出派生事件 |
 | `ContextBuilder` | stable/dynamic sections、身份/bootstrap、长期记忆、近期历史、always skill、skills summary；已有 digest/cache metadata | 扩展为 `IntentRouter + MemoryRetriever`，只将稳定摘要放 dynamic overlay |
 | `ContextGovernor` | token 预算、裁剪、孤立 tool result 清理、非法工具调用修复 | 作为最终防线；新增记忆预算不能绕过它 |
-| `MemoryStore` | `SOUL.md`、`USER.md`、`memory/MEMORY.md`、`history.jsonl`、Dream cursor、原子写入/GitStore | 保持为文件事实源；加 revision/candidate 编排，不将 SQLite 变成正文库 |
+| `MemoryStore` | `SOUL.md`、`USER.md`、`memory/MEMORY.md`、`history.jsonl`、Dream cursor、原子写入/GitStore；没有 SQLite memory store | 保持为文件事实源；新增 SQLite 仅作派生索引、状态和评测库 |
 | `SessionManager` | JSONL 会话、cursor、缓存、fork、损坏恢复和 last_consolidated | 复用 session key/cursor；维护任务另建持久状态表 |
 | `SkillsLoader` | builtin/workspace、frontmatter、`always`、依赖、disabled、渐进式加载 | 复用发现；新增外部 entry point/MCP skill catalog 适配器 |
 | `ToolRegistry` | 注册、稳定排序、schema 校验、结构化错误、schema digest | 复用注册和校验；加入 `ToolPolicy` 能力边界和角色检查 |
 | Audit | 事件/载荷 JSONL、红脱敏、trace/run/turn 父子关系、索引、完整性、WebUI 查询 | 继续为 Trace 事实源；增发 retrieval/write/forget/review 事件 |
-| Wiki | 独立项目，支持本地 Markdown、SQLite/FTS、MCP/CLI/UI，不属于 nanobot 核心 | 通过插件/MCP/entry point 接入，不硬编码 Wiki 类和表 |
+| Wiki | `nanobot-llm-wiki/src/nanobot_llm_wiki/storage.py` 的 `pages`、`links`、`page_fts`，以及 `tools.py` 的工具；`pyproject.toml` 通过 `nanobot.tools` entry points 注册 9 个工具；另有 stdio MCP server | 通过 entry point 或独立 MCP 接入，不硬编码 Wiki 类和表；Case 仍使用其 `page_type='case'` |
 | Hermes self-evolution | 独立离线 pipeline，dataset、replay、judge、PR guardrail | 借鉴流程，不作为运行时依赖 |
 | SkillOpt-Sleep | harvest→mine→replay→stage→adopt，具备证据和多 Skill gate | 借鉴状态/证据/隔离回放；不复制其跨平台适配器 |
 
@@ -44,7 +44,7 @@
 | Audit Trace、红脱敏、JSONL 事实源 | 已存在，可直接复用 | 仅新增事件类型和 trace_index 派生器 |
 | Trace→摘要/Case/Skill 关联 | 当前不存在，需要新增 | 新增派生 worker、去重和候选状态机 |
 | Wiki Markdown/FTS/关系图 | 依赖外部项目 | nanobot 只实现适配协议和失败降级 |
-| SQLite 统一索引 | 当前不存在，需要新增 | workspace 级数据库、迁移、重建和单 writer |
+| SQLite 统一索引 | 当前不存在（Audit 自己已有独立 SQLite 索引，不是 memory store） | workspace 级 memory 数据库、迁移、重建和单 writer；不得与 Audit index 混用 |
 | intent 路由和 memory scope | 当前不存在，需要新增 | 在 ContextBuilder 前增加纯函数路由器 |
 | `skill_catalog_search`/`skill_read`/`skill_propose` | 当前不存在，需要新增 | 通过 ToolRegistry 暴露；写入由维护服务执行 |
 | 45 分钟 review 防抖任务 | 当前不存在，需要新增 | `maintenance_jobs` + 单 worker + workspace 锁 |
@@ -55,6 +55,19 @@
 | 独立评测 Agent/审核 Agent | 当前不存在，需要新增 | 角色隔离和 ToolPolicy 强制禁止自评自批 |
 | 独立向量数据库、多租户/RBAC | 需要延期 | 已确认不引入，SQLite FTS5/标签/关系图足够首版 |
 | 自动正式发布、自动 Git merge/PR | 需要延期 | 只到 staging；用户确认后才 adopt 或开 PR |
+
+### 2.3 结论状态分类
+
+为避免把设计目标误读为已实现能力，本文后续使用以下四类标签：
+
+| 分类 | 本文含义 |
+|---|---|
+| 当前代码已经存在 | 已从当前仓库代码或外部项目真实实现中确认；只描述现状，不表示五层记忆已接通 |
+| 实施设计已确定 | 产品/架构方向已经确定，本文给出目标 schema、边界和流程，但尚未进入生产实现 |
+| 后续实施时需要验证 | 需要在 Phase 0 及后续实现中通过代码、临时 fixture、测试或部署检查确认；本文不将其写成已验证事实 |
+| 暂不实施或延期 | 本轮明确不做，除非未来重新评审并获得新的范围确认 |
+
+本文中新增 memory SQLite、migration、outbox、maintenance worker、ToolPolicy、Wiki adapter、FTS5 接线、retention、fixture 隔离和相关 CLI 均属于“后续实施时需要验证”，不是当前代码能力。`memory schema`、`memory rebuild`、`memory verify` 等名称仅是后续实施目标，不是当前已有命令。
 
 ## 3. 目标组件和目录
 
@@ -74,7 +87,7 @@ nanobot/memory/
 nanobot/plugins/memory_wiki.py  # entry point/MCP 适配器
 ```
 
-数据库路径固定为 `<workspace>/.nanobot/memory.sqlite3`；不得把它放入 `runtime/workspace` 之外，也不得把 SQLite 正文作为用户可编辑事实源。数据库启用 WAL、`foreign_keys=ON`、`busy_timeout=5000`，所有写操作由 workspace 单 worker 串行执行。
+数据库路径固定为 `<workspace>/.nanobot/memory.sqlite3`；不得把它放入 `runtime/workspace` 之外，也不得把 SQLite 正文作为用户可编辑事实源。数据库启用 WAL、`foreign_keys=ON`、`busy_timeout=5000`。维护型写操作由 workspace 单 worker 串行执行；前台只允许 5.2 节列出的有限原子 activity/retrieval 写。
 
 ## 4. SQLite schema（建议 v1）
 
@@ -95,7 +108,9 @@ CREATE TABLE memory_records (
   salience REAL NOT NULL DEFAULT 0 CHECK(salience BETWEEN 0 AND 1),
   effective_score REAL NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'candidate',
   deletion_state TEXT NOT NULL DEFAULT 'none', source_actor TEXT NOT NULL,
-  current_revision_id TEXT, supersedes_json TEXT NOT NULL DEFAULT '[]',
+  current_revision_id TEXT REFERENCES memory_revisions(revision_id)
+    ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  supersedes_json TEXT NOT NULL DEFAULT '[]',
   created_at TEXT NOT NULL, updated_at TEXT NOT NULL, last_accessed_at TEXT,
   access_count INTEGER NOT NULL DEFAULT 0, archived_at TEXT, last_skill_review_at TEXT
 );
@@ -115,7 +130,9 @@ CREATE INDEX memory_revision_history ON memory_revisions(memory_id,revision_no D
 CREATE TABLE wiki_pages (
   page_id TEXT PRIMARY KEY, namespace TEXT NOT NULL DEFAULT 'workspace', slug TEXT NOT NULL,
   page_type TEXT NOT NULL CHECK(page_type IN ('fact','decision','case','skill_note','index')),
-  source_path TEXT NOT NULL, content_hash TEXT NOT NULL, current_revision_id TEXT,
+  source_path TEXT NOT NULL, content_hash TEXT NOT NULL,
+  -- 这是 Wiki adapter 管理的 revision 标识，不是本库外键。
+  current_revision_id TEXT,
   status TEXT NOT NULL DEFAULT 'candidate', sensitivity TEXT NOT NULL DEFAULT 'private',
   title TEXT NOT NULL, summary TEXT NOT NULL DEFAULT '', tags_json TEXT NOT NULL DEFAULT '[]',
   source_refs_json TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
@@ -141,6 +158,7 @@ CREATE TABLE cases (
   outcome_json TEXT NOT NULL, failure_patterns_json TEXT NOT NULL DEFAULT '[]',
   trace_ids_json TEXT NOT NULL DEFAULT '[]', confidence REAL NOT NULL DEFAULT 0,
   user_confirmed INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'candidate',
+  -- Case revision 由 Wiki 的 Markdown/revision 事实源拥有，本库只保存外部引用。
   revision_id TEXT NOT NULL, previous_revision_id TEXT, created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL, last_used_at TEXT, use_count INTEGER NOT NULL DEFAULT 0
 );
@@ -150,7 +168,10 @@ CREATE INDEX cases_intent ON cases(intent,status);
 CREATE TABLE skills (
   skill_id TEXT PRIMARY KEY, namespace TEXT NOT NULL DEFAULT 'workspace', name TEXT NOT NULL,
   source_kind TEXT NOT NULL CHECK(source_kind IN ('builtin','workspace','entrypoint','mcp')),
-  source_path TEXT, current_revision_id TEXT, current_version TEXT, status TEXT NOT NULL DEFAULT 'active',
+  source_path TEXT,
+  current_revision_id TEXT REFERENCES skill_revisions(revision_id)
+    ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  current_version TEXT, status TEXT NOT NULL DEFAULT 'active',
   description TEXT NOT NULL DEFAULT '', tool_policy_json TEXT NOT NULL DEFAULT '{}',
   references_json TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
   UNIQUE(namespace,name)
@@ -161,31 +182,34 @@ CREATE TABLE skill_revisions (
   revision_id TEXT PRIMARY KEY, skill_id TEXT NOT NULL REFERENCES skills(skill_id),
   skill_version TEXT NOT NULL, content_hash TEXT NOT NULL, content TEXT NOT NULL,
   previous_revision_id TEXT REFERENCES skill_revisions(revision_id), supersedes_revision_id TEXT,
-  source_case_ids_json TEXT NOT NULL DEFAULT '[]', eval_pack_id TEXT, author_actor TEXT NOT NULL,
+  source_case_ids_json TEXT NOT NULL DEFAULT '[]',
+  eval_pack_id TEXT REFERENCES eval_packs(eval_pack_id)
+    ON DELETE SET NULL DEFERRABLE INITIALLY DEFERRED,
+  author_actor TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'staging', created_at TEXT NOT NULL,
   UNIQUE(skill_id,skill_version), UNIQUE(skill_id,content_hash)
 );
 CREATE INDEX skill_revision_current ON skill_revisions(skill_id,status,created_at DESC);
 ```
 
-`memory_records`、`wiki_pages`、`cases`、`skills` 的正文/版本均不可原地改写；状态、访问计数和 current 指针可变。普通删除只把状态置为 `archived` 或写 `supersedes`；安全删除不更新正文，改写为 tombstone（见 4.3）。
+`memory_records`、`wiki_pages`、`cases`、`skills` 的正文/版本均不可原地改写；状态、访问计数和 current 指针可变。普通删除只把状态置为 `archived` 或写 `supersedes`；安全删除不更新正文，改写为 tombstone（见 4.3）。`memory_revisions.content` 和 `skill_revisions.content` 是受控缓存，不是用户可编辑事实源。权威内容仍分别来自 `MEMORY.md`/`USER.md`/`SOUL.md`、Wiki Markdown 和 `SKILL.md` 或外部版本包；缓存只用于事务校验、评测回放、revision 对比、FTS 重建和回滚准备，普通 Agent、用户和 Wiki adapter 不得直接编辑 SQLite 缓存。
 
 ### 4.1.1 表级生命周期矩阵
 
 | 表 | 主键/外键关系 | 可变字段 | 状态字段 | 删除/归档语义 | 迁移与重建 |
 |---|---|---|---|---|---|
-| `memory_records` | `memory_id`；`current_revision_id`→`memory_revisions` | score、访问计数、current、状态 | candidate/active/stale/archived | 不删正文；archive 或 supersedes；合规删除写 tombstone | 从 `MEMORY.md`/`USER.md`/`SOUL.md` 和 history 摘要重建 |
+| `memory_records` | `memory_id`；`current_revision_id`→`memory_revisions`，deferred FK、`ON DELETE RESTRICT` | score、访问计数、current、状态 | candidate/active/stale/archived | 不删正文；archive 或 supersedes；合规删除写 tombstone | 从 `MEMORY.md`/`USER.md`/`SOUL.md` 和 history 摘要重建 |
 | `memory_revisions` | `revision_id`；`memory_id`→records；previous 自引用 | 不可变 | 无（由父记录控制） | 永不更新/删除，除非安全清除并留无正文 tombstone | 由 Markdown revision header/sidecar 或导入快照重建 |
-| `wiki_pages` | `page_id`；current→外部/本地 revision | title、summary、tags、current、状态 | candidate/active/stale/archived | Markdown 仍在；索引只标状态；删除由 Wiki adapter 执行 | 扫描页面 frontmatter、hash、关系后全量重建 |
+| `wiki_pages` | `page_id`；`current_revision_id` 是外部 Wiki revision 引用，无本库 FK，可为空 | title、summary、tags、current、状态 | candidate/active/stale/archived | Markdown 仍在；索引只标状态；删除由 Wiki adapter 执行 | 扫描页面 frontmatter、hash、关系后全量重建 |
 | `wiki_relations` | relation→两 page | weight、状态 | active/archived | 关系失效归档，不级联删除页面 | 从页面 links/frontmatter 重建 |
-| `cases` | `case_id`、`page_id`；可选 `skill_id` | confidence、使用计数、状态 | candidate/active/archived/rejected | Case 正文是 Wiki page；不硬删，除合规 tombstone | 从 `page_type=case` 页面结构解析 |
-| `skills` | `skill_id`；current→skill revision | current、状态、描述元数据 | staging/active/archived/rejected | 旧版本保留；禁用/回滚只切指针 | 从 Skill 目录、entry point/MCP manifest 重扫 |
-| `skill_revisions` | revision→skill、previous | 不可变 | staging/approved/rejected/archived | 不删；候选失败留证据，安全删除写 tombstone | 从版本目录和 hash manifest 重建 |
+| `cases` | `case_id`、`page_id`；`revision_id` 是外部 Wiki revision 引用，无本库 FK；可选 `skill_id` 暂为逻辑引用 | confidence、使用计数、状态 | candidate/active/archived/rejected | Case 正文是 Wiki page；不硬删，除合规 tombstone | 从 `page_type=case` 页面结构解析 |
+| `skills` | `skill_id`；`current_revision_id`→`skill_revisions`，deferred FK、`ON DELETE RESTRICT`，可为空 | current、状态、描述元数据 | staging/active/archived/rejected | 旧版本保留；禁用/回滚只切指针 | 从 Skill 目录、entry point/MCP manifest 重扫 |
+| `skill_revisions` | `revision_id`→skills；`eval_pack_id`→eval_packs，deferred FK、`ON DELETE SET NULL`，可为空；previous 自引用 | 不可变 | staging/approved/rejected/archived | 不删；候选失败留证据，安全删除写 tombstone | 从版本目录和 hash manifest 重建 |
 | `trace_index` | `trace_id` | summary、计数、索引状态 | indexed/degraded/expired | 原始 JSONL 由 TTL 清理；摘要可保留 | 从 Audit catalog/events JSONL 重放 |
 | `eval_packs` | pack→skill revision | 仅 draft 字段可变，sealed 后不可变 | draft/sealed/retired | 旧包 retired，不删除题目证据 | 从封存 JSON manifest 重建 |
-| `eval_runs` | run→pack、baseline/candidate | 运行状态和结束指标 | running/succeeded/failed/stale | 永久保留指标；敏感响应只保 digest/TTL | 不能从结果反推题目，依赖 pack manifest |
+| `eval_runs` | run→pack；baseline/candidate→`skill_revisions`，candidate 可空，均 `ON DELETE RESTRICT` | 运行状态和结束指标 | running/succeeded/failed/stale | 永久保留指标；敏感响应只保 digest/TTL | 不能从结果反推题目，依赖 pack manifest |
 | `eval_case_results` | `(run_id,case_key)`→run | 不可变（修正需新 run） | outcome 字段 | 随 run 保留；无正文删除 | 从 runner evidence 导入并校验 hash |
-| `maintenance_jobs` | `job_id`，workspace/session 唯一 | lease、cursor、retry、状态 | scheduled/due/leased/reviewing/retry_wait/succeeded/failed/superseded | 成功任务保留最近状态；历史错误不覆盖 | SQLite WAL 恢复；无需事实源重建 |
+| `maintenance_jobs` | `job_id`，workspace/session 唯一；workspace lease 在 `maintenance_lock` | lease、cursor、retry、状态 | scheduled/due/leased/reviewing/retry_wait/succeeded/failed/superseded | 成功任务保留最近状态；历史错误不覆盖 | SQLite WAL 恢复；无需事实源重建 |
 | `tombstones` | `tombstone_id`；逻辑对象唯一 | 不可变 | 无（存在即阻断） | 永不自动恢复正文；可按合规策略过期元数据 | 从合规删除日志导入，不能从正文推导 |
 | `retrieval_events` | `retrieval_id` | 不可变 | outcome | 按审计保留期归档/清理，不能改写 | 从 Audit retrieval 事件重建 |
 
@@ -205,6 +229,39 @@ CREATE INDEX trace_session_time ON trace_index(session_key,started_at DESC);
 CREATE INDEX trace_outcome_time ON trace_index(outcome,started_at DESC);
 CREATE INDEX trace_expiry ON trace_index(trace_expire_at,payload_expire_at);
 
+CREATE TABLE schema_meta (
+  version INTEGER PRIMARY KEY,
+  migration_id TEXT NOT NULL UNIQUE,
+  app_build TEXT NOT NULL,
+  schema_hash TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('running','applied','failed','rolled_back')),
+  applied_at TEXT NOT NULL,
+  error_message TEXT
+);
+CREATE INDEX schema_meta_status ON schema_meta(status,version DESC);
+
+CREATE TABLE memory_outbox (
+  outbox_id TEXT PRIMARY KEY,
+  workspace TEXT NOT NULL,
+  object_type TEXT NOT NULL CHECK(object_type IN ('memory','wiki_page','case','skill','trace_summary')),
+  object_id TEXT NOT NULL,
+  revision_id TEXT,
+  content_hash TEXT NOT NULL,
+  operation TEXT NOT NULL CHECK(operation IN ('upsert','archive','tombstone','rebuild')),
+  payload_json TEXT NOT NULL DEFAULT '{}',
+  status TEXT NOT NULL CHECK(status IN ('pending','leased','retry_wait','done','dead_letter','superseded')),
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at TEXT NOT NULL,
+  lease_until TEXT,
+  last_error TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(object_type,object_id,content_hash,operation)
+);
+CREATE INDEX memory_outbox_due ON memory_outbox(workspace,status,next_attempt_at);
+CREATE INDEX memory_outbox_lease ON memory_outbox(workspace,lease_until);
+CREATE INDEX memory_outbox_object ON memory_outbox(object_type,object_id,created_at DESC);
+
 CREATE TABLE eval_packs (
   eval_pack_id TEXT PRIMARY KEY, skill_id TEXT NOT NULL REFERENCES skills(skill_id),
   skill_revision_id TEXT NOT NULL REFERENCES skill_revisions(revision_id), dataset_hash TEXT NOT NULL,
@@ -218,10 +275,15 @@ CREATE INDEX eval_pack_skill ON eval_packs(skill_id,status,created_at DESC);
 
 CREATE TABLE eval_runs (
   eval_run_id TEXT PRIMARY KEY, eval_pack_id TEXT NOT NULL REFERENCES eval_packs(eval_pack_id),
-  baseline_revision_id TEXT NOT NULL REFERENCES skill_revisions(revision_id),
-  candidate_revision_id TEXT REFERENCES skill_revisions(revision_id), baseline_hash TEXT NOT NULL,
+  baseline_revision_id TEXT NOT NULL REFERENCES skill_revisions(revision_id) ON DELETE RESTRICT,
+  candidate_revision_id TEXT REFERENCES skill_revisions(revision_id) ON DELETE RESTRICT,
+  baseline_hash TEXT NOT NULL,
   candidate_hash TEXT, model_id TEXT NOT NULL, tool_schema_digest TEXT NOT NULL,
   fixture_hash TEXT NOT NULL, dataset_hash TEXT NOT NULL, seed TEXT NOT NULL,
+  replay_group_id TEXT NOT NULL, replay_attempt INTEGER NOT NULL DEFAULT 1,
+  evidence_grade TEXT NOT NULL CHECK(evidence_grade IN ('standard','limited','insufficient_evidence')),
+  consistency_result TEXT NOT NULL DEFAULT 'not_checked',
+  is_independent_replay INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'running', gate_result TEXT, metrics_json TEXT NOT NULL DEFAULT '{}',
   started_at TEXT NOT NULL, ended_at TEXT, error_message TEXT
 );
@@ -248,6 +310,13 @@ CREATE TABLE maintenance_jobs (
 );
 CREATE INDEX maintenance_due ON maintenance_jobs(status,due_at);
 
+CREATE TABLE maintenance_lock (
+  workspace TEXT PRIMARY KEY, owner TEXT NOT NULL, lease_until TEXT NOT NULL,
+  acquired_at TEXT NOT NULL, renewed_at TEXT NOT NULL, generation INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE INDEX maintenance_lock_expiry ON maintenance_lock(lease_until);
+
 CREATE TABLE retrieval_events (
   retrieval_id TEXT PRIMARY KEY, trace_id TEXT, turn_id TEXT, session_key TEXT NOT NULL,
   intent TEXT NOT NULL, scopes_json TEXT NOT NULL, query_digest TEXT NOT NULL,
@@ -258,7 +327,9 @@ CREATE TABLE retrieval_events (
 CREATE INDEX retrieval_session_time ON retrieval_events(session_key,created_at DESC);
 ```
 
-`maintenance_jobs` 只有 worker 可更新 lease/status；新消息由 AgentLoop 调用 `upsert_activity`，不能创建第二行。`eval_case_results` 不允许候选 Agent 写入，只能由评测 runner 和独立 judge 写入。
+`maintenance_jobs` 只有 worker 可更新 lease/status；新消息由 AgentLoop 调用 `upsert_activity`，不能创建第二行。`eval_case_results` 不允许候选 Agent 写入：评测 runner 写临时 evidence，维护 worker 校验后导入；独立 judge 只产生签名评分结果，不直接写正式表。
+
+`memory_outbox.payload_json` 默认只保存对象引用、操作参数、cursor 和 hash，不保存完整敏感正文；确需临时携带正文时必须先脱敏、限制大小并设置过期时间。outbox 状态固定为 `pending|leased|retry_wait|done|dead_letter|superseded`，只有 worker 可以改变状态。
 
 ### 4.3 Tombstone 与全文索引
 
@@ -277,11 +348,35 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(
 );
 ```
 
-FTS 行是派生物，可整体删除再从事实源重建。查询必须先排除 `tombstones`，再过滤 `status='active'`；不能仅依赖 FTS 删除，因为旧快照/失败重试可能重新写回。
+FTS 的 `object_type` 只允许 `memory`、`wiki_page`、`case`、`skill`、`trace_summary`。映射和默认检索策略如下：
+
+| object_type | 状态事实表/事实源 | FTS 内容 | 默认检索 |
+|---|---|---|---|
+| `memory` | `memory_records` + `memory_revisions`；`SOUL.md`/`USER.md`/`MEMORY.md` | title、summary、当前 revision content、tags | active |
+| `wiki_page` | Wiki adapter 的 Markdown 页面；本库 `wiki_pages` | title、summary、页面正文、tags | active |
+| `case` | Wiki `page_type='case'` 页面 + 本库 `cases` | case title、summary、步骤摘要、failure patterns、tags | active |
+| `skill` | `skills` + current `skill_revisions`；`SKILL.md` | name、description、正文、引用 tags；候选全文不默认注入 | active |
+| `trace_summary` | Audit/JSONL 脱敏摘要 + `trace_index` | 仅 summary、outcome、tool names、tags，不含 payload | active |
+
+FTS 行不是状态事实源。查询必须按 object_type 显式 join 对应事实表，并统一排除 tombstone：
+
+```sql
+SELECT f.object_id, f.title, f.summary, bm25(memory_fts) AS score
+FROM memory_fts AS f
+JOIN memory_records AS r ON f.object_type='memory' AND f.object_id=r.memory_id
+WHERE f.object_type='memory' AND memory_fts MATCH :query
+  AND r.status='active'
+  AND NOT EXISTS (SELECT 1 FROM tombstones t
+                  WHERE t.object_type=f.object_type AND t.object_id=f.object_id);
+```
+
+其他 object_type 使用同一模式分别 join `wiki_pages`、`cases JOIN wiki_pages`、`skills JOIN skill_revisions` 或 `trace_index`；实现层禁止把表名/列名从用户输入拼接到 SQL。`archived` 默认排除，仅 `history_query` 或无 active 结果时按摘要读取；不能将 archived 正文自动注入普通 prompt。
+
+重建扫描上述五类事实源：Markdown/Wiki adapter 页面、当前 Skill 版本、脱敏 Trace summary；Case 不单独扫描第二份正文。索引更新以 `(object_type,object_id,content_hash)` 幂等，写入前再次检查 tombstone，重试任务若发现 tombstone 则标记 skipped，因而旧 FTS 行不能复活。Markdown 修改由 adapter 的 revision commit/outbox 触发；外部编辑则由启动时 mtime/hash 扫描发现。
 
 ### 4.4 迁移策略
 
-迁移表 `schema_meta(version, applied_at, app_build)`；每个迁移是事务内的幂等 SQL，启动时只执行 `version > current`。大表重建使用新表、校验行数/hash、事务 rename；失败保留旧表。SQLite 备份使用在线 backup API，任何 downgrade 都通过新数据库重建，不执行破坏性 `DROP`。
+迁移使用 `schema_meta` 记录 `version`、`migration_id`、`app_build`、`schema_hash` 和 `running/applied/failed/rolled_back` 状态；每个迁移是事务内的幂等 SQL，启动时只执行 `version > current`。迁移开始先写 `running`，成功提交后写 `applied`，失败回滚并记录脱敏 `error_message` 为 `failed`；回退通过备份数据库和事实源重建，不把失败 migration 标记为已应用。大表重建使用新表、校验行数/hash、事务 rename；失败保留旧表。SQLite 备份使用在线 backup API，任何 downgrade 都通过新数据库重建，不执行破坏性 `DROP`。
 
 ## 5. 事实源、revision 与索引一致性
 
@@ -290,19 +385,30 @@ FTS 行是派生物，可整体删除再从事实源重建。查询必须先排�
 | 数据 | 事实源 | SQLite 内容 |
 |---|---|---|
 | 会话/历史 | `sessions/*.jsonl`、`memory/history.jsonl` | 不复制全文；只存 cursor、digest、派生摘要 |
-| SOUL/USER/MEMORY | Markdown 文件 | revision 元数据、FTS 摘要和状态 |
+| SOUL/USER/MEMORY | Markdown 文件 | revision 元数据、受控正文缓存、FTS 摘要和状态；缓存必须与 source hash 对齐 |
 | Wiki/Case | Wiki 插件维护的 Markdown 页面 | page 元数据、FTS、关系和 Case 结构化索引 |
 | Trace | Audit events/payload JSONL、catalog/index | trace 元数据、摘要、事件和工具计数；payload 不复制 |
-| Skill | `skills/<name>/SKILL.md` 或 entry point/MCP 版本包 | hash、版本、current 指针、引用和评测关系 |
+| Skill | `skills/<name>/SKILL.md` 或 entry point/MCP 版本包 | 受控正文缓存、hash、版本、current 指针、引用和评测关系；缓存不具备事实源权威性 |
 | 任务/评测/检索事件 | SQLite | SQLite 唯一事实源，按表结构迁移和备份 |
 
-### 5.2 写入顺序和并发
+### 5.2 写入顺序、并发和事实源失败
 
-1. 先写不可变事实源（Markdown/JSONL/Skill 新版本目录），fsync 后计算 `content_hash`。
-2. 在 SQLite 单事务中插入 revision、更新对象元数据和 current 指针；FTS 更新可放入 outbox。
-3. outbox/`maintenance_jobs` 重试索引更新，按 `object_id + content_hash` 幂等；旧 hash 永远不能覆盖新 hash。
-4. 读取 current 时同时检查 `content_hash` 和 tombstone；发现不一致返回旧索引降级或触发重建，不把脏索引注入 prompt。
-5. 后台采用 compare-and-swap：`UPDATE ... WHERE current_revision_id = expected_revision_id`；影响行数为 0 表示用户已有更新，任务改为 `superseded`，不得覆盖。
+标准写入事务严格采用以下顺序：
+
+1. ToolPolicy 权限、路径、敏感级别和一次性确认指纹检查。
+2. 写 Audit `intent` 事件；Audit intent 失败时停止写入，不产生事实源副作用，并返回 retryable 错误。
+3. 在单 worker 中写不可变事实源（Markdown/JSONL/Skill 新版本目录），fsync 后计算规范化 `content_hash`。
+4. SQLite revision/current 事务：校验 hash、插入 revision、使用 `WHERE current_revision_id=:expected` CAS 更新 current；新对象在同一 deferred-FK 事务内完成。
+5. 事务提交后写 outbox 索引任务，再由同一 workspace worker 更新 FTS/关系索引。
+6. 写 Audit `committed`；任一步失败写 `failed`，错误只保存脱敏摘要。
+
+前台允许的 SQLite 写仅限：新消息对同一 `(workspace,session_key)` 的原子 `activity_epoch/last_activity_at/due_at/last_message_cursor` upsert，以及追加 `retrieval_events`（或等价 Audit 事件）。前台不能修改正式记忆、Wiki/Case revision、Skill staging/current、评测结果、tombstone、FTS、归档或 retention 状态。维护 worker 独占 lease/status、candidate、revision/current、FTS、关系、retention、tombstone、合并、归档、回滚等写入。
+
+Wiki adapter 可以在自己的 Markdown/SQLite 中完成事实源写入，但向 nanobot memory DB 的 revision、Case、FTS 同步必须提交维护队列；它不能直接更新本库 current。评测 runner 不写 workspace memory DB 的正式表；它写独立的临时评测数据库/JSONL evidence，完成后由维护 worker 以不可变 `eval_run` 导入。这样仍保持 workspace 单 writer；导入必须校验 dataset/fixture/baseline hash。
+
+若事实源已成功而 SQLite 失败，保留事实源和 hash，写 outbox `index_pending`，重试时以 `(object_id,content_hash)` 幂等；在索引完成前普通检索降级，显式历史/修改返回 `index_degraded`。若 SQLite 成功而 FTS 失败，current 仍有效，任务保持 `index_pending`，不得回滚事实源；重试前检查 tombstone 和 current hash。重复提交命中唯一 hash/key 即视为已提交。CAS 影响行数为 0 表示出现新版本，旧任务标为 `superseded`。回滚只在维护 worker 中创建新 rollback revision 或切换经过校验的 current 指针，并记录 Audit；不删除旧事实源。
+
+读取 current revision 时必须重新计算权威事实源的规范化 hash，并与 SQLite 缓存的 `content_hash` 比较。hash 不一致时以 Markdown/JSONL/Skill 事实源为准，将对象和相关索引标记为 `stale/index_degraded`，写入 outbox 重建任务；不得把不一致的 SQLite 缓存注入 prompt 或作为评测输入。
 
 ## 6. ContextBuilder 集成设计
 
@@ -390,7 +496,9 @@ INSERT ... ON CONFLICT(workspace,session_key) DO UPDATE SET
  due_at=datetime(:now,'+45 minutes'),status='scheduled',updated_at=:now;
 ```
 
-不按消息创建任务；worker 只 `BEGIN IMMEDIATE` 抢占 `status IN ('due','retry_wait') AND due_at<=now` 且 `lease_until` 为空/已过期的行。workspace 锁使用 SQLite `maintenance_lock(workspace PRIMARY KEY, owner, lease_until)` 或同一数据库的 `BEGIN IMMEDIATE`；单 worker 不允许并行处理同一 workspace。
+不按消息创建任务；worker 先在 `maintenance_lock` 中以条件更新抢锁：仅当不存在锁、`lease_until<=now` 或 owner 为自己时，将 `owner=:worker_id`、`lease_until=:now+lease`、`generation=generation+1` 写入；首次插入使用 `INSERT ... ON CONFLICT DO UPDATE ... WHERE lease_until<=:now`。持锁期间每个 lease/阶段更新 `renewed_at` 和 `lease_until`。不能抢到锁就不处理该 workspace。
+
+`maintenance_lock` 是 workspace 级互斥，`maintenance_jobs` 是会话级状态；两者都在同一 SQLite 数据库中但职责不同。Gateway 重启后，过期 lease 可被新 worker 抢占并递增 `generation`；旧 worker 的续租带 `WHERE owner=:old AND generation=:generation`，因此不会复活。worker 退出前尽力释放锁，异常退出依靠 lease 超时恢复。所有维护型写入都必须持有该锁；前台 activity upsert 不抢维护锁，但只更新允许的四个活动字段。
 
 Gateway 重启后扫描 `scheduled/due/retry_wait`；过期 lease 回收为 `retry_wait`。抢到 snapshot 后记录 `snapshot_cursor`，只处理 `last_review_cursor..snapshot_cursor`；review 成功 CAS 更新 `last_review_cursor`，若 `activity_epoch` 未变化才置 `succeeded`，否则重新计算 due_at。失败按 1/2/4/8/16 分钟退避，保留错误摘要和审计事件。
 
@@ -429,11 +537,23 @@ Gateway 重启后扫描 `scheduled/due/retry_wait`；过期 lease 回收为 `ret
 
 ### 10.2 回放隔离和评分
 
-评测 runner 为每题创建只读临时 fixture，环境变量关闭网络、写入和 Git；candidate 只能拿到当前 split 的 prompt、fixture 和工具白名单，不得读取 holdout 答案、其他 split、生成日志或 judge 输出。baseline 和 candidate 使用相同模型配置、工具 schema、fixture 和超时。
+评测 runner 为每题创建只读临时 fixture，环境变量关闭网络、写入和 Git；candidate 只能拿到当前 split 的 prompt、fixture 和工具白名单，不得读取 holdout 答案、其他 split、生成日志或 judge 输出。baseline 和 candidate 使用相同模型配置、工具 schema、fixture 和超时，并按同一 `case_key` 配对运行。
 
-每题记录：成功/失败、rubric 分、token、P50/P95 延迟、工具调用列表、高风险工具数、安全违规、恢复次数和 judge rationale。judge 必须是独立 actor；题目生成 Agent、candidate Agent、评分 Agent、发布 Agent 的 actor_id 不得相同。
+每题记录：成功/失败、rubric 分、总 token、端到端延迟、工具调用列表、高风险工具数、安全违规、恢复次数和 judge rationale。重试产生的所有 token 和墙钟时间计入该题；超时按失败计入，延迟取实际 timeout 上限；同一题的重试不另算成功题。EvalRun 指标按同一 EvalPack 的配对题计算：
 
-发布 gate：holdout 成功率不低于 baseline；新增高风险工具数为 0；安全违规为 0；每题总 token 增幅≤15%；P50 延迟增幅≤20%。通过最低证据和 gate 才能 `eligible_for_confirmation`；效果提升但成本/延迟超标只能 `staging`。任何 hash（Skill、tool schema、system prompt、model、fixture、EvalPack）变化都将 baseline 标记 `stale_baseline`，必须重跑。
+```text
+token_delta = (mean(candidate_tokens_i - baseline_tokens_i) / mean(baseline_tokens_i)) * 100%
+latency_delta = (P50(candidate_latency_i) - P50(baseline_latency_i)) / P50(baseline_latency_i) * 100%
+success_delta = mean(candidate_success_i - baseline_success_i)
+```
+
+失败和超时都保留在分母；P50 是整组 holdout（或 limited 的 holdout）逐题端到端延迟的中位数，不是单次 API 调用 P50。baseline/candidate 必须使用同一模型、参数、system prompt 版本、Tool schema digest、fixture hash、timeout 和 replay policy。
+
+10～19 题的 limited EvalPack 每次运行必须写 `replay_group_id`、递增 `replay_attempt`、`evidence_grade='limited'`、`is_independent_replay` 和 `consistency_result`。至少两次独立回放使用相同封存 EvalPack、相同 fixture hash、相同模型和工具配置，但使用新的 process/worker、随机 nonce 和独立 `eval_run_id`；若逐题 outcome、工具风险和 gate 结论一致则 `consistency_result='consistent'`，否则为 `inconsistent`。limited 结果不能自动采用：样本量不足且重复回放只能证明有限稳定性，必须用户确认；确认界面至少展示两次 run 的 hash、逐题配对分数、失败/超时、token/延迟差、高风险工具、安全事件、fixture 和模型配置。
+
+judge 可以与生成 Agent 使用同一底层模型，但必须是不同 `actor_id` 的独立调用；judge 不得读取 candidate 生成日志、隐藏思路或其他 split，不得修改 EvalPack、题目或 rubric，只能输出分数和理由。judge 失败时该题标记 `judge_error`，EvalRun 不得通过 gate，可重试为新的 run；发布决定只能由后台 gate 服务和用户确认完成。
+
+发布 gate：holdout 成功率不低于 baseline；新增高风险工具数为 0；安全违规为 0；`token_delta<=15%`；`latency_delta<=20%`。通过最低证据和 gate 才能 `eligible_for_confirmation`；效果提升但成本/延迟超标只能 `staging`。limited 只能是 `provisional`，永远不能自动 active。任何 hash（Skill、tool schema、system prompt、model、fixture、EvalPack）变化都将 baseline 标记 `stale_baseline`，必须重跑。
 
 ## 11. 版本、合并与回滚
 
@@ -470,33 +590,186 @@ effective_score = confidence * (0.45 + 0.25*authority + 0.20*salience)
 
 ## 14. 分阶段实施与验收
 
-### Phase 0：协议和空 schema
+### Phase 0：协议、空 schema 和持久化基础（后续实施任务）
 
-新增枚举、迁移、SQLite 连接、schema verify；默认不改变 prompt。验收：新库/升级库可重复迁移，外键、WAL、备份和重建通过。
+Phase 0 只建立持久化契约和可验证的空数据库基础，不接入 ContextBuilder，不改变 Agent prompt，不执行 retention，不接入 Wiki/Case/Skill 自动写入，不创建生产 CLI。以下内容是后续实现任务和验收标准；当前仅完成了文档设计，未执行这些任务。
 
-### Phase 1：Trace 索引和检索事件
+#### Phase 0.1 文件边界
 
-从 Audit catalog/JSONL 构建 `trace_index`，增加 redacted summary 和 `retrieval_events`；验收：重建结果一致、payload TTL 可验证、Trace 查询不是 404。
+预计新增或修改的文件（路径为实施目标，当前不存在的文件不能视为已实现）：
 
-### Phase 2：Wiki/Case 插件
+| 文件 | 后续职责 | 验收重点 |
+|---|---|---|
+| `nanobot/memory/schema.py` | 表名、状态枚举、迁移版本、SQL 常量和 schema hash | 不复制 Audit schema；枚举与本文一致 |
+| `nanobot/memory/db.py` | workspace 数据库路径、连接、WAL、busy timeout、`PRAGMA foreign_keys=ON` | 初始化目录安全、每个连接都启用 pragma |
+| `nanobot/memory/migrations/0001_memory_base.sql` | Phase 0 表、索引、FTS5 检测结果和 schema_meta | 幂等、事务边界、外键可解析 |
+| `nanobot/memory/migrations/runner.py` | migration apply、版本记录、失败恢复和回滚重建 | 不在脏数据库上半升级 |
+| `nanobot/memory/lock.py` | `maintenance_lock` 抢锁、续租、释放和 generation 检查 | 过期 lease 可恢复，旧 worker 不能续租 |
+| `nanobot/memory/outbox.py` | outbox 记录、幂等 key、重试/死信状态 | 事实源与索引最终一致，不覆盖新 hash |
+| `tests/memory/test_schema.py` | 临时 SQLite schema/fk/FTS 测试 | 只使用临时目录或内存数据库 |
+| `tests/memory/test_migrations.py` | 升级、失败、回滚和重建测试 | 不触碰 `runtime/workspace/` |
+| `tests/memory/test_lock_outbox.py` | 并发 lease、重启恢复和 outbox 幂等测试 | 两 worker 竞争结果确定 |
 
-定义 entry point/MCP adapter；实现 Markdown revision、FTS、关系和 Case candidate。验收：插件缺失不阻塞普通任务；页面写入先 revision 后索引；tombstone 可穿透所有查询。
+实际文件名可在实现前调整，但必须保持“memory 数据库”和 Audit 数据库分离，并在 PR 中列出最终文件映射。
 
-### Phase 3：ContextBuilder scope
+#### Phase 0.2 workspace 初始化和启动流程
 
-接入 intent/router/retriever、2k/3k 预算、digest 和降级。验收：同一 stable prompt 下 dynamic digest 随记忆变化；普通检索失败继续回答，显式历史失败可见。
+目标路径为 `<workspace>/.nanobot/memory.sqlite3`，父目录 `<workspace>/.nanobot/` 以受限权限创建；不得创建在仓库根目录、宿主机临时目录或独立租户目录。启动流程应为：
 
-### Phase 4：维护 worker 和 ToolPolicy
+1. 解析 Agent 实际 workspace，拒绝空路径、非目录和 workspace 外路径。
+2. 创建 `.nanobot/`（若不存在），不删除、不覆盖已有文件。
+3. 以 SQLite URI 打开数据库，设置 `busy_timeout`、WAL 和 `PRAGMA foreign_keys=ON`；每个新连接都重新执行 pragma，不能只依赖连接池首连接。
+4. 在同一连接中读取 `schema_meta`，按版本顺序执行 migration；migration 未完成前不允许 memory 检索或维护写入。
+5. 检测 FTS5；支持时创建 `memory_fts`，不支持时将 memory index 标记为 `degraded`，普通任务可继续但 Phase 0 验收不得判定通过。
+6. 校验 schema hash、外键、必需表和 maintenance lock；失败则只读启动或明确失败，不能静默创建半成品数据库。
 
-实现 45 分钟状态机、CAS、lease、workspace 单 worker、三个 skill 工具和角色白名单。验收：连续消息只一行任务；重启可恢复；旧任务不会覆盖新 epoch；高风险工具被拒绝。
+验收标准：使用临时 workspace 启动两次得到同一数据库路径和 schema 版本；实际默认 workspace 不被改动；连接查询 `PRAGMA foreign_keys` 返回 `1`；缺少 FTS5 时有可观测错误且不会误报“索引可用”。这些标准需要后续测试实现确认，当前未验证。
 
-### Phase 5：Case→Skill、EvalPack/EvalRun
+#### Phase 0.3 SQLite schema 和外键
 
-实现候选、封存、fixture 回放、独立 judge、gate 和 staging。验收：10/19/20 题边界正确；holdout 不可读；自评自批被拒；stale baseline 被强制重跑。
+Phase 0 必须实现本文第 4 节的 `memory_records`、`memory_revisions`、`wiki_pages`、`wiki_relations`、`cases`、`skills`、`skill_revisions`、`trace_index`、`eval_packs`、`eval_runs`、`eval_case_results`、`maintenance_jobs`、`maintenance_lock`、`tombstones`、`retrieval_events`、`schema_meta` 和 outbox 表。
 
-### Phase 6：受控运行
+外键验收必须逐字段执行：
 
-夜间/空闲只处理低风险候选，持续记录 evidence；失败 Trace 自动生成回归题；只生成 PR/adopt proposal，不自动合并。验收：连续运行无记忆膨胀、越权或漂移，回归可停机并切回旧 revision。
+* `memory_records.current_revision_id` → `memory_revisions.revision_id`：可空，deferred，`ON DELETE RESTRICT`。
+* `wiki_pages.current_revision_id`：外部 Wiki revision 引用，可空，不声明本地 SQLite FK；adapter 必须在同步时校验外部 revision/hash。
+* `cases.revision_id`：外部 Wiki revision 引用，不声明本地 FK；`cases.page_id` → `wiki_pages.page_id` 使用 `ON DELETE RESTRICT`。
+* `skills.current_revision_id` → `skill_revisions.revision_id`：可空，deferred，`ON DELETE RESTRICT`。
+* `skill_revisions.eval_pack_id` → `eval_packs.eval_pack_id`：可空，deferred，`ON DELETE SET NULL`；循环依赖必须在同一事务中验证。
+* `eval_runs.baseline_revision_id` → `skill_revisions.revision_id`：非空，`ON DELETE RESTRICT`。
+* `eval_runs.candidate_revision_id` → `skill_revisions.revision_id`：可空，`ON DELETE RESTRICT`。
+
+测试方法：开启 `PRAGMA foreign_keys=ON` 后执行合法插入、缺失父行插入、删除父行、deferred transaction 提交和 rollback；检查 `PRAGMA foreign_key_list(table)` 与 schema 设计逐项一致。通过标准是非法引用在提交或插入时被拒绝、合法循环初始化可在 deferred transaction 内完成、任何 migration 不会留下未解析外键。失败恢复是回滚当前 migration，保留上一个 schema 版本，禁止手工删除生产数据库。
+
+#### Phase 0.4 migration 执行和回滚
+
+每个 migration 必须有单调版本号、`up` SQL、可验证的 schema hash 和回滚策略。执行流程为：
+
+1. `BEGIN IMMEDIATE`，读取 `schema_meta`，确认没有未完成 migration。
+2. 创建/升级临时结构，执行外键和索引检查。
+3. 写入 migration version 和 app build，提交事务。
+4. 提交后执行非关键 FTS rebuild/outbox enqueue；不能把半完成索引标为 ready。
+
+失败时事务内 SQL 全部 rollback；如果 SQLite 不支持安全 down migration，则通过备份数据库、创建目标版本新库、从事实源重建并原子替换来回滚，不执行宽泛 `DROP`。验收包括：重复执行幂等；中途注入异常后旧版本仍可打开；升级后重新启动不重复执行；新库和重建库的 schema hash 相同。当前未创建 migration 文件，也未执行回滚验证。
+
+#### Phase 0.5 maintenance_lock
+
+必须使用本文 4.2 的 `maintenance_lock` 表，不再以未定义的锁表作为实现假设。抢锁条件为“无行、lease 已过期或 owner 自己”；成功时递增 `generation`，设置 `acquired_at/renewed_at/lease_until`。续租和释放必须带 `workspace + owner + generation` 条件。Gateway/worker 重启后只允许新 worker 抢占过期 lease，旧 worker 的续租影响行数为 0 即视为失效。
+
+测试方法：两个独立连接竞争同一 workspace；验证只有一个 owner；模拟时间过期后新 owner 抢锁；旧 generation 续租失败；释放后第三个 worker 可获得新 generation。失败恢复：worker 崩溃不做强制清理，等待 lease 超时；锁表损坏时停止维护写入并报告，不能绕过锁直接写正式资产。
+
+#### Phase 0.6 outbox
+
+Phase 0 应新增（实施目标）`memory_outbox` 表，至少包括：`outbox_id`、`workspace`、`object_type`、`object_id`、`revision_id`、`content_hash`、`operation`、`payload_json`、`status`、`attempt_count`、`next_attempt_at`、`lease_until`、`last_error`、`created_at`、`updated_at`，并建立 `(object_type,object_id,content_hash,operation)` 幂等唯一键。`payload_json` 默认只保存引用、参数、cursor 和 hash；敏感正文不得进入 outbox，确需临时正文时必须脱敏、限长并设置 TTL。
+
+事实源 revision 和 SQLite current 事务提交后，才插入 outbox；outbox worker 按 workspace lock 获取任务，检查 tombstone/current hash 后更新 FTS/关系索引。成功置 `done`；可重试错误进入 `retry_wait` 并指数退避；超过上限进入 `dead_letter`，不得静默丢弃。新 revision 到达时旧 outbox 任务标记 `superseded`，不能覆盖新 hash。
+
+测试方法：模拟事实源成功/SQLite 失败、SQLite 成功/FTS 失败、重复 enqueue、新 revision 覆盖旧任务、worker 崩溃和 dead-letter；通过标准是最终索引与 current hash 一致、重复任务只产生一次有效更新、tombstone 后任务不会复活旧行。当前 outbox 尚不存在，以上均待实现验证。
+
+#### Phase 0.7 FTS5 检测、初始化和重建
+
+启动时必须通过临时连接执行 `SELECT fts5(?)` 或等价能力检测，并记录 SQLite 版本、FTS5 可用性和失败原因。检测失败时不创建伪 FTS 表、不宣称 Phase 0 通过；普通 Agent 可按设计降级为无记忆检索，但必须有明确 `index_degraded` 状态。
+
+检测成功后创建 `memory_fts` 和必要的 FTS 配置；初始化和重建只扫描本文 4.3 映射的五类事实源。重建步骤：在临时 FTS 表写入当前 hash、执行计数/hash 校验、检查 tombstone 和 active 状态、事务 rename；失败保留旧索引并将 outbox 标为 retry/dead-letter。验收包括 FTS5 缺失检测、首次初始化、空库初始化、Markdown/hash 变化重建、归档排除、tombstone 防复活和重建幂等。当前未执行 FTS5 环境验证。
+
+#### Phase 0.8 Phase 0 总验收
+
+Phase 0 只有在以下全部通过后才可进入 Phase 1：
+
+* 临时 workspace 初始化路径正确，默认 workspace 无副作用；
+* 所有 migration 可重复执行、失败可恢复、版本和 schema hash 一致；
+* `PRAGMA foreign_keys=ON` 在每个连接生效，外键矩阵测试通过；
+* maintenance lock 的互斥、续租、过期接管和 generation 防旧 worker 测试通过；
+* outbox 的幂等、重试、死信、superseded 和 tombstone 测试通过；
+* FTS5 能力检测、初始化、重建和降级路径测试通过；
+* 不接入 ContextBuilder、不执行 retention、不写正式 Wiki/Case/Skill、不创建生产 CLI；
+* 所有失败场景都有保留旧版本/旧索引/只读降级/重试或人工恢复路径。
+
+以上是 Phase 0 的实施任务和验收门槛，不是当前完成状态。
+
+### Phase 1：Trace 索引和检索事件（依赖 Phase 0）
+
+**目标**：只读消费现有 Audit JSONL/catalog，建立 `trace_index` 和 `retrieval_events`，不改变 Audit 事实源、不把 payload 复制进 memory DB。
+
+**实施任务**：
+
+1. 新增 `nanobot/memory/trace_indexer.py` 和 `nanobot/memory/retrieval_events.py`；读取 `nanobot/audit/catalog.py`、`reader.py`、`query.py` 的 committed prefix。
+2. 对事件/载荷调用现有 `AuditRedactor`，生成脱敏 summary、outcome、tool_count、event_count 和 source cursor。
+3. 为每条 Trace 设置 `payload_expire_at=created_at+7d`、`trace_expire_at=created_at+18d`；仅写索引时间，不提前删除 Audit 原始事实。
+4. 将检索请求、scope、结果 revision IDs 和 injected digest 写入 `retrieval_events`；失败按普通任务/显式历史查询规则降级。
+5. 增加全量 rebuild 和增量 cursor 任务，但作为内部维护能力，不新增对外 CLI。
+
+**验收**：临时 Audit fixture 重建得到稳定 trace/hash；增量重跑幂等；payload 不出现在 summary；18/7 天边界计算正确；普通检索失败不阻塞，显式历史查询失败可见；查询接口返回结构化结果而非 404。**失败恢复**：索引失败保留 Audit 原始文件，outbox retry；脱敏失败不入长期索引并产生 `redaction_failed` 事件；cursor 损坏从 catalog committed prefix 重建。**不做**：不修改 Audit writer、不改变 WebUI trace 协议、不把完整 Trace 注入 prompt。
+
+### Phase 2：Wiki/Case 插件和 revision（依赖 Phase 0、Phase 1）
+
+**目标**：通过 entry point 或 MCP 调用真实 Wiki，不在 nanobot 核心复制 Wiki storage；Case 作为 Wiki `page_type='case'` 页面。
+
+**实施任务**：
+
+1. 新增 `nanobot/plugins/memory_wiki.py`、`nanobot/memory/wiki_adapter.py`，定义 search/read/upsert/link/unlink/forget 的最小适配协议。
+2. 对 `nanobot-llm-wiki` 的 `pages/links/page_fts`、`tools.py` 和 `mcp_server.py` 做 capability discovery；记录 source、tool schema digest 和版本。
+3. Wiki 写入先创建不可变 Markdown revision，再把外部 revision ID/hash 投递到 memory outbox；本地 `wiki_pages.current_revision_id` 不声明 SQLite FK。
+4. 将 `page_type='case'` 页面映射到 `cases`，生成 candidate；去重使用 content hash 和 task signature，不删除原页面。
+5. FTS 只索引 adapter 返回且通过 tombstone/状态检查的内容；插件不可用时返回 degraded，不阻塞普通 Agent。
+
+**验收**：entry point 和 MCP 两种模式至少各有一个临时 workspace round-trip；Markdown revision 不覆盖旧版本；Case page/cases 索引一致；关系重复写幂等；插件缺失可降级；forget 后旧 FTS 行不能复活。**失败恢复**：Wiki 写成功但 memory DB 失败时保留 Wiki revision 并重试 outbox；memory current CAS 冲突标记 superseded；外部 revision/hash 不一致停止同步并要求重扫。**不做**：不直接修改 Wiki 上游实现，不把 Wiki SQLite 作为 nanobot memory DB，不在本阶段自动发布正式 Skill。
+
+### Phase 3：ContextBuilder memory scope（依赖 Phase 1、Phase 2）
+
+**目标**：在现有 `ContextBuilder.build_system_sections()` 的 dynamic 区域增加按意图的只读检索，保持 stable prompt 和 Tool schema cache 稳定。
+
+**实施任务**：
+
+1. 新增 `nanobot/memory/intent.py`、`retriever.py`、`policy.py`；由 `AgentLoop` 传入 session/channel/trace 元数据。
+2. 规则优先识别 `task/history_query/memory_write/forget/skill_discovery/trace_query/review`，输出 scope 和显式失败语义。
+3. 检索 memory、Wiki、Case、Skill、Trace summary，按 effective score、freshness、authority、冲突惩罚排序。
+4. 执行 2,000 token 软上限、3,000 token 硬上限和 6% 自适应；完整正文只通过分页工具读取。
+5. 将 retrieval digest 写入 dynamic metadata，不写入 stable prompt；继续使用现有 `ContextGovernor` 作最终裁剪。
+
+**验收**：稳定事实变化只改变 dynamic digest；上下文超限时保留优先级正确；普通检索异常仍能完成普通任务；显式历史/记忆修改异常产生可见结构化错误；注入内容带 revision 引用且无 tombstone 内容。**失败恢复**：memory DB/FTS 不可用时退回 session-only；预算计算异常时不注入 memory overlay；digest 不一致时丢弃 overlay 并记录 retrieval event。**不做**：不改 AgentRunner 工具循环，不默认注入完整 Trace/payload，不自动写入正式记忆。
+
+### Phase 4：维护 worker、45 分钟任务和 ToolPolicy（依赖 Phase 0～3）
+
+**目标**：建立每 workspace 单 worker 的 review/retention/index 编排，并将工具权限落实到 `ToolRegistry.prepare_call()` 之前。
+
+**实施任务**：
+
+1. 新增 `nanobot/memory/maintenance.py`、`worker.py`、`policy.py` 的实际实现；维护 `maintenance_jobs`、`maintenance_lock`、outbox 和 retry 状态。
+2. 在 AgentLoop 消息入口只执行 activity upsert；worker 按 45 分钟 idle、epoch、snapshot cursor 执行一次批处理 review。
+3. 实现 `skill_catalog_search`、`skill_read`、`skill_propose`，注册方式遵循现有 ToolLoader/entry point，不绕过 ToolRegistry。
+4. 实现普通 Agent、维护 Agent、评测 Agent 的 ToolPolicy 矩阵，阻止写正式资产、删除、Git、网络和越权路径。
+5. 处理 Gateway 重启、lease 过期、旧 epoch、CAS 冲突和最多 5 次退避重试。
+
+**验收**：连续消息只有一条 maintenance job；两个 worker 不能同时持有 workspace lock；重启后任务可恢复；旧 epoch 不能覆盖新 cursor；高风险工具在 prepare_call 前被拒；candidate 不得修改 current。**失败恢复**：worker 崩溃依赖 lease 超时接管；策略配置缺失 fail-closed；review 失败进入 retry_wait/dead-letter，不阻塞普通 Agent。**不做**：不自动 adopt、不自动 merge PR、不把维护 Agent 设为正式发布者。
+
+### Phase 5：Case→Skill、EvalPack/EvalRun 和 staging（依赖 Phase 2～4）
+
+**目标**：形成可审计的候选 Skill 评测闭环，不允许同一 Agent 自己出题、执行、评分和批准。
+
+**实施任务**：
+
+1. 新增 `nanobot/memory/derivation.py`、`evaluation.py` 和独立评测 harness；从脱敏 Trace/Case 生成 candidate 和 EvalPack draft。
+2. 独立审核 actor 校验题目 schema、去重、fixture、秘密和 rubric，封存 dataset_hash/fixture_hash；按 20 题 10/5/5，10～19 题 limited，少于 10 题 insufficient。
+3. 评测 runner 使用临时 fixture workspace，禁网、禁写、禁 Git；baseline/candidate 同题配对，结果先写临时 evidence，再由维护 worker 导入。
+4. judge 只能评分和给理由；记录 replay_group、attempt、consistency、token、延迟、工具风险和安全指标。
+5. 通过 holdout、成本≤15%、P50 延迟≤20%、无安全违规和无新增高风险工具后进入 `eligible_for_confirmation`；否则停留 staging。
+
+**验收**：holdout 对 candidate 不可见；生成/审核/回放/评分/发布 actor 分离；10/19/20 题边界正确；limited 两次独立回放证据一致性可判断；任何 Skill/tool/model/fixture/hash 改变会产生 stale_baseline；回放结果可重现。**失败恢复**：judge 失败使 run 不通过且新 run 重试；fixture 污染销毁临时目录并保留 evidence 摘要；gate 失败保留 candidate 但禁止 current 切换。**不做**：不自动发布正式 Skill，不把 synthetic 题单独当作发布证据，不引入独立向量库。
+
+### Phase 6：受控持续运行（依赖 Phase 5，默认关闭）
+
+**目标**：在明确开关和低风险范围内运行空闲 review，持续积累 evidence，但不产生不可逆外部副作用。
+
+**实施任务**：
+
+1. 增加维护配置和 kill switch（仅作为配置，不在本阶段新增 CLI）；默认关闭自动 staging/adopt。
+2. 只选择重复、高价值、低敏感任务；线上失败 Trace 自动生成 regression candidate，重新封存 EvalPack 版本。
+3. 每轮记录 evidence、成功率、恢复率、token、延迟、安全事件、索引失败和记忆容量告警。
+4. 对连续回归、权限拒绝异常、记忆膨胀或 FTS 重建失败自动暂停候选处理，保留旧 current revision。
+5. 共享 Skill 只生成 Git PR proposal；个人 Skill 只生成需用户确认的 workspace adopt proposal。
+
+**验收**：连续运行不增加重复事实、不绕过 ToolPolicy、不自动合并；回归可自动暂停并回滚 current；18/7 天 retention 不误删长期摘要；每次 proposal 都能追溯到 trace/case/eval run。**失败恢复**：kill switch 立即停止维护 worker 的候选处理；恢复旧 revision/current 指针；无法恢复时进入只读 degraded，不清理用户 workspace。**不做**：不自动 merge main、不自动删除普通记忆、不自动扩大工具权限、不把 Phase 6 当作默认线上行为。
 
 ## 15. 测试清单
 
@@ -514,6 +787,27 @@ effective_score = confidence * (0.45 + 0.25*authority + 0.20*salience)
 
 `nanobot-llm-wiki` 提供本地 Markdown、SQLite/FTS、MCP/CLI/UI 的插件参考，nanobot 只依赖协议，不复制其存储实现。Hermes self-evolution 提供 dataset→replay→judge→PR 的离线优化范式和测试/大小/cache/人工 PR guardrail。SkillOpt-Sleep 提供 harvest/mine/replay/stage/adopt、证据日志、独立 split 和多 Skill gate 的参考；其跨平台 transcript adapter、具体 GEPA/DSPy 依赖和自动调度器不进入 nanobot 核心。
 
-## 18. 实施完成判定
+## 18. 调研修订记录
+
+本轮复核查阅了以下真实代码和资料：
+
+* nanobot：`nanobot/agent/loop.py`、`runner.py`、`context.py`、`context_governance.py`、`memory.py`、`session/manager.py`、`session/goal_state.py`、`agent/tools/registry.py`、`agent/tools/loader.py`、`agent/skills.py`、`audit/emitter.py`、`audit/writer.py`、`audit/index_schema.py`、`audit/query.py`、`config/`。
+* `nanobot-llm-wiki`：`src/nanobot_llm_wiki/storage.py`（`pages`/`links`/`page_fts` 及 join 检索）、`tools.py`（9 个 NanoBot entry-point 工具）、`mcp_server.py`（7 个 stdio MCP 工具）、`pyproject.toml`（`nanobot.tools` entry points）、`tests/test_cli_and_tools.py`、`tests/test_mcp_server.py`。
+* `hermes-agent-self-evolution`：`evolution/core/dataset_builder.py`、`fitness.py`、`constraints.py`、`README.md`、`PLAN.md`。该项目是独立优化 pipeline，提供 dataset/replay/judge/constraint/PR 范式，并非 nanobot 内置 EvalPack 实现。
+* `SkillOpt-main/SkillOpt-main/skillopt_sleep`：`cycle.py`、`replay.py`、`staging.py`、`evidence.py`、`judges.py`、`types.py`、`gate.py`。真实流程为 harvest→mine→replay→consolidate/gate→stage→可选 adopt；证据日志和 staging 是独立文件，不是 nanobot SQLite 协议。
+
+本轮修正：
+
+1. 明确 nanobot 现有 `MemoryStore` 是文件 I/O，不是 SQLite memory store；Audit 的 SQLite 也只是其 JSONL 的索引，不能复用为记忆事实库。
+2. 为 `memory_records`、`skills`、`skill_revisions`、`eval_runs` 补充真实 SQL 外键、可空性、`ON DELETE` 和 deferred 规则；明确 Wiki page/Case revision 是外部事实源引用。
+3. 增加 `maintenance_lock` 完整 schema，统一为条件抢锁+lease+generation，不再使用未定义的“锁表或 BEGIN IMMEDIATE”二选一表述。
+4. 将 FTS 查询改为按 `object_type` join 状态事实表并检查 tombstone，定义五类对象、事实源和 archived 行为。
+5. 统一前台 activity/retrieval 有限写与维护 worker 独占写边界，明确评测 runner 使用临时 evidence 后由 worker 导入。
+6. 统一 Audit intent→事实源 fsync/hash→SQLite CAS→outbox→索引→Audit committed/failed 写入顺序，补充失败恢复和幂等。
+7. 补充 limited EvalPack 的独立回放字段、同题配对成本/延迟公式及 judge 边界。
+
+仍待代码验证：新增 memory schema、迁移、outbox、ToolPolicy、Wiki adapter、维护 worker、评测 runner 尚未实现；`memory.sqlite3` 的实际目录初始化、entry point 版本/冲突处理、SQLite FTS5 是否在目标部署环境启用、Audit 18/7 天清理与真实 fixture 禁网/禁写仍须 Phase 0～5 的实现测试确认。文档中的 `memory schema` 等 CLI 是实施目标，不是当前已存在命令。
+
+## 19. 实施完成判定
 
 只有同时满足以下条件，才可把五层记忆声明为可用：schema 可重建、事实源和索引边界清晰、ContextBuilder 有预算和降级、45 分钟任务可恢复、Trace→Case→Skill 有独立审核和版本回滚、EvalPack 有不可读 holdout、tombstone 可阻断复活、首个只读代码审查 Skill 在隔离 fixture 上通过 gate，并且所有正式发布仍等待用户确认。
