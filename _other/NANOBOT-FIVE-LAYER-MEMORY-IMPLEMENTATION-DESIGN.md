@@ -1,6 +1,6 @@
 # nanobot 五层记忆体系实施设计
 
-> 文档状态：可执行实施计划（基于 2026-09-25 代码快照；当前任务均未开始）
+> 文档状态：可执行实施计划与实施记录（截至 2026-09-26，Phase 0、Phase 1 已完成）
 > 适用范围：当前仓库的 Python Agent、Session、Audit/Trace、Skill、ToolRegistry，以及通过插件/MCP/entry point 接入的 Wiki。
 > 本文只描述实现，不修改生产代码；所有新增能力都必须先以 feature flag 和迁移脚本落地。
 
@@ -14,7 +14,7 @@
 4. Skill/Case：Skill 继续是版本化 `SKILL.md`，Case 是 Wiki 的 `page_type=case` 页面；SQLite 保存关联、状态和评测索引。
 5. Retention：统一处理评分、降权、归档、TTL 和 tombstone，不把生命周期状态当作事实内容。
 
-本阶段只新增 `_other/NANOBOT-FIVE-LAYER-MEMORY-IMPLEMENTATION-DESIGN.md`。实际开发应按 Phase 0→6 分批提交；任何阶段都不允许直接覆盖 Markdown 事实源、正式 Skill 或原始 Audit。
+Phase 0、Phase 1 已按计划分批提交。后续开发仍应按 Phase 2→6 推进；任何阶段都不允许直接覆盖 Markdown 事实源、正式 Skill 或原始 Audit。
 
 ## 2. 现状盘点与计划项分类
 
@@ -23,7 +23,7 @@
 | 阶段 | 名称 | 前置阶段 | 当前状态 | 可开始条件 | 完成条件 |
 |---|---|---|---|---|---|
 | Phase 0 | 持久化基础 | 无 | 已完成 | 设计评审通过 | Phase 0 DoD 全部完成 |
-| Phase 1 | Trace 索引 | Phase 0 | 未开始 | Phase 0 通过 | Phase 1 DoD 全部完成 |
+| Phase 1 | Trace 索引 | Phase 0 | 已完成 | Phase 0 通过 | Phase 1 DoD 全部完成 |
 | Phase 2 | Wiki/Case | Phase 0、1 | 未开始 | Phase 1 通过 | Phase 2 DoD 全部完成 |
 | Phase 3 | ContextBuilder 检索 | Phase 1、2 | 未开始 | Phase 2 通过 | Phase 3 DoD 全部完成 |
 | Phase 4 | Maintenance/ToolPolicy | Phase 0～3 | 未开始 | Phase 3 通过 | Phase 4 DoD 全部完成 |
@@ -715,6 +715,8 @@ Phase 0 只有在以下全部通过后才可进入 Phase 1：
 
 **验收**：临时 Audit fixture 重建得到稳定 trace/hash；增量重跑幂等；payload 不出现在 summary；18/7 天边界计算正确；普通检索失败不阻塞，显式历史查询失败可见；查询接口返回结构化结果而非 404。**失败恢复**：索引失败保留 Audit 原始文件，outbox retry；脱敏失败不入长期索引并产生 `redaction_failed` 事件；cursor 损坏从 catalog committed prefix 重建。**不做**：不修改 Audit writer、不改变 WebUI trace 协议、不把完整 Trace 注入 prompt。
 
+**实施结果（2026-09-25）**：已由 `f1debf0d` 完成。`trace_indexer.py` 通过 `AuditReader` 只读取 catalog 的 committed prefix，先用 `AuditRedactor` 校验事件和 payload，再丢弃 payload，仅落库脱敏摘要及元数据；支持全量重建、增量 cursor 与幂等 upsert。`retrieval_events.py` 提供不可变写入、失败事件和 payload-free 结构化 Trace 查询。脱敏或索引异常不改写 Audit，写入 `trace_index` 的 `degraded` 状态和幂等 `memory_outbox` 重试。当前未接入 AgentLoop、CLI、HTTP API 或 WebUI，因此没有可由新 WebUI 会话触发的检索流程。
+
 ### Phase 2：Wiki/Case 插件和 revision（依赖 Phase 0、Phase 1）
 
 **目标**：通过 entry point 或 MCP 调用真实 Wiki，不在 nanobot 核心复制 Wiki storage；Case 作为 Wiki `page_type='case'` 页面。
@@ -903,7 +905,7 @@ Phase 0 只有在以下全部通过后才可进入 Phase 1：
 
 #### P1-T01：Audit JSONL/catalog 读取适配
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
@@ -926,7 +928,7 @@ Phase 0 只有在以下全部通过后才可进入 Phase 1：
 
 #### P1-T02：Trace 脱敏摘要生成
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
@@ -949,7 +951,7 @@ Phase 0 只有在以下全部通过后才可进入 Phase 1：
 
 #### P1-T03：trace_index 增量索引
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
@@ -972,7 +974,7 @@ Phase 0 只有在以下全部通过后才可进入 Phase 1：
 
 #### P1-T04：trace_index 全量重建
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
@@ -995,7 +997,7 @@ Phase 0 只有在以下全部通过后才可进入 Phase 1：
 
 #### P1-T05：retrieval_events 写入
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
@@ -1018,7 +1020,7 @@ Phase 0 只有在以下全部通过后才可进入 Phase 1：
 
 #### P1-T06：18 天 Trace / 7 天 payload 时间字段
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
@@ -1041,7 +1043,7 @@ Phase 0 只有在以下全部通过后才可进入 Phase 1：
 
 #### P1-T07：Trace 索引失败恢复
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
@@ -1064,7 +1066,7 @@ Phase 0 只有在以下全部通过后才可进入 Phase 1：
 
 #### P1-T08：Phase 1 DoD
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
@@ -1087,13 +1089,13 @@ Phase 0 只有在以下全部通过后才可进入 Phase 1：
 
 ### Phase 1 Definition of Done
 
-- [ ] 所有子任务完成，或延期/阻塞均有记录。
-- [ ] 单元、集成和安全边界测试通过并记录。
-- [ ] migration/schema/协议证据已记录。
-- [ ] 失败恢复路径已验证。
-- [ ] 文档当前状态已更新，未把未验证内容标为完成。
-- [ ] 提交和测试证据已记录。
-- [ ] 无未解决的事实源、权限或回滚风险。
+- [x] 所有子任务完成，或延期/阻塞均有记录。
+- [x] 单元、集成和安全边界测试通过并记录。
+- [x] migration/schema/协议证据已记录。
+- [x] 失败恢复路径已验证。
+- [x] 文档当前状态已更新，未把未验证内容标为完成。
+- [x] 提交和测试证据已记录。
+- [x] 无未解决的事实源、权限或回滚风险。
 
 ### Phase 2：Wiki/Case
 
@@ -2391,7 +2393,7 @@ Phase 0 只有在以下全部通过后才可进入 Phase 1：
 
 ## 21. 实施记录
 
-初始化时所有任务均未开始。
+Phase 0、Phase 1 已完成并记录证据；Phase 2～6 尚未开始。
 
 | 任务 ID | 状态 | 日期 | 提交 | 测试 | 证据 | 备注 |
 |---|---|---|---|---|---|---|
@@ -2417,14 +2419,14 @@ Phase 0 只有在以下全部通过后才可进入 Phase 1：
 | P0-T20 | [x] | 2026-09-25 | 2680e060 | FTS 过滤测试 | tombstone/archived | 已完成 |
 | P0-T21 | [x] | 2026-09-25 | 276e37a7 | 17 passed | `test_phase0_integration.py` | 已完成 |
 | P0-T22 | [x] | 2026-09-25 | 276e37a7 | DoD 逐项核对 | Phase 0 DoD | 已完成 |
-| P1-T01 | [ ] |  |  |  |  |  |
-| P1-T02 | [ ] |  |  |  |  |  |
-| P1-T03 | [ ] |  |  |  |  |  |
-| P1-T04 | [ ] |  |  |  |  |  |
-| P1-T05 | [ ] |  |  |  |  |  |
-| P1-T06 | [ ] |  |  |  |  |  |
-| P1-T07 | [ ] |  |  |  |  |  |
-| P1-T08 | [ ] |  |  |  |  |  |
+| P1-T01 | [x] | 2026-09-25 | f1debf0d | `test_audit_reader_adapter_indexes_only_committed_prefix` | `nanobot/memory/trace_indexer.py` | 只读 committed prefix |
+| P1-T02 | [x] | 2026-09-25 | f1debf0d | `test_summary_is_deterministic_and_does_not_copy_payload` | `AuditRedactor`、`trace_index` | payload 仅校验后丢弃 |
+| P1-T03 | [x] | 2026-09-25 | f1debf0d | `test_trace_index_upsert_is_idempotent`；`test_summary_cursor_changes_when_committed_prefix_advances` | `event_cursor`、`summary_hash` | 增量重放幂等 |
+| P1-T04 | [x] | 2026-09-25 | f1debf0d | `test_full_and_incremental_replay_are_idempotent_and_payload_free` | `rebuild_trace_index` | 全量重建后增量无重复 |
+| P1-T05 | [x] | 2026-09-25 | f1debf0d | `test_retrieval_events_are_append_only_and_failures_are_visible`；`test_trace_query_returns_structured_active_rows_and_hides_degraded_or_expired` | `retrieval_events.py` | 查询和失败事件均为结构化记录 |
+| P1-T06 | [x] | 2026-09-25 | f1debf0d | `test_summary_is_deterministic_and_does_not_copy_payload` | `payload_expire_at`、`trace_expire_at` | 7/18 天字段从 Trace 开始时间计算 |
+| P1-T07 | [x] | 2026-09-25 | f1debf0d | `test_redaction_failure_keeps_audit_and_queues_retry`；`test_index_failure_keeps_audit_and_queues_retry` | `trace_index.degraded`、`memory_outbox` | Audit 文件不变，失败可重试 |
+| P1-T08 | [x] | 2026-09-25 | f1debf0d | `pytest -q tests/memory`（26 passed）；Audit 聚焦测试（15 passed）；`ruff check nanobot/memory tests/memory` | PR #20、Gateway 构建 `git-14bc7da6edf7` | Phase 1 DoD 已核对 |
 | P2-T01 | [ ] |  |  |  |  |  |
 | P2-T02 | [ ] |  |  |  |  |  |
 | P2-T03 | [ ] |  |  |  |  |  |
@@ -2490,7 +2492,7 @@ Phase 0 只有在以下全部通过后才可进入 Phase 1：
 ## 23. 文档状态与使用方式
 
 - 本文是“架构说明 + 分阶段实施计划 + 可执行任务清单 + 验收证据记录模板”。
-- P0-T01～P0-T22 已完成并记录证据；Phase 1 及后续任务仍为 `[ ] 未开始`。
-- 本次 Phase 0 未运行 Gateway、未创建生产 CLI，数据库验证仅使用临时 workspace/SQLite。
+- P0-T01～P0-T22、P1-T01～P1-T08 已完成并记录证据；Phase 2 及后续任务仍为 `[ ] 未开始`。
+- Phase 0 未运行 Gateway、未创建生产 CLI，数据库验证仅使用临时 workspace/SQLite；Phase 1 已重建长期 Gateway 并核对构建标识，但未增加 AgentLoop、CLI、HTTP API 或 WebUI 接入。
 - Phase N 的 DoD 未完成时不得进入 Phase N+1。
 - 任务执行期间如需改变产品决策、事实源、权限或保留规则，必须停止并新增阻塞/变更记录。
