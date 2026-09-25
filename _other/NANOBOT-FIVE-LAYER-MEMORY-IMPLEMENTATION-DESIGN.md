@@ -2456,17 +2456,17 @@ Phase 0～Phase 4 已完成并记录证据；Phase 5～6 尚未开始。
 | P3-T07 | [x] | 2026-09-26 | f32349e7 | `test_missing_database_is_session_only_for_normal_task_and_visible_for_history` | degraded/session-only | 普通任务不阻塞 |
 | P3-T08 | [x] | 2026-09-26 | f32349e7 | 同上显式 history 分支 | retrieval event / visible error | 显式失败可见 |
 | P3-T09 | [x] | 2026-09-26 | f32349e7 | 140 聚焦与回归测试；ruff 通过 | PR #20、Gateway 验收待本提交后执行 | Phase 3 DoD |
-| P4-T01 | [x] | 2026-09-26 | 待提交 | `test_activity_upsert_is_one_job_and_debounces_for_45_minutes`；305 回归测试 | `maintenance_jobs` | activity upsert 幂等合并 |
-| P4-T02 | [x] | 2026-09-26 | 待提交 | 同上 | `maintenance_jobs.due_at` | 45 分钟 idle debounce |
-| P4-T03 | [x] | 2026-09-26 | 待提交 | `test_worker_lease_recovery_and_stale_epoch_cannot_overwrite_cursor` | epoch/CAS cursor | 旧 epoch 拒绝覆盖 |
-| P4-T04 | [x] | 2026-09-26 | 待提交 | `test_maintenance_worker_runs_review_and_releases_workspace_lock` | `maintenance_lock` | 单 worker、lease 恢复 |
-| P4-T05 | [x] | 2026-09-26 | 待提交 | `test_failure_backoff_dead_letters_after_five_attempts` | retry/dead-letter | 最多 5 次退避 |
-| P4-T06 | [x] | 2026-09-26 | 待提交 | `test_tool_policy_blocks_high_risk_calls_before_execution` | `ToolRegistry.prepare_call` | policy_blocked 结构化拒绝 |
-| P4-T07 | [x] | 2026-09-26 | 待提交 | Phase 4 聚焦测试 | `skill_catalog.py` | catalog 搜索 |
-| P4-T08 | [x] | 2026-09-26 | 待提交 | Phase 4 聚焦测试 | `skill_catalog.py` | 只读 Skill 内容 |
-| P4-T09 | [x] | 2026-09-26 | 待提交 | Phase 4 聚焦测试 | `skill_revisions.status=staging` | candidate 不改 current |
-| P4-T10 | [x] | 2026-09-26 | 待提交 | 角色矩阵与 fail-closed 测试 | `policy.py` | maintenance/evaluation 高风险工具拒绝 |
-| P4-T11 | [x] | 2026-09-26 | 待提交 | 5 聚焦 + 305 回归；ruff 通过 | 本节 DoD | Phase 4 完成 |
+| P4-T01 | [x] | 2026-09-26 | e7c2d8c6 | `test_activity_upsert_is_one_job_and_debounces_for_45_minutes`；305 回归测试 | `maintenance_jobs` | activity upsert 幂等合并 |
+| P4-T02 | [x] | 2026-09-26 | e7c2d8c6 | 同上 | `maintenance_jobs.due_at` | 45 分钟 idle debounce |
+| P4-T03 | [x] | 2026-09-26 | e7c2d8c6 | `test_worker_lease_recovery_and_stale_epoch_cannot_overwrite_cursor` | epoch/CAS cursor | 旧 epoch 拒绝覆盖 |
+| P4-T04 | [x] | 2026-09-26 | e7c2d8c6 | `test_maintenance_worker_runs_review_and_releases_workspace_lock` | `maintenance_lock` | 单 worker、lease 恢复 |
+| P4-T05 | [x] | 2026-09-26 | e7c2d8c6 | `test_failure_backoff_dead_letters_after_five_attempts` | retry/dead-letter | 最多 5 次退避 |
+| P4-T06 | [x] | 2026-09-26 | e7c2d8c6 | `test_tool_policy_blocks_high_risk_calls_before_execution` | `ToolRegistry.prepare_call` | policy_blocked 结构化拒绝 |
+| P4-T07 | [x] | 2026-09-26 | e7c2d8c6 | Phase 4 聚焦测试 | `skill_catalog.py` | catalog 搜索 |
+| P4-T08 | [x] | 2026-09-26 | e7c2d8c6 | Phase 4 聚焦测试 | `skill_catalog.py` | 只读 Skill 内容 |
+| P4-T09 | [x] | 2026-09-26 | e7c2d8c6 | Phase 4 聚焦测试 | `skill_revisions.status=staging` | candidate 不改 current |
+| P4-T10 | [x] | 2026-09-26 | e7c2d8c6 | 角色矩阵与 fail-closed 测试 | `policy.py` | maintenance/evaluation 高风险工具拒绝 |
+| P4-T11 | [x] | 2026-09-26 | e7c2d8c6 | 5 聚焦 + 305 回归；ruff 通过 | 本节 DoD | Phase 4 完成 |
 | P5-T01 | [ ] |  |  |  |  |  |
 | P5-T02 | [ ] |  |  |  |  |  |
 | P5-T03 | [ ] |  |  |  |  |  |
