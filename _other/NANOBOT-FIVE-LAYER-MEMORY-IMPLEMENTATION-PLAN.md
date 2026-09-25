@@ -260,7 +260,7 @@ score =
 
 “低风险自动写入”不表示任何记忆对象都可直接生效。首版采用如下白名单：
 
-- 可自动进入 active：有 Trace 来源、脱敏通过、置信度达标的 `trace_summary`；
+- 可自动进入 active：有完整 Trace 来源、脱敏通过、工具执行结果可验证且 `confidence >= 0.85` 的 `trace_summary`；
 - 可自动写入 candidate：Case、事实修正建议、关系建议、Skill candidate；
 - `wiki_link` 仅在来源和目标都属于当前 workspace、关系类型在允许枚举、且不涉及用户偏好或正式决策时可作为低风险操作；
 - 必须取得用户明确确认：用户偏好、正式决策、正式 Skill、外部写操作、Git PR、永久删除；
@@ -980,7 +980,7 @@ SkillLoader 增加版本/hash/状态读取；ToolRegistry 增加工具示例、�
 - 从 Trace/Case 构造评测集。
 - 运行 baseline 与 candidate 对比。
 - 引入 held-out gate、LLM judge、成本和安全指标。
-- 首版 gate 固定为：held-out 成功率不低于 baseline；不新增高风险工具调用；无安全违规；成本和延迟无明显回归。
+- 首版 gate 固定为：held-out 成功率不低于 baseline；不新增高风险工具调用；无安全违规；单任务总 token 成本增幅不超过 15%；P50 完成延迟增幅不超过 20%。若成功率明显提升但成本或延迟超标，候选仅保留在 staging，由用户确认是否采用。
 - 所有采用操作通过 staging、Git 分支和 PR。
 
 验收：候选在 held-out 集上无回归；测试、大小、缓存兼容和安全检查通过；可生成回滚提交。
@@ -1048,7 +1048,8 @@ SkillLoader 增加版本/hash/状态读取；ToolRegistry 增加工具示例、�
 8. 低风险自动写入遵循 5.7.1 白名单；Case、修正建议和 Skill candidate 先进入 candidate，正式资产、删除、外部写入和 Git PR 必须用户确认。
 9. 用户确认只对本轮、一次、单个动作指纹有效；目标或关键参数改变后失效。
 10. 自动记忆注入采用 2,000 tokens 软上限、3,000 tokens 硬上限和 6% 窗口自适应规则；完整内容通过分页深查加载。
-11. 首版 Skill 评测 gate：held-out 成功率不低于 baseline、不新增高风险工具、无安全违规、成本和延迟无明显回归。
+11. 首版 Skill 评测 gate：held-out 成功率不低于 baseline、不新增高风险工具、无安全违规、单任务总 token 成本增幅不超过 15%、P50 完成延迟增幅不超过 20%；超标但效果明显提升的候选停留在 staging，需用户确认。
+12. 自动进入 active 的 `trace_summary` 必须具备完整 Trace 来源、脱敏和可验证工具结果，且 `confidence >= 0.85`；不满足时仅写入 candidate。
 
 ### 18.2 建议决策
 
