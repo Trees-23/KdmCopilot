@@ -1,6 +1,6 @@
 # nanobot 五层记忆体系实施设计
 
-> 文档状态：可执行实施计划与实施记录（截至 2026-09-26，Phase 0、Phase 1 已完成）
+> 文档状态：可执行实施计划与实施记录（截至 2026-09-26，Phase 0、Phase 1、Phase 2 已完成）
 > 适用范围：当前仓库的 Python Agent、Session、Audit/Trace、Skill、ToolRegistry，以及通过插件/MCP/entry point 接入的 Wiki。
 > 本文只描述实现，不修改生产代码；所有新增能力都必须先以 feature flag 和迁移脚本落地。
 
@@ -14,7 +14,7 @@
 4. Skill/Case：Skill 继续是版本化 `SKILL.md`，Case 是 Wiki 的 `page_type=case` 页面；SQLite 保存关联、状态和评测索引。
 5. Retention：统一处理评分、降权、归档、TTL 和 tombstone，不把生命周期状态当作事实内容。
 
-Phase 0、Phase 1 已按计划分批提交。后续开发仍应按 Phase 2→6 推进；任何阶段都不允许直接覆盖 Markdown 事实源、正式 Skill 或原始 Audit。
+Phase 0、Phase 1、Phase 2 已按计划分批提交。后续开发仍应按 Phase 3→6 推进；任何阶段都不允许直接覆盖 Markdown 事实源、正式 Skill 或原始 Audit。
 
 ## 2. 现状盘点与计划项分类
 
@@ -24,7 +24,7 @@ Phase 0、Phase 1 已按计划分批提交。后续开发仍应按 Phase 2→6 �
 |---|---|---|---|---|---|
 | Phase 0 | 持久化基础 | 无 | 已完成 | 设计评审通过 | Phase 0 DoD 全部完成 |
 | Phase 1 | Trace 索引 | Phase 0 | 已完成 | Phase 0 通过 | Phase 1 DoD 全部完成 |
-| Phase 2 | Wiki/Case | Phase 0、1 | 未开始 | Phase 1 通过 | Phase 2 DoD 全部完成 |
+| Phase 2 | Wiki/Case | Phase 0、1 | 已完成 | Phase 1 通过 | Phase 2 DoD 全部完成 |
 | Phase 3 | ContextBuilder 检索 | Phase 1、2 | 未开始 | Phase 2 通过 | Phase 3 DoD 全部完成 |
 | Phase 4 | Maintenance/ToolPolicy | Phase 0～3 | 未开始 | Phase 3 通过 | Phase 4 DoD 全部完成 |
 | Phase 5 | Case→Skill/Eval | Phase 2～4 | 未开始 | Phase 4 通过 | Phase 5 DoD 全部完成 |
@@ -731,6 +731,10 @@ Phase 0 只有在以下全部通过后才可进入 Phase 1：
 
 **验收**：entry point 和 MCP 两种模式至少各有一个临时 workspace round-trip；Markdown revision 不覆盖旧版本；Case page/cases 索引一致；关系重复写幂等；插件缺失可降级；forget 后旧 FTS 行不能复活。**失败恢复**：Wiki 写成功但 memory DB 失败时保留 Wiki revision 并重试 outbox；memory current CAS 冲突标记 superseded；外部 revision/hash 不一致停止同步并要求重扫。**不做**：不直接修改 Wiki 上游实现，不把 Wiki SQLite 作为 nanobot memory DB，不在本阶段自动发布正式 Skill。
 
+**实施结果（2026-09-26）**：已由 `adbe0d79` 完成适配与派生索引闭环。`wiki_adapter.py` 定义统一的 search/read/upsert/link/unlink/forget 协议，并支持 `nanobot.tools` entry point 与 MCP `tools/list` 的 capability/schema digest 发现；`plugins/memory_wiki.py` 只写入外部 page 的 revision/hash、`wiki_pages`、`wiki_relations`、`cases`、FTS 和幂等 outbox，不复制 Wiki 正文事实源。Case 页面会进入 candidate，内容 hash/task signature 支持重复发现，forget 通过 tombstone 清除本地 FTS 且阻断复活。临时 entry point/MCP round-trip、关系幂等、Case 索引、hash 拒绝和 provider 缺失 degraded 测试均已通过。
+
+**能力边界**：当前工作区的 `nanobot-llm-wiki` provider 没有独立不可变 revision API；适配器对缺失 revision 的只读返回使用 content-addressed revision 标识，并将 provider 能力状态保留为可观测 metadata，不宣称拥有上游历史版本。需要不可变 Markdown 历史的 provider 必须在适配器中提供显式 `revision_id`/`content_hash`；hash 不匹配会 fail closed。Phase 2 未接入 AgentLoop、CLI 或 WebUI 检索流程。
+
 ### Phase 3：ContextBuilder memory scope（依赖 Phase 1、Phase 2）
 
 **目标**：在现有 `ContextBuilder.build_system_sections()` 的 dynamic 区域增加按意图的只读检索，保持 stable prompt 和 Tool schema cache 稳定。
@@ -1104,7 +1108,7 @@ Phase 0 只有在以下全部通过后才可进入 Phase 1：
 
 #### P2-T01：定义 Wiki adapter 协议
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
@@ -1127,7 +1131,7 @@ Phase 0 只有在以下全部通过后才可进入 Phase 1：
 
 #### P2-T02：entry point capability discovery
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
@@ -1150,7 +1154,7 @@ Phase 0 只有在以下全部通过后才可进入 Phase 1：
 
 #### P2-T03：MCP capability discovery
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
@@ -1173,7 +1177,7 @@ Phase 0 只有在以下全部通过后才可进入 Phase 1：
 
 #### P2-T04：Wiki revision 同步
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
@@ -1196,7 +1200,7 @@ Phase 0 只有在以下全部通过后才可进入 Phase 1：
 
 #### P2-T05：wiki_pages 索引
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
@@ -1219,7 +1223,7 @@ Phase 0 只有在以下全部通过后才可进入 Phase 1：
 
 #### P2-T06：wiki_relations 索引
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
@@ -1242,7 +1246,7 @@ Phase 0 只有在以下全部通过后才可进入 Phase 1：
 
 #### P2-T07：Case candidate 生成
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
@@ -1265,7 +1269,7 @@ Phase 0 只有在以下全部通过后才可进入 Phase 1：
 
 #### P2-T08：Case 去重和合并建议
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
@@ -1288,7 +1292,7 @@ Phase 0 只有在以下全部通过后才可进入 Phase 1：
 
 #### P2-T09：Wiki 不可用降级
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
@@ -1311,7 +1315,7 @@ Phase 0 只有在以下全部通过后才可进入 Phase 1：
 
 #### P2-T10：Phase 2 DoD
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
@@ -1334,13 +1338,13 @@ Phase 0 只有在以下全部通过后才可进入 Phase 1：
 
 ### Phase 2 Definition of Done
 
-- [ ] 所有子任务完成，或延期/阻塞均有记录。
-- [ ] 单元、集成和安全边界测试通过并记录。
-- [ ] migration/schema/协议证据已记录。
-- [ ] 失败恢复路径已验证。
-- [ ] 文档当前状态已更新，未把未验证内容标为完成。
-- [ ] 提交和测试证据已记录。
-- [ ] 无未解决的事实源、权限或回滚风险。
+- [x] 所有子任务完成，或延期/阻塞均有记录。
+- [x] 单元、集成和安全边界测试通过并记录。
+- [x] migration/schema/协议证据已记录。
+- [x] 失败恢复路径已验证。
+- [x] 文档当前状态已更新，未把未验证内容标为完成。
+- [x] 提交和测试证据已记录。
+- [x] 无未解决的事实源、权限或回滚风险；provider 不具备不可变 revision 时按 degraded 处理。
 
 ### Phase 3：ContextBuilder 检索
 
@@ -2427,16 +2431,16 @@ Phase 0、Phase 1 已完成并记录证据；Phase 2～6 尚未开始。
 | P1-T06 | [x] | 2026-09-25 | f1debf0d | `test_summary_is_deterministic_and_does_not_copy_payload` | `payload_expire_at`、`trace_expire_at` | 7/18 天字段从 Trace 开始时间计算 |
 | P1-T07 | [x] | 2026-09-25 | f1debf0d | `test_redaction_failure_keeps_audit_and_queues_retry`；`test_index_failure_keeps_audit_and_queues_retry` | `trace_index.degraded`、`memory_outbox` | Audit 文件不变，失败可重试 |
 | P1-T08 | [x] | 2026-09-25 | f1debf0d | `pytest -q tests/memory`（26 passed）；Audit 聚焦测试（15 passed）；`ruff check nanobot/memory tests/memory` | PR #20、Gateway 构建 `git-14bc7da6edf7` | Phase 1 DoD 已核对 |
-| P2-T01 | [ ] |  |  |  |  |  |
-| P2-T02 | [ ] |  |  |  |  |  |
-| P2-T03 | [ ] |  |  |  |  |  |
-| P2-T04 | [ ] |  |  |  |  |  |
-| P2-T05 | [ ] |  |  |  |  |  |
-| P2-T06 | [ ] |  |  |  |  |  |
-| P2-T07 | [ ] |  |  |  |  |  |
-| P2-T08 | [ ] |  |  |  |  |  |
-| P2-T09 | [ ] |  |  |  |  |  |
-| P2-T10 | [ ] |  |  |  |  |  |
+| P2-T01 | [x] | 2026-09-26 | adbe0d79 | `test_capability_discovery_is_source_agnostic_and_digest_stable` | `nanobot/memory/wiki_adapter.py` | 统一 Wiki adapter 协议 |
+| P2-T02 | [x] | 2026-09-26 | adbe0d79 | entry point capability 与真实 provider 临时 workspace round-trip | `EntryPointWikiAdapter` | source/version/schema digest |
+| P2-T03 | [x] | 2026-09-26 | adbe0d79 | `test_mcp_adapter_normalizes_structured_page_and_capabilities` | `McpWikiAdapter` | MCP tools/list/call_tool 归一化 |
+| P2-T04 | [x] | 2026-09-26 | 70a3e8c4 | `test_sync_page_indexes_external_revision_and_case_candidate`；revision 替换和 hash mismatch 拒绝测试 | `sync_provider_page`、`WikiPage.revision_id` | provider 缺少显式 revision 时 degraded/content-addressed |
+| P2-T05 | [x] | 2026-09-26 | adbe0d79 | Phase 2 sync/index 测试 | `wiki_pages` | 外部 revision/hash 仅作派生索引 |
+| P2-T06 | [x] | 2026-09-26 | adbe0d79 | `test_relation_upsert_is_idempotent_and_unlink_is_rebuildable` | `wiki_relations` | 重复关系幂等、unlink 可重建 |
+| P2-T07 | [x] | 2026-09-26 | adbe0d79 | Case candidate sync 测试 | `cases` | `page_type='case'` 映射 candidate |
+| P2-T08 | [x] | 2026-09-26 | adbe0d79 | `find_case_duplicates` 覆盖 content hash/task signature | `find_case_duplicates` | 仅生成重复发现，不覆盖原页面 |
+| P2-T09 | [x] | 2026-09-26 | adbe0d79 | `test_unavailable_provider_is_explicit`；tombstone 复活拒绝测试 | `discover_wiki`、`forget_wiki_page` | provider 缺失 degraded，tombstone 阻断复活 |
+| P2-T10 | [x] | 2026-09-26 | 70a3e8c4 | 36 memory passed；15 Audit passed；ruff 通过 | PR #20 | Phase 2 DoD 已核对 |
 | P3-T01 | [ ] |  |  |  |  |  |
 | P3-T02 | [ ] |  |  |  |  |  |
 | P3-T03 | [ ] |  |  |  |  |  |
@@ -2492,7 +2496,7 @@ Phase 0、Phase 1 已完成并记录证据；Phase 2～6 尚未开始。
 ## 23. 文档状态与使用方式
 
 - 本文是“架构说明 + 分阶段实施计划 + 可执行任务清单 + 验收证据记录模板”。
-- P0-T01～P0-T22、P1-T01～P1-T08 已完成并记录证据；Phase 2 及后续任务仍为 `[ ] 未开始`。
+- P0-T01～P0-T22、P1-T01～P1-T08、P2-T01～P2-T10 已完成并记录证据；Phase 3 及后续任务仍为 `[ ] 未开始`。
 - Phase 0 未运行 Gateway、未创建生产 CLI，数据库验证仅使用临时 workspace/SQLite；Phase 1 已重建长期 Gateway 并核对构建标识，但未增加 AgentLoop、CLI、HTTP API 或 WebUI 接入。
-- Phase N 的 DoD 未完成时不得进入 Phase N+1。
+- Phase N 的 DoD 未完成时不得进入 Phase N+1；Phase 2 的 provider revision 能力缺失按 degraded 记录，不得伪造不可变历史。
 - 任务执行期间如需改变产品决策、事实源、权限或保留规则，必须停止并新增阻塞/变更记录。
