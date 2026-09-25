@@ -175,6 +175,20 @@ def test_sync_page_indexes_external_revision_and_case_candidate() -> None:
     assert connection.execute("SELECT count(*) FROM memory_outbox").fetchone()[0] == 1
 
 
+def test_revision_change_updates_current_pointer_and_supersedes_old_index_job() -> None:
+    connection = _db()
+    workspace = "/tmp/phase2-workspace"
+    first = _page()
+    second = _page(content="Use the production fixture.", revision_id="rev-2")
+    sync_wiki_page(connection, workspace=workspace, page=first)
+    sync_wiki_page(connection, workspace=workspace, page=second)
+    assert connection.execute("SELECT current_revision_id FROM wiki_pages").fetchone()[0] == "rev-2"
+    statuses = [row[0] for row in connection.execute(
+        "SELECT status FROM memory_outbox ORDER BY created_at"
+    ).fetchall()]
+    assert statuses == ["superseded", "pending"]
+
+
 def test_relation_upsert_is_idempotent_and_unlink_is_rebuildable() -> None:
     connection = _db()
     connection.executemany(
