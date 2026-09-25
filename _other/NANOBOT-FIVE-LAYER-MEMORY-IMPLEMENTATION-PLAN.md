@@ -2,7 +2,7 @@
 
 > 文档状态：计划草案
 >
-> 更新时间：2026-09-24
+> 更新时间：2026-09-25
 >
 > 适用范围：nanobot 当前 Python Agent、Audit/Trace、Skill、工具执行链，以及 `nanobot-llm-wiki`、Hermes Agent Self-Evolution、SkillOpt-Sleep 的集成规划。
 
@@ -912,6 +912,18 @@ Hermes 的主要借鉴是自动合成评测题、SessionDB 挖掘、train/valida
 
 Hermes 当前默认 `eval_dataset_size=20`、`train_ratio=0.5`、`val_ratio=0.25`、`holdout_ratio=0.25`，并使用随机打乱；它没有强制最少有效题、固定随机种子、题目去重或 holdout 封存。nanobot 采用其 20/10/5/5 作为启动基线，但把上述质量门槛、稳定划分、版本/hash 和封存作为正式发布前的硬约束。Hermes 的 synthetic 数据可以启动优化，但 nanobot 不允许仅凭 synthetic EvalPack 发布正式 Skill，必须逐步加入真实 Trace、失败回归题或可验证 fixture。
 
+#### Hermes 的评测集是怎样“定”的
+
+这里的“定”不是 Hermes 根据某个通用公式自动算出题数，而是由配置文件给出一个可运行的默认实验规模，再由数据构造器和评测流程填充内容：
+
+1. **规模和切分先由配置固定**：默认总量 20 题，按 50%/25%/25% 切为 train、validation、holdout，即 10/5/5。这个比例是实验起点，不是所有 Skill 都必须遵守的理论最优值。
+2. **题目由强模型根据 Skill 生成**：模型读取 Skill 描述，生成 `task_input` 和 `expected_behavior`；同时可以混入 SessionDB 挖掘的真实任务、golden 题、synthetic 题和 Skill-specific auto-eval 题。
+3. **优化只使用 train/validation**：候选 Skill 在训练集上迭代，在 validation 上选择或比较版本；holdout 在候选确定后才用于最终对比，避免把答案泄漏给优化过程。
+4. **结果由 baseline/candidate 对比决定**：同一批任务分别回放当前 Skill 和候选 Skill，再结合成功率、约束检查及成本等指标输出 metrics。评测集本身不会因为一次成功或失败自动扩大，也不会替 Agent 决定“这个 Skill 已经可以发布”。
+5. **Hermes 的默认实现仍留下治理空白**：随机划分没有强制固定种子，缺少统一的最少有效题、去重、holdout 封存和职责隔离要求；synthetic 题也可以启动优化。因此 nanobot 只借鉴其数据来源、20/10/5/5 起点、baseline/holdout 对比和 Trace 反思，不照搬其发布宽松度。
+
+在 nanobot 中，评测集由维护 Agent 自动生成草案，由评测审核 Agent 做覆盖性、可执行性、安全边界和敏感信息检查，再由后台服务固定版本、计算 `dataset_hash` 并封存。只有封存后的 EvalPack 才能进入 baseline/candidate 回放；发布门槛由 nanobot 的最低题量、真实证据比例、独立评分、安全、成本和延迟规则共同决定。这样用户不需要手工编写整套题目，但 Agent 也不能自己出题、自己打分、自己批准发布。
+
 评测集不需要在 Phase 0～4 开始前准备好。没有足够真实任务时，可以先使用自动合成题和少量真实题生成 EvalPack 草案；正式 Skill 发布前必须达到最低证据要求。真实任务不足时，candidate 只做 staging，不阻塞 Trace、Case、检索和 Skill review 的实现。积累到足够的脱敏、可复现任务后，再启动该 Skill 的正式 baseline/held-out 评测。
 
 ## 12. 遗忘、降权、归档和删除
@@ -1050,6 +1062,7 @@ SkillLoader 增加版本/hash/状态读取；ToolRegistry 增加工具示例、�
 - 增加 workspace 级串行后台维护服务，以及受限维护 Agent 的白名单工具和结构化动作校验。
 - 增加 `skill_catalog_search`、`skill_read`、`skill_propose` 和由后台服务执行的 candidate validate/evaluate/publish 流程。
 - 增加 EvalPack 审核、封存、隔离回放、独立评分和 candidate 状态机；维护 Agent 不得自评自批。
+- 明确 Hermes 的 20/10/5/5 只是配置型启动基线；评测题由 Agent 自动起草、审核 Agent 校验、后台封存后再回放，不能把 Hermes 默认规模当作自动发布条件。
 
 验收：重复事实不增长；旧事实可降权/归档；用户 forget 可穿透所有索引；Skill 更新可回滚。
 
@@ -1140,6 +1153,7 @@ SkillLoader 增加版本/hash/状态读取；ToolRegistry 增加工具示例、�
 14. EvalPack 不足时 candidate 只能停留 staging；生成、审核、执行、评分和发布职责分离，禁止同一 Agent 自评自批。
 15. 线上失败 Trace 和用户纠正可自动转为回归评测题；EvalPack 版本化并通过 `dataset_hash` 封存。
 16. EvalPack 默认采用 Hermes 的 20 道题起步配置（10 train / 5 validation / 5 holdout），但正式发布必须满足 nanobot 的最低质量门槛、固定划分和 holdout 封存规则；synthetic 题只能启动候选流程，不能单独作为正式发布依据。
+17. Hermes 的评测集规模来自配置而非自动推导；nanobot 明确分离“自动出题、独立审核、封存、回放、评分、发布”职责，避免同一 Agent 形成自评自批闭环。
 
 ### 18.2 建议决策
 
