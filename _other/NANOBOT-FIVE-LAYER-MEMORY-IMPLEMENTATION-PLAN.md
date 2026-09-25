@@ -176,9 +176,13 @@ Skill 定义继续使用 `skills/<name>/SKILL.md`，增加版本和内容 hash�
 
 首版沿用 Hermes 的实用默认值：总计约 20 道题，按 10 train / 5 validation / 5 holdout 划分。与 Hermes 不同，nanobot 增加最低质量门槛：至少 10 道有效题、至少 3 道 holdout、至少覆盖 3 类任务、至少包含 1 道失败或边界题；每道题必须可执行、rubric 可判断、通过去重和敏感信息检查。若题目不足或无法验证，不能伪装成合格 EvalPack。
 
+EvalPack 的小样本切分规则固定如下：有效题数不少于 20 时使用 50% train、25% validation、25% holdout；有效题数为 10～19 时，holdout 至少 3 道、validation 至少 2 道，其余放入 train（10 道题时为 5/2/3）；少于 10 道有效题时标记为 `insufficient_evidence`，不得进行正式发布评测。
+
 评测包封存后，candidate 不得修改其 holdout 内容、fixture、答案或评分标准。生成题目的 Agent、审核题目/评分标准的 Agent、运行任务的评测 Agent、最终评分器和发布主体必须逻辑分离；不能由同一个 Agent 自己出题、自己判分并批准发布。评测集不足时，状态为 `eval_pack_missing` 或 `insufficient_evidence`，candidate 只能停留 staging。
 
 题目生成后使用固定 `split_seed` 或稳定哈希划分数据集，并为每个 EvalPack 保存版本和 `dataset_hash`。holdout 只对后台评测服务可见，candidate 生成和 GEPA 优化只能读取 train/validation；EvalPack 更新、补入真实任务或失败回归题时必须生成新版本并重新封存。
+
+每次 baseline/candidate 回放都生成不可变的 `eval_run` 记录，至少保存 `eval_run_id`、EvalPack 和 Skill 引用、模型与配置 hash、Tool schema hash、Skill content hash、评分器版本、逐题结果、成功率、token 成本、P50 延迟、高风险工具调用数、安全违规数和最终 gate 结论。评测结果不得原地修改，重新评测必须创建新的 `eval_run`。
 
 ## 5. 存储分层、事实源与修改方式
 
@@ -268,7 +272,9 @@ score =
 - **会话**：由 `SessionManager` 原子保存；压缩只改变 live suffix，历史归档另写 `history.jsonl`。
 - **Trace**：不修改旧事件；重试、恢复和更正追加新事件；索引可重建。
 - **Wiki/案例**：修改 active 页面前，先在 `memory/wiki/revisions/<page_id>/<version>.md` 保存不可变 Markdown 快照；页面记录单调递增的 `version`、`revision_id`、`previous_revision_id`、变更原因、来源和 `supersedes`。`expected_version` 防止后台任务覆盖较新的页面。普通“忘记”默认转为修正、合并、降权或 archive，不直接硬删除。
+- **Wiki/案例索引一致性**：先写入并校验新 revision，再原子切换 active revision，随后投递 SQLite FTS/关系索引更新任务。索引更新失败不回滚 Markdown，而是标记 `index_pending` 并由后台 worker 重试；SQLite 索引损坏时从 Markdown 事实源全量重建。
 - **Skill**：不由运行中的 Agent 直接覆盖正式版本；candidate 与正式版本均保存 version 和 content hash。workspace adopt 永不覆盖旧 `SKILL.md`，而是生成新版本目录并切换 current 指针；builtin/shared Skill 经过评测后通过 Git PR 发布，可切回上一个已验证版本或提交。
+- **版本字段语义**：`revision_id` 表示每次修改，`content_hash` 表示内容完整性，`skill_version` 表示正式 Skill 语义版本，`current_revision` 表示当前采用指针。回滚只切换指针，不删除新版本。
 - **Skill manifest/SQLite 索引**：由文件扫描或变更钩子重建，索引损坏不影响 Markdown 和 Skill 正文。
 
 ### 5.7 写入流水线
@@ -341,6 +347,8 @@ propose_skill_reference  建立或修改 Skill references candidate
 ```
 
 首版不允许维护 Agent 自动拆分、自动合并或自动下线正式 Skill；这些只能作为 candidate 交由评测和人工确认。
+
+首个只读代码审查/仓库定位 Skill 的 EvalRun 使用临时 fixture workspace：从固定快照复制，默认禁用网络、禁止写文件和 Git 提交，只开放 Skill 声明的只读工具。评测结束后删除临时目录；失败时只保留最小化 evidence，不保留完整敏感 payload。写入型 Skill 需要另行设计可回滚沙箱。
 
 ### 5.9 Wiki、Trace 与 Skill 的工具契约
 
@@ -959,6 +967,8 @@ Trace 默认分层保留：原始 Audit 事件保留 **18 天**；可能含完�
 
 删除必须同步处理页面、关系、FTS 索引和案例引用；Audit 只保留最小化删除事件，不保留被删除的敏感正文。
 
+普通生命周期不进入 `deleted`，而是停留在 `archived`。`deleted` 仅用于用户明确删除、安全秘密清除、权限违规或数据主体删除请求，并保留不含正文的 tombstone（`memory_id`、删除时间、原因和原内容 hash），以便审计而不恢复敏感内容。
+
 ## 13. 与现有 nanobot 的集成点
 
 ### 13.1 ContextBuilder
@@ -989,6 +999,10 @@ Dream 继续维护 `SOUL.md`、`USER.md`、`MEMORY.md`；对于 SKILL.md 只生�
 ### 13.5 SkillLoader/ToolRegistry
 
 SkillLoader 增加版本/hash/状态读取；ToolRegistry 增加工具示例、能力标签和风险等级，但保持稳定 schema 顺序，避免破坏 provider prompt cache。
+
+### 13.6 检索和评测降级
+
+普通任务中，记忆检索为空、超时或暂时不可用时不阻塞主任务：记录审计并按无记忆结果继续执行。用户明确要求读取历史、Trace 或修改/归档/删除记忆时，检索失败必须返回可见错误，不得静默执行替代动作。EvalPack 绑定 Skill、Tool schema、system prompt、模型配置、fixture 和 `dataset_hash`；任一 hash 变化后旧 baseline 标记为 `stale_baseline`，必须重新运行 baseline 才能比较 candidate。
 
 ## 14. 分阶段实施路线
 
@@ -1154,6 +1168,14 @@ SkillLoader 增加版本/hash/状态读取；ToolRegistry 增加工具示例、�
 15. 线上失败 Trace 和用户纠正可自动转为回归评测题；EvalPack 版本化并通过 `dataset_hash` 封存。
 16. EvalPack 默认采用 Hermes 的 20 道题起步配置（10 train / 5 validation / 5 holdout），但正式发布必须满足 nanobot 的最低质量门槛、固定划分和 holdout 封存规则；synthetic 题只能启动候选流程，不能单独作为正式发布依据。
 17. Hermes 的评测集规模来自配置而非自动推导；nanobot 明确分离“自动出题、独立审核、封存、回放、评分、发布”职责，避免同一 Agent 形成自评自批闭环。
+18. EvalPack 有效题数为 20 及以上时按 10/5/5 比例切分；10～19 题时 holdout 至少 3 题、validation 至少 2 题；少于 10 题只能标记 `insufficient_evidence`。
+19. 每次评测生成不可变 `eval_run`，保存版本/hash、逐题结果、成本、延迟、工具风险、安全违规和 gate 结论。
+20. Markdown/revision 是 Wiki 和 Case 的事实源；SQLite 索引异步更新、失败重试并可从 Markdown 全量重建。
+21. 普通记忆不硬删除；`deleted` 只用于明确删除、安全清除、权限违规或数据主体请求，并保留无正文 tombstone。
+22. `revision_id`、`content_hash`、`skill_version`、`current_revision` 分工明确，回滚只切换 current 指针。
+23. 首个只读代码审查 Skill 使用固定 fixture 的临时只读 workspace，默认禁网、禁写、禁 Git 提交。
+24. 普通记忆检索失败不阻塞主任务；用户明确要求历史查询或记忆修改时，失败必须显式报错。
+25. Skill、工具 schema、system prompt、模型配置、fixture 或 EvalPack hash 变化会使 baseline 失效，必须重新评测。
 
 ### 18.2 建议决策
 
