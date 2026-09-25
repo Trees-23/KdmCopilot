@@ -250,6 +250,42 @@ score =
 
 关键原则：**先保存原始证据，再生成派生记忆；派生记忆可以修改和淘汰，但不能反向覆盖原始 Trace。**
 
+### 5.8 后台维护服务与受限维护 Agent
+
+记忆维护和 Skill 整合不使用当前用户任务里的普通 `spawn` 子 Agent。普通子 Agent 服务于当前 turn，绑定用户交付和工作区上下文；记忆治理属于后台、低优先级、需要串行和可恢复的系统维护任务。
+
+推荐组成：
+
+- **后台维护服务**：计时、去重、排队、workspace 级互斥锁、状态保存、索引重建、权限校验和审计。
+- **受限维护 Agent**：仅在需要语义判断时由后台服务启动，类似 Dream 的 ephemeral Agent；只读 Trace/Wiki/Skill manifest，只能写 Wiki candidate、Case 和 `memory/skill-staging/`，不能覆盖正式 Skill、执行 shell 或调用外部副作用工具。
+
+```text
+用户会话结束
+  → 45 分钟 idle 检测
+  → 后台服务检查 activity epoch、活跃任务和 workspace 锁
+  → 启动一次受限维护 Agent
+  → 输出结构化维护决定
+  → 后台服务校验、写入候选、更新索引和审计
+```
+
+每个 workspace 同一时刻最多运行一个维护任务。新用户消息会取消尚未开始的维护任务；已经进入语义分析的任务可完成只读分析或安全写入 staging，但不能改动正式资产。
+
+维护 Agent 只允许输出下列动作：
+
+```text
+no_op                    没有值得维护的内容
+merge_memory             合并重复事实或案例
+correct_memory           修正事实并保留 supersedes 关系
+archive_memory           降权并归档过时内容
+create_case              创建 Wiki Case
+update_case              更新或合并 Wiki Case
+propose_new_skill        新建 Skill candidate
+propose_skill_merge      修改已有 Skill 的 candidate
+propose_skill_reference  建立或修改 Skill references candidate
+```
+
+首版不允许维护 Agent 自动拆分、自动合并或自动下线正式 Skill；这些只能作为 candidate 交由评测和人工确认。
+
 ## 6. 用户意图路由层
 
 ### 6.1 初始意图集合
@@ -578,6 +614,8 @@ Skill 总结不在每次会话结束时执行，也不因为超时就直接生�
 
 Skill review 的准入条件：流程有多个步骤、结果可验证、不是一次性偶然操作、与现有 Skill 不重复，并且能抽象成跨任务可复用的方法。超时只负责触发检查，不能直接决定生成 Skill。
 
+Skill review 由后台维护服务发起，并使用受限维护 Agent 完成语义判断；它不是当前用户 turn 的普通子 Agent。对于已有 Skill，维护 Agent 只能提出新建、修改合并或 references candidate，正式 Skill 的整合必须经过评测和人工确认。
+
 ## 12. 遗忘、降权、归档和删除
 
 ### 12.1 降权公式
@@ -704,6 +742,7 @@ SkillLoader 增加版本/hash/状态读取；ToolRegistry 增加工具示例、�
 - 将重复工作流候选转为 SKILL.md staging。
 - 增加 Skill 与案例的版本兼容检查。
 - 增加 45 分钟空闲窗口和每个 activity epoch 仅一次的 Skill review 检查。
+- 增加 workspace 级串行后台维护服务，以及受限维护 Agent 的白名单工具和结构化动作校验。
 
 验收：重复事实不增长；旧事实可降权/归档；用户 forget 可穿透所有索引；Skill 更新可回滚。
 
@@ -741,6 +780,7 @@ SkillLoader 增加版本/hash/状态读取；ToolRegistry 增加工具示例、�
 | Trace 泄露秘密 | payload 脱敏、敏感字段扫描、默认摘要化 |
 | Wiki 跨 Agent 越权 | namespace、owner、workspace ACL |
 | Skill 自我强化错误 | held-out gate、人工审核、版本回滚 |
+| 后台维护与用户任务冲突 | workspace 级互斥锁、新消息取消未开始任务、正式资产只读 |
 | 上下文污染 | intent scope、rerank、token budget、摘要化 |
 | 自动遗忘误删 | archive 优先、可恢复、用户确认、删除审计 |
 | prompt cache 失效 | stable/dynamic 分离、tool schema digest、离线发布 |
