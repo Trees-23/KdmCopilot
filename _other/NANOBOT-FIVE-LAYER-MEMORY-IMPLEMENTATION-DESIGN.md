@@ -2445,15 +2445,15 @@ Phase 0～Phase 3 已完成并记录证据；Phase 4～6 尚未开始。
 | P2-T08 | [x] | 2026-09-26 | adbe0d79 | `find_case_duplicates` 覆盖 content hash/task signature | `find_case_duplicates` | 仅生成重复发现，不覆盖原页面 |
 | P2-T09 | [x] | 2026-09-26 | adbe0d79 | `test_unavailable_provider_is_explicit`；tombstone 复活拒绝测试 | `discover_wiki`、`forget_wiki_page` | provider 缺失 degraded，tombstone 阻断复活 |
 | P2-T10 | [x] | 2026-09-26 | 70a3e8c4 | 36 memory passed；15 Audit passed；ruff 通过 | PR #20 | Phase 2 DoD 已核对 |
-| P3-T01 | [x] | 2026-09-26 | 待提交 | `test_intent_router_is_rule_first_and_explicit` | `nanobot/memory/intent.py` | 规则优先七类意图 |
-| P3-T02 | [x] | 2026-09-26 | 待提交 | `MemoryScopePolicy`；scope/只读测试 | `nanobot/memory/policy.py` | 只读 scope，写入/遗忘不注入 |
-| P3-T03 | [x] | 2026-09-26 | 待提交 | Wiki/Case/Skill/Trace 检索 fixture | `nanobot/memory/retriever.py` | 仅摘要和 revision/source 引用 |
-| P3-T04 | [x] | 2026-09-26 | 待提交 | `test_budget_uses_six_percent_with_soft_and_hard_caps` | 6%/2000/3000 token 边界 | 自适应预算 |
-| P3-T05 | [x] | 2026-09-26 | 待提交 | `test_build_messages_exposes_retrieval_digest_as_dynamic_metadata` | system metadata | digest 只在 dynamic metadata |
-| P3-T06 | [x] | 2026-09-26 | 待提交 | `test_context_dynamic_retrieval_does_not_change_stable_prompt`；134 回归测试 | ContextBuilder/AgentLoop | stable prompt 隔离 |
-| P3-T07 | [x] | 2026-09-26 | 待提交 | `test_missing_database_is_session_only_for_normal_task_and_visible_for_history` | degraded/session-only | 普通任务不阻塞 |
-| P3-T08 | [x] | 2026-09-26 | 待提交 | 同上显式 history 分支 | retrieval event / visible error | 显式失败可见 |
-| P3-T09 | [x] | 2026-09-26 | 待提交 | 140 聚焦与回归测试；ruff 通过 | PR #20、Gateway 验收待本提交后执行 | Phase 3 DoD |
+| P3-T01 | [x] | 2026-09-26 | f32349e7 | `test_intent_router_is_rule_first_and_explicit` | `nanobot/memory/intent.py` | 规则优先七类意图 |
+| P3-T02 | [x] | 2026-09-26 | f32349e7 | `MemoryScopePolicy`；scope/只读测试 | `nanobot/memory/policy.py` | 只读 scope，写入/遗忘不注入 |
+| P3-T03 | [x] | 2026-09-26 | f32349e7 | Wiki/Case/Skill/Trace 检索 fixture | `nanobot/memory/retriever.py` | 仅摘要和 revision/source 引用 |
+| P3-T04 | [x] | 2026-09-26 | f32349e7 | `test_budget_uses_six_percent_with_soft_and_hard_caps` | 6%/2000/3000 token 边界 | 自适应预算 |
+| P3-T05 | [x] | 2026-09-26 | f32349e7 | `test_build_messages_exposes_retrieval_digest_as_dynamic_metadata` | system metadata | digest 只在 dynamic metadata |
+| P3-T06 | [x] | 2026-09-26 | f32349e7 | `test_context_dynamic_retrieval_does_not_change_stable_prompt`；134 回归测试 | ContextBuilder/AgentLoop | stable prompt 隔离 |
+| P3-T07 | [x] | 2026-09-26 | f32349e7 | `test_missing_database_is_session_only_for_normal_task_and_visible_for_history` | degraded/session-only | 普通任务不阻塞 |
+| P3-T08 | [x] | 2026-09-26 | f32349e7 | 同上显式 history 分支 | retrieval event / visible error | 显式失败可见 |
+| P3-T09 | [x] | 2026-09-26 | f32349e7 | 140 聚焦与回归测试；ruff 通过 | PR #20、Gateway 验收待本提交后执行 | Phase 3 DoD |
 | P4-T01 | [ ] |  |  |  |  |  |
 | P4-T02 | [ ] |  |  |  |  |  |
 | P4-T03 | [ ] |  |  |  |  |  |
