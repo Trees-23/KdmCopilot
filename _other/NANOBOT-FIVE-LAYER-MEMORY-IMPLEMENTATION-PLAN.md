@@ -37,7 +37,7 @@
 - 记忆检索主要依赖文件、工具和 prompt 注入，缺少统一的 intent 路由和 memory scope 选择。
 - Wiki 是独立项目，尚未成为 nanobot 核心记忆协议的一部分。
 - Skill 版本、案例、Trace、评测结果之间缺少统一关联模型。
-- Dream 有文件级遗忘和归档规则，但尚未覆盖 Trace、Wiki、向量索引和案例库。
+- Dream 有文件级遗忘和归档规则，但尚未覆盖 Trace、Wiki、SQLite 检索索引和案例库。
 - 尚无 Hermes/SkillOpt 风格的“采集—回放—评测—暂存—审核—发布”闭环。
 
 ## 3. 目标架构
@@ -219,7 +219,7 @@ score =
 + 0.05 * recency_and_usage
 ```
 
-如果未来实测表明纯 lexical 召回不足，可以继续保持 SQLite 为主库，把 embedding 向量作为 SQLite BLOB 或 `sqlite-vec` 扩展列存储；这不需要引入独立向量数据库，也不改变 Markdown/JSONL 事实源。
+如果未来实测表明纯 lexical 召回不足，先调优分词、同义词、字段权重、任务签名和图关系；仍不足时，才单独评估 SQLite 内向量扩展。该评估不改变 Markdown/JSONL 事实源，也不属于首版范围。
 
 ### 5.6 数据如何修改
 
@@ -285,6 +285,76 @@ propose_skill_reference  建立或修改 Skill references candidate
 ```
 
 首版不允许维护 Agent 自动拆分、自动合并或自动下线正式 Skill；这些只能作为 candidate 交由评测和人工确认。
+
+### 5.9 Wiki、Trace 与 Skill 的工具契约
+
+`nanobot-llm-wiki` 已有可通过 entry point 或 MCP 接入的基础工具。首版应复用其检索、读取和关系能力，而不是为 Case 再造一套平行工具；Case 只是带有约定元数据的 Wiki 页面。
+
+| 现有 Wiki 工具 | 首版用途 | 使用边界 |
+|---|---|---|
+| `wiki_search`、`wiki_read` | 查询事实、决策、Case、Trace 摘要 | 可供主 Agent 和维护 Agent 只读调用 |
+| `wiki_link`、`wiki_unlink` | 维护页面关系 | 主 Agent 仅对低风险显式请求使用；维护 Agent 通过候选提案间接使用 |
+| `wiki_status`、`wiki_doctor` | 检查索引、页面和存储健康 | 诊断工具，不进入正常推理上下文 |
+| `wiki_import` | 受控导入历史 Markdown | 仅管理员/迁移任务调用，不暴露给日常 Agent |
+| `wiki_upsert` | 页面底层创建与更新 | 由用户显式写入或后台服务校验后的提案落盘；维护 Agent 不直接调用 |
+| `wiki_forget` | archive 或永久删除 | 永久删除仅限用户明确请求、秘密、权限违规或合规删除；后台维护不可调用 |
+
+MCP 侧已有同义的 `knowledge_search`、`knowledge_read`、`knowledge_upsert`、`knowledge_link`、`knowledge_unlink`、`knowledge_forget`、`knowledge_status`。NanoBot 插件接入优先采用 `wiki_*` 命名；如经 MCP 接入，只保留一层适配，避免同一能力以两套名称同时进入模型上下文。
+
+#### 5.9.1 页面元数据必须可往返保存
+
+当前 Wiki 页模型和 Markdown frontmatter 仅稳定处理少量已知字段。若直接把 `trace_ids`、`skill_id` 等新字段手工写进 frontmatter，后续 `wiki_upsert` 重写页面时可能丢失它们。因此第一项兼容性改造是：
+
+- 在 `WikiPage` 增加 `metadata: dict`；
+- 在 SQLite 索引增加 `metadata_json`；
+- Markdown 的未知 frontmatter 必须读取、保留并原样写回（round-trip）；
+- `id`、`title`、`page_type`、`tags`、`aliases`、`confidence`、时间和 source cursor 仍保留一等字段，便于索引和兼容旧页面。
+
+首版统一约定的扩展元数据包括：`trace_ids`、`skill_id`、`skill_version`、`intent`、`task_signature`、`domain`、`language`、`risk`、`outcome`、`namespace`、`owner`、`status`、`supersedes`、`activity_epoch`、`candidate_reason`、`reviewed_at`。字段可缺省；不可把未经验证的推测伪装成稳定事实。
+
+#### 5.9.2 搜索、Case 和图关系
+
+扩展 `wiki_search`，在现有 `query`、`limit`、`tag` 之外支持 `page_types`、`metadata_filters`、`namespace`、`status`、`intent`、`skill_id`、`risk`、`outcome`、`trace_id`、`created_after` 等过滤条件。这样不必创建独立的 Case 存储或 Case 搜索引擎：
+
+```text
+case_search = wiki_search(page_types=["case"], metadata_filters={...})
+```
+
+增加只读 `wiki_neighbors(selector, relations=None, depth=1)`，返回受权限过滤的关系邻居。它用于从 Case 找到对应的 `trace_summary`、Skill、项目或相互矛盾的决策；默认深度为 1，禁止无界图遍历进入上下文。
+
+#### 5.9.3 受限维护写入
+
+新增 `wiki_propose_maintenance`，只接受结构化候选，不直接让维护 Agent 改写 active 页面：
+
+```json
+{
+  "action": "create_case|update_case|merge|correct|archive",
+  "target_page_id": "optional",
+  "expected_version": 3,
+  "source_page_ids": ["optional"],
+  "content": "候选正文或摘要",
+  "metadata": {
+    "trace_ids": ["trace-123"],
+    "intent": "security_code_review",
+    "skill_id": "security-review"
+  },
+  "reason": "基于哪些证据作出此维护建议",
+  "confidence": 0.88
+}
+```
+
+后台服务负责版本冲突检查（`expected_version`）、权限与敏感信息校验、落入 candidate/staging、更新索引和审计。`merge`、`correct` 必须保留来源与 `supersedes`；`archive` 只改变检索状态和权重，不销毁页面。
+
+#### 5.9.4 按责任域划分的工具白名单
+
+| 责任域 | 暴露给 Agent 的工具 | 由后台服务直接完成 |
+|---|---|---|
+| 当前用户任务 | `wiki_search`、`wiki_read`、受策略约束的显式写入工具；`trace_search`、`trace_read_summary` | 权限判定、索引刷新、审计持久化 |
+| 受限维护 Agent | `memory_review_batch`、`wiki_search`、`wiki_read`、`wiki_neighbors`、`trace_read_summary`、`skill_catalog_search`、`skill_read`、`wiki_propose_maintenance`、`skill_propose` | workspace 锁、调度、原始 Trace 读取授权、提案校验与落盘 |
+| Skill 候选流水线 | 无直接发布权；只产生 `skill_propose` 输出 | `skill_candidate_validate`、`skill_candidate_evaluate`、`skill_candidate_publish`、Git PR/workspace adopt |
+| 生命周期与删除 | 无维护 Agent 直连删除权 | archive 执行、索引清理、明确授权后的永久删除 |
+
+Trace 工具属于 Audit，而不是 Wiki：`trace_search` 做受时间、workspace 和权限约束的定位，`trace_read_summary` 返回脱敏摘要，`trace_read` 仅在诊断需要且权限允许时返回最小原始片段。Skill 工具属于 Skill 系统：`skill_catalog_search` 查询 manifest 摘要，`skill_read` 按需读取正文，`skill_propose` 只写入 staging。索引重建、候选评测和发布均不可交给模型自行决定或执行。
 
 ## 6. 用户意图路由层
 
@@ -490,7 +560,10 @@ Search 工具适合工具数量和 Skill 数量较多的情况，但不能只返
 
 - 继续使用 Markdown 作为人类可读源文件。
 - 使用 SQLite FTS5、标签、别名和关系做第一版检索。
-- 通过现有 `wiki_search`、`wiki_read`、`wiki_upsert`、`wiki_link`、`wiki_forget` 工具接入。
+- 通过已有 `wiki_search`、`wiki_read`、`wiki_link`、`wiki_status`、`wiki_doctor` 工具接入；写入通过受策略保护的 `wiki_upsert` 或 `wiki_propose_maintenance` 落地，详见 5.9。
+- 先完成 `metadata` / `metadata_json` 和 frontmatter round-trip，再让 Case、Trace、Skill 关联字段进入生产页面，避免更新页面时丢失来源证据。
+- `wiki_search` 增加 page type 和元数据过滤；`case_search` 是其 `page_types=["case"]` 的受限别名，不另建 Case 数据库或重复工具。
+- 增加 `wiki_neighbors`，只读查询 Case、Trace 摘要、Skill、项目与决策之间的一跳关系。
 - 所有 Wiki 写入带 `trace_id`、来源 cursor、agent 身份和 namespace。
 - 继续禁止写入 API key、cookie、私钥、凭据和未经验证的猜测。
 
@@ -521,29 +594,30 @@ similar_to、implements、contradicts、owned_by、scoped_to
 - L1：`SessionManager` 会话缓存。
 - L2：稳定 system prompt、tool schema、skill summary cache。
 - L3：Wiki SQLite FTS、关系索引和页面元数据。
-- L4：可选向量索引和 reranker。
-- L5：Audit/Trace 冷存储。
+- L4：Audit/Trace 冷存储。
+
+首版不启用 embedding、向量索引或向量 reranker。只有 SQLite FTS5、字段过滤和图关系的离线召回评测明确不足时，才单独提出 SQLite 内向量扩展或 `sqlite-vec` 的评估；它不属于当前实施范围。
 
 ### 10.2 混合排序
 
 ```text
 score =
-  0.30 * lexical_bm25
-+ 0.25 * embedding_similarity
-+ 0.15 * recency
-+ 0.10 * authority
-+ 0.10 * task_similarity
+  0.35 * lexical_bm25
++ 0.20 * task_signature_and_entity_overlap
++ 0.15 * authority_and_confidence
++ 0.10 * skill_match
 + 0.10 * graph_proximity
++ 0.10 * recency_and_usage
 ```
 
-不同意图使用不同权重：事实查询偏 lexical/authority，案例查询偏 task similarity/embedding，架构决策偏 authority/graph proximity。
+不同意图使用不同权重：事实查询偏 lexical/authority，案例查询偏任务签名、实体和 Skill 匹配，架构决策偏 authority/graph proximity。
 
 ### 10.3 检索流程
 
 ```text
 意图路由
   → memory scope 过滤
-  → FTS/BM25 + embedding 初召回
+  → FTS/BM25 初召回
   → 权限、namespace、时间和状态过滤
   → 图邻居扩展
   → rerank
@@ -552,7 +626,7 @@ score =
   → 写入 dynamic context
 ```
 
-页面 chunk 应附带标题、项目、类型、来源、时间和关系上下文，避免只对裸文本做 embedding。
+页面 chunk 应附带标题、项目、类型、来源、时间和关系上下文，避免只以裸文本进行关键词匹配。
 
 ## 11. Trace 派生和自进化闭环
 
@@ -645,7 +719,7 @@ candidate → active → stale → archived → deleted
 
 默认不硬删除：内容过时或冲突时优先合并、修正、标记 `supersedes`、降低置信度或归档。只有用户明确要求、发现秘密、权限违规、错误写入或数据主体删除请求时，才执行永久删除。
 
-删除必须同步处理页面、关系、FTS/向量索引和案例引用；Audit 只保留最小化删除事件，不保留被删除的敏感正文。
+删除必须同步处理页面、关系、FTS 索引和案例引用；Audit 只保留最小化删除事件，不保留被删除的敏感正文。
 
 ## 13. 与现有 nanobot 的集成点
 
@@ -687,6 +761,7 @@ SkillLoader 增加版本/hash/状态读取；ToolRegistry 增加工具示例、�
 工作项：
 
 - 定义 memory、case、retrieval、retention schema。
+- 定义 Wiki 扩展 `metadata` schema、frontmatter round-trip 规则及 `wiki_*` / `trace_*` / `skill_*` 工具契约。
 - 统一 `trace_id`、`history_cursor`、`skill_version`、`namespace`。
 - 增加检索和写入的审计事件。
 - 设计秘密检测、脱敏和权限边界。
@@ -700,7 +775,8 @@ SkillLoader 增加版本/hash/状态读取；ToolRegistry 增加工具示例、�
 工作项：
 
 - 集成 `nanobot-llm-wiki` 工具或 MCP。
-- 实现页面类型、标签、关系和 source refs。
+- 实现页面类型、标签、关系、source refs、`metadata_json` 与 frontmatter round-trip。
+- 扩展 `wiki_search` 的 page type/元数据过滤，增加 `wiki_neighbors`；把 Case 检索实现为受限搜索别名，不增加独立 Case 事实源。
 - 增加 `MEMORY_READ/WRITE/FORGET` 路由。
 - 只读检索默认启用，低风险写入可自动执行，修正/合并/归档按策略执行，永久删除需明确意图。
 
@@ -728,6 +804,7 @@ SkillLoader 增加版本/hash/状态读取；ToolRegistry 增加工具示例、�
 - 从 Audit Trace 生成 trace_summary、case、anti_pattern。
 - 加入敏感信息检测、去重、用户确认和案例准入。
 - 将案例与 Skill 版本、工具调用、Trace 建立关系。
+- 实现 `memory_review_batch`、`trace_search`、`trace_read_summary` 和 `wiki_propose_maintenance`；维护 Agent 只产生候选提案。
 
 验收：案例可按任务特征检索；失败案例不会被误当作成功模板；每个案例有完整来源。
 
@@ -743,6 +820,7 @@ SkillLoader 增加版本/hash/状态读取；ToolRegistry 增加工具示例、�
 - 增加 Skill 与案例的版本兼容检查。
 - 增加 45 分钟空闲窗口和每个 activity epoch 仅一次的 Skill review 检查。
 - 增加 workspace 级串行后台维护服务，以及受限维护 Agent 的白名单工具和结构化动作校验。
+- 增加 `skill_catalog_search`、`skill_read`、`skill_propose` 和由后台服务执行的 candidate validate/evaluate/publish 流程。
 
 验收：重复事实不增长；旧事实可降权/归档；用户 forget 可穿透所有索引；Skill 更新可回滚。
 
