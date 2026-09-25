@@ -824,6 +824,9 @@ class AgentLoop:
             include_memory_recent_history=not ctx.ephemeral,
             session_key=ctx.session.key,
             unified_session=self._unified_session,
+            trace_id=ctx.audit_turn.trace_id if ctx.audit_turn else None,
+            turn_id=ctx.audit_turn.turn_id if ctx.audit_turn else None,
+            context_window_tokens=ctx.runtime.context_window_tokens,
         )
 
     def _request_context_for_turn(self, ctx: TurnContext) -> RequestContext:

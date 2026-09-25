@@ -1,6 +1,6 @@
 # nanobot 五层记忆体系实施设计
 
-> 文档状态：可执行实施计划与实施记录（截至 2026-09-26，Phase 0、Phase 1、Phase 2 已完成）
+> 文档状态：可执行实施计划与实施记录（截至 2026-09-26，Phase 0、Phase 1、Phase 2、Phase 3 已完成）
 > 适用范围：当前仓库的 Python Agent、Session、Audit/Trace、Skill、ToolRegistry，以及通过插件/MCP/entry point 接入的 Wiki。
 > 本文只描述实现，不修改生产代码；所有新增能力都必须先以 feature flag 和迁移脚本落地。
 
@@ -14,7 +14,7 @@
 4. Skill/Case：Skill 继续是版本化 `SKILL.md`，Case 是 Wiki 的 `page_type=case` 页面；SQLite 保存关联、状态和评测索引。
 5. Retention：统一处理评分、降权、归档、TTL 和 tombstone，不把生命周期状态当作事实内容。
 
-Phase 0、Phase 1、Phase 2 已按计划分批提交。后续开发仍应按 Phase 3→6 推进；任何阶段都不允许直接覆盖 Markdown 事实源、正式 Skill 或原始 Audit。
+Phase 0、Phase 1、Phase 2、Phase 3 已按计划分批提交。后续开发仍应按 Phase 4→6 推进；任何阶段都不允许直接覆盖 Markdown 事实源、正式 Skill 或原始 Audit。
 
 ## 2. 现状盘点与计划项分类
 
@@ -25,7 +25,7 @@ Phase 0、Phase 1、Phase 2 已按计划分批提交。后续开发仍应按 Pha
 | Phase 0 | 持久化基础 | 无 | 已完成 | 设计评审通过 | Phase 0 DoD 全部完成 |
 | Phase 1 | Trace 索引 | Phase 0 | 已完成 | Phase 0 通过 | Phase 1 DoD 全部完成 |
 | Phase 2 | Wiki/Case | Phase 0、1 | 已完成 | Phase 1 通过 | Phase 2 DoD 全部完成 |
-| Phase 3 | ContextBuilder 检索 | Phase 1、2 | 未开始 | Phase 2 通过 | Phase 3 DoD 全部完成 |
+| Phase 3 | ContextBuilder 检索 | Phase 1、2 | 已完成 | Phase 2 通过 | Phase 3 DoD 全部完成 |
 | Phase 4 | Maintenance/ToolPolicy | Phase 0～3 | 未开始 | Phase 3 通过 | Phase 4 DoD 全部完成 |
 | Phase 5 | Case→Skill/Eval | Phase 2～4 | 未开始 | Phase 4 通过 | Phase 5 DoD 全部完成 |
 | Phase 6 | 受控持续运行 | Phase 5 | 未开始 | Phase 5 通过且明确启用 | Phase 6 DoD 全部完成 |
@@ -749,6 +749,10 @@ Phase 0 只有在以下全部通过后才可进入 Phase 1：
 
 **验收**：稳定事实变化只改变 dynamic digest；上下文超限时保留优先级正确；普通检索异常仍能完成普通任务；显式历史/记忆修改异常产生可见结构化错误；注入内容带 revision 引用且无 tombstone 内容。**失败恢复**：memory DB/FTS 不可用时退回 session-only；预算计算异常时不注入 memory overlay；digest 不一致时丢弃 overlay 并记录 retrieval event。**不做**：不改 AgentRunner 工具循环，不默认注入完整 Trace/payload，不自动写入正式记忆。
 
+**实施结果（2026-09-26）**：已增加 `intent.py`、`policy.py` 和 `retriever.py`。`IntentRouter` 使用规则优先识别七类意图；`MemoryScopePolicy` 将意图转换为只读 scope；`MemoryRetriever` 只读取派生 SQLite 的 memory/Wiki/Case/Skill/Trace 摘要，排除 tombstone/过期记录，返回 revision/source 引用并记录 payload-free `retrieval_events`。检索预算按 context window 的 6% 自适应，受 2,000 token 软上限和 3,000 token 硬上限约束；完整正文不进入 dynamic overlay。
+
+`ContextBuilder` 将检索结果放入 dynamic 区域并把 digest/intent/outcome 写入系统消息 metadata，稳定 prompt 与 tool schema 不变；`AgentLoop` 传入 session、trace、turn 和 context-window 元数据。普通任务在数据库不可用或查询失败时保持 session-only；显式历史、Trace、review 查询产生可见结构化失败。Phase 3 未修改 AgentRunner 工具循环、Wiki/Skill/Audit 事实源或对外 API。
+
 ### Phase 4：维护 worker、45 分钟任务和 ToolPolicy（依赖 Phase 0～3）
 
 **目标**：建立每 workspace 单 worker 的 review/retention/index 编排，并将工具权限落实到 `ToolRegistry.prepare_call()` 之前。
@@ -1353,13 +1357,13 @@ Phase 0 只有在以下全部通过后才可进入 Phase 1：
 
 #### P3-T01：intent 路由器
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
 - 涉及文件：第 3 节目标目录及对应现有模块；执行时记录最终路径。
 - 不涉及文件：原计划文档、无关生产模块、用户既有无关修改。
-- 实施内容：遵循既定 schema、事实源边界、单 worker、权限和失败恢复规则；当前未开始。
+- 实施内容：已实现规则优先七类意图路由，并保持写入/遗忘请求只读不注入。
 - 输入和输出：输入为前置任务产物和临时 fixture；输出为代码/测试/审计证据或评审结论。
 - 数据库或协议变化：仅允许本文已定义的表、字段、状态、迁移和协议；需改变时先登记阻塞。
 - 测试方法：使用临时 workspace/SQLite/fixture，执行单元、集成、安全和失败恢复测试。
@@ -1376,13 +1380,13 @@ Phase 0 只有在以下全部通过后才可进入 Phase 1：
 
 #### P3-T02：memory scope
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
 - 涉及文件：第 3 节目标目录及对应现有模块；执行时记录最终路径。
 - 不涉及文件：原计划文档、无关生产模块、用户既有无关修改。
-- 实施内容：遵循既定 schema、事实源边界、单 worker、权限和失败恢复规则；当前未开始。
+- 实施内容：已实现只读 scope policy，限制 memory/Wiki/Case/Skill/Trace 检索范围。
 - 输入和输出：输入为前置任务产物和临时 fixture；输出为代码/测试/审计证据或评审结论。
 - 数据库或协议变化：仅允许本文已定义的表、字段、状态、迁移和协议；需改变时先登记阻塞。
 - 测试方法：使用临时 workspace/SQLite/fixture，执行单元、集成、安全和失败恢复测试。
@@ -1399,13 +1403,13 @@ Phase 0 只有在以下全部通过后才可进入 Phase 1：
 
 #### P3-T03：Wiki/Case/Skill/Trace 检索
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
 - 涉及文件：第 3 节目标目录及对应现有模块；执行时记录最终路径。
 - 不涉及文件：原计划文档、无关生产模块、用户既有无关修改。
-- 实施内容：遵循既定 schema、事实源边界、单 worker、权限和失败恢复规则；当前未开始。
+- 实施内容：已实现派生 SQLite 摘要检索、tombstone/过期过滤和 revision/source 引用。
 - 输入和输出：输入为前置任务产物和临时 fixture；输出为代码/测试/审计证据或评审结论。
 - 数据库或协议变化：仅允许本文已定义的表、字段、状态、迁移和协议；需改变时先登记阻塞。
 - 测试方法：使用临时 workspace/SQLite/fixture，执行单元、集成、安全和失败恢复测试。
@@ -1422,13 +1426,13 @@ Phase 0 只有在以下全部通过后才可进入 Phase 1：
 
 #### P3-T04：token 预算
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
 - 涉及文件：第 3 节目标目录及对应现有模块；执行时记录最终路径。
 - 不涉及文件：原计划文档、无关生产模块、用户既有无关修改。
-- 实施内容：遵循既定 schema、事实源边界、单 worker、权限和失败恢复规则；当前未开始。
+- 实施内容：已实现 6% 自适应预算、2,000 token 软上限和 3,000 token 硬上限。
 - 输入和输出：输入为前置任务产物和临时 fixture；输出为代码/测试/审计证据或评审结论。
 - 数据库或协议变化：仅允许本文已定义的表、字段、状态、迁移和协议；需改变时先登记阻塞。
 - 测试方法：使用临时 workspace/SQLite/fixture，执行单元、集成、安全和失败恢复测试。
@@ -1445,13 +1449,13 @@ Phase 0 只有在以下全部通过后才可进入 Phase 1：
 
 #### P3-T05：dynamic context digest
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
 - 涉及文件：第 3 节目标目录及对应现有模块；执行时记录最终路径。
 - 不涉及文件：原计划文档、无关生产模块、用户既有无关修改。
-- 实施内容：遵循既定 schema、事实源边界、单 worker、权限和失败恢复规则；当前未开始。
+- 实施内容：已将 retrieval digest/intent/outcome 写入 dynamic system metadata。
 - 输入和输出：输入为前置任务产物和临时 fixture；输出为代码/测试/审计证据或评审结论。
 - 数据库或协议变化：仅允许本文已定义的表、字段、状态、迁移和协议；需改变时先登记阻塞。
 - 测试方法：使用临时 workspace/SQLite/fixture，执行单元、集成、安全和失败恢复测试。
@@ -1468,13 +1472,13 @@ Phase 0 只有在以下全部通过后才可进入 Phase 1：
 
 #### P3-T06：stable prompt cache 隔离
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
 - 涉及文件：第 3 节目标目录及对应现有模块；执行时记录最终路径。
 - 不涉及文件：原计划文档、无关生产模块、用户既有无关修改。
-- 实施内容：遵循既定 schema、事实源边界、单 worker、权限和失败恢复规则；当前未开始。
+- 实施内容：已验证稳定 prompt digest 不随动态检索内容变化，AgentLoop 传入 turn 元数据。
 - 输入和输出：输入为前置任务产物和临时 fixture；输出为代码/测试/审计证据或评审结论。
 - 数据库或协议变化：仅允许本文已定义的表、字段、状态、迁移和协议；需改变时先登记阻塞。
 - 测试方法：使用临时 workspace/SQLite/fixture，执行单元、集成、安全和失败恢复测试。
@@ -1491,13 +1495,13 @@ Phase 0 只有在以下全部通过后才可进入 Phase 1：
 
 #### P3-T07：普通检索失败降级
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
 - 涉及文件：第 3 节目标目录及对应现有模块；执行时记录最终路径。
 - 不涉及文件：原计划文档、无关生产模块、用户既有无关修改。
-- 实施内容：遵循既定 schema、事实源边界、单 worker、权限和失败恢复规则；当前未开始。
+- 实施内容：已实现数据库不可用/查询失败时普通任务 session-only 降级。
 - 输入和输出：输入为前置任务产物和临时 fixture；输出为代码/测试/审计证据或评审结论。
 - 数据库或协议变化：仅允许本文已定义的表、字段、状态、迁移和协议；需改变时先登记阻塞。
 - 测试方法：使用临时 workspace/SQLite/fixture，执行单元、集成、安全和失败恢复测试。
@@ -1514,13 +1518,13 @@ Phase 0 只有在以下全部通过后才可进入 Phase 1：
 
 #### P3-T08：显式历史查询失败
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
 - 涉及文件：第 3 节目标目录及对应现有模块；执行时记录最终路径。
 - 不涉及文件：原计划文档、无关生产模块、用户既有无关修改。
-- 实施内容：遵循既定 schema、事实源边界、单 worker、权限和失败恢复规则；当前未开始。
+- 实施内容：已实现 history/trace/review 显式失败消息与 retrieval event 记录。
 - 输入和输出：输入为前置任务产物和临时 fixture；输出为代码/测试/审计证据或评审结论。
 - 数据库或协议变化：仅允许本文已定义的表、字段、状态、迁移和协议；需改变时先登记阻塞。
 - 测试方法：使用临时 workspace/SQLite/fixture，执行单元、集成、安全和失败恢复测试。
@@ -1537,13 +1541,13 @@ Phase 0 只有在以下全部通过后才可进入 Phase 1：
 
 #### P3-T09：Phase 3 DoD
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
 - 涉及文件：第 3 节目标目录及对应现有模块；执行时记录最终路径。
 - 不涉及文件：原计划文档、无关生产模块、用户既有无关修改。
-- 实施内容：遵循既定 schema、事实源边界、单 worker、权限和失败恢复规则；当前未开始。
+- 实施内容：已完成 Phase 3 聚焦、回归、失败恢复和 lint 验证。
 - 输入和输出：输入为前置任务产物和临时 fixture；输出为代码/测试/审计证据或评审结论。
 - 数据库或协议变化：仅允许本文已定义的表、字段、状态、迁移和协议；需改变时先登记阻塞。
 - 测试方法：使用临时 workspace/SQLite/fixture，执行单元、集成、安全和失败恢复测试。
@@ -1560,13 +1564,13 @@ Phase 0 只有在以下全部通过后才可进入 Phase 1：
 
 ### Phase 3 Definition of Done
 
-- [ ] 所有子任务完成，或延期/阻塞均有记录。
-- [ ] 单元、集成和安全边界测试通过并记录。
-- [ ] migration/schema/协议证据已记录。
-- [ ] 失败恢复路径已验证。
-- [ ] 文档当前状态已更新，未把未验证内容标为完成。
-- [ ] 提交和测试证据已记录。
-- [ ] 无未解决的事实源、权限或回滚风险。
+- [x] 所有子任务完成，或延期/阻塞均有记录。
+- [x] 单元、集成和安全边界测试通过并记录。
+- [x] migration/schema/协议证据已记录；本阶段复用 Phase 0 schema，不新增迁移。
+- [x] 失败恢复路径已验证。
+- [x] 文档当前状态已更新，未把未验证内容标为完成。
+- [x] 提交和测试证据已记录。
+- [x] 无未解决的事实源、权限或回滚风险。
 
 ### Phase 4：Maintenance/ToolPolicy
 
@@ -2397,7 +2401,7 @@ Phase 0 只有在以下全部通过后才可进入 Phase 1：
 
 ## 21. 实施记录
 
-Phase 0、Phase 1 已完成并记录证据；Phase 2～6 尚未开始。
+Phase 0～Phase 3 已完成并记录证据；Phase 4～6 尚未开始。
 
 | 任务 ID | 状态 | 日期 | 提交 | 测试 | 证据 | 备注 |
 |---|---|---|---|---|---|---|
@@ -2441,15 +2445,15 @@ Phase 0、Phase 1 已完成并记录证据；Phase 2～6 尚未开始。
 | P2-T08 | [x] | 2026-09-26 | adbe0d79 | `find_case_duplicates` 覆盖 content hash/task signature | `find_case_duplicates` | 仅生成重复发现，不覆盖原页面 |
 | P2-T09 | [x] | 2026-09-26 | adbe0d79 | `test_unavailable_provider_is_explicit`；tombstone 复活拒绝测试 | `discover_wiki`、`forget_wiki_page` | provider 缺失 degraded，tombstone 阻断复活 |
 | P2-T10 | [x] | 2026-09-26 | 70a3e8c4 | 36 memory passed；15 Audit passed；ruff 通过 | PR #20 | Phase 2 DoD 已核对 |
-| P3-T01 | [ ] |  |  |  |  |  |
-| P3-T02 | [ ] |  |  |  |  |  |
-| P3-T03 | [ ] |  |  |  |  |  |
-| P3-T04 | [ ] |  |  |  |  |  |
-| P3-T05 | [ ] |  |  |  |  |  |
-| P3-T06 | [ ] |  |  |  |  |  |
-| P3-T07 | [ ] |  |  |  |  |  |
-| P3-T08 | [ ] |  |  |  |  |  |
-| P3-T09 | [ ] |  |  |  |  |  |
+| P3-T01 | [x] | 2026-09-26 | 待提交 | `test_intent_router_is_rule_first_and_explicit` | `nanobot/memory/intent.py` | 规则优先七类意图 |
+| P3-T02 | [x] | 2026-09-26 | 待提交 | `MemoryScopePolicy`；scope/只读测试 | `nanobot/memory/policy.py` | 只读 scope，写入/遗忘不注入 |
+| P3-T03 | [x] | 2026-09-26 | 待提交 | Wiki/Case/Skill/Trace 检索 fixture | `nanobot/memory/retriever.py` | 仅摘要和 revision/source 引用 |
+| P3-T04 | [x] | 2026-09-26 | 待提交 | `test_budget_uses_six_percent_with_soft_and_hard_caps` | 6%/2000/3000 token 边界 | 自适应预算 |
+| P3-T05 | [x] | 2026-09-26 | 待提交 | `test_build_messages_exposes_retrieval_digest_as_dynamic_metadata` | system metadata | digest 只在 dynamic metadata |
+| P3-T06 | [x] | 2026-09-26 | 待提交 | `test_context_dynamic_retrieval_does_not_change_stable_prompt`；134 回归测试 | ContextBuilder/AgentLoop | stable prompt 隔离 |
+| P3-T07 | [x] | 2026-09-26 | 待提交 | `test_missing_database_is_session_only_for_normal_task_and_visible_for_history` | degraded/session-only | 普通任务不阻塞 |
+| P3-T08 | [x] | 2026-09-26 | 待提交 | 同上显式 history 分支 | retrieval event / visible error | 显式失败可见 |
+| P3-T09 | [x] | 2026-09-26 | 待提交 | 140 聚焦与回归测试；ruff 通过 | PR #20、Gateway 验收待本提交后执行 | Phase 3 DoD |
 | P4-T01 | [ ] |  |  |  |  |  |
 | P4-T02 | [ ] |  |  |  |  |  |
 | P4-T03 | [ ] |  |  |  |  |  |
@@ -2496,7 +2500,7 @@ Phase 0、Phase 1 已完成并记录证据；Phase 2～6 尚未开始。
 ## 23. 文档状态与使用方式
 
 - 本文是“架构说明 + 分阶段实施计划 + 可执行任务清单 + 验收证据记录模板”。
-- P0-T01～P0-T22、P1-T01～P1-T08、P2-T01～P2-T10 已完成并记录证据；Phase 3 及后续任务仍为 `[ ] 未开始`。
+- P0-T01～P0-T22、P1-T01～P1-T08、P2-T01～P2-T10、P3-T01～P3-T09 已完成并记录证据；Phase 4～6 任务仍为 `[ ] 未开始`。
 - Phase 0 未运行 Gateway、未创建生产 CLI，数据库验证仅使用临时 workspace/SQLite；Phase 1 已重建长期 Gateway 并核对构建标识，但未增加 AgentLoop、CLI、HTTP API 或 WebUI 接入。
 - Phase N 的 DoD 未完成时不得进入 Phase N+1；Phase 2 的 provider revision 能力缺失按 degraded 记录，不得伪造不可变历史。
 - 任务执行期间如需改变产品决策、事实源、权限或保留规则，必须停止并新增阻塞/变更记录。
