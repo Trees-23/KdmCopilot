@@ -164,13 +164,21 @@ Skill 定义继续使用 `skills/<name>/SKILL.md`，增加版本和内容 hash�
   "allowed_tools": ["read_file", "grep", "list_dir"],
   "forbidden_actions": ["write_file", "external_side_effect"],
   "baseline_ref": "skill:repo-code-review@1.0.0",
+  "baseline_tool_schema_hash": "sha256:...",
+  "baseline_model": "...",
+  "baseline_config_hash": "sha256:...",
+  "split_seed": 20260925,
   "status": "draft|reviewed|sealed|evaluating|passed|failed|insufficient_evidence"
 }
 ```
 
 评测题可以来自四类来源：Skill 读取后由强模型合成的题目、真实 Session/Trace 挖掘出的成功和失败任务、失败 Trace 自动转成的回归题，以及可自动验证的固定 fixture（例如带已知问题的测试仓库）。题目要求描述任务和评分 rubric，不要求固定措辞答案。
 
+首版沿用 Hermes 的实用默认值：总计约 20 道题，按 10 train / 5 validation / 5 holdout 划分。与 Hermes 不同，nanobot 增加最低质量门槛：至少 10 道有效题、至少 3 道 holdout、至少覆盖 3 类任务、至少包含 1 道失败或边界题；每道题必须可执行、rubric 可判断、通过去重和敏感信息检查。若题目不足或无法验证，不能伪装成合格 EvalPack。
+
 评测包封存后，candidate 不得修改其 holdout 内容、fixture、答案或评分标准。生成题目的 Agent、审核题目/评分标准的 Agent、运行任务的评测 Agent、最终评分器和发布主体必须逻辑分离；不能由同一个 Agent 自己出题、自己判分并批准发布。评测集不足时，状态为 `eval_pack_missing` 或 `insufficient_evidence`，candidate 只能停留 staging。
+
+题目生成后使用固定 `split_seed` 或稳定哈希划分数据集，并为每个 EvalPack 保存版本和 `dataset_hash`。holdout 只对后台评测服务可见，candidate 生成和 GEPA 优化只能读取 train/validation；EvalPack 更新、补入真实任务或失败回归题时必须生成新版本并重新封存。
 
 ## 5. 存储分层、事实源与修改方式
 
@@ -902,6 +910,8 @@ candidate_created
 
 Hermes 的主要借鉴是自动合成评测题、SessionDB 挖掘、train/validation/holdout 划分、baseline 对比、Trace 反思和 PR 发布。Hermes 当前实现允许生成题目和 LLM judge 使用同一评测模型；nanobot 首版增加 EvalPack 封存、独立审核、禁止同一 Agent 自评自批，以及候选状态机，避免评测泄漏和虚假通过。
 
+Hermes 当前默认 `eval_dataset_size=20`、`train_ratio=0.5`、`val_ratio=0.25`、`holdout_ratio=0.25`，并使用随机打乱；它没有强制最少有效题、固定随机种子、题目去重或 holdout 封存。nanobot 采用其 20/10/5/5 作为启动基线，但把上述质量门槛、稳定划分、版本/hash 和封存作为正式发布前的硬约束。Hermes 的 synthetic 数据可以启动优化，但 nanobot 不允许仅凭 synthetic EvalPack 发布正式 Skill，必须逐步加入真实 Trace、失败回归题或可验证 fixture。
+
 评测集不需要在 Phase 0～4 开始前准备好。没有足够真实任务时，可以先使用自动合成题和少量真实题生成 EvalPack 草案；正式 Skill 发布前必须达到最低证据要求。真实任务不足时，candidate 只做 staging，不阻塞 Trace、Case、检索和 Skill review 的实现。积累到足够的脱敏、可复现任务后，再启动该 Skill 的正式 baseline/held-out 评测。
 
 ## 12. 遗忘、降权、归档和删除
@@ -1053,6 +1063,7 @@ SkillLoader 增加版本/hash/状态读取；ToolRegistry 增加工具示例、�
 - 运行 baseline 与 candidate 对比。
 - 引入 held-out gate、LLM judge、成本和安全指标。
 - 自动生成并封存每个 Skill 的 EvalPack；按 Skill 专属 rubric 评估，不使用一套全局题目替代。
+- EvalPack 默认按 20 道题、10/5/5 划分启动；发布前至少满足 10 道有效题、3 道 holdout、3 类任务和 1 道失败/边界题，并通过去重、可执行性和敏感信息检查。
 - 评测包达到最低证据要求后，运行隔离 workspace 的 baseline/candidate 回放；真实任务不足时不发布。
 - 首版 gate 固定为：held-out 成功率不低于 baseline；不新增高风险工具调用；无安全违规；单任务总 token 成本增幅不超过 15%；P50 完成延迟增幅不超过 20%。若成功率明显提升但成本或延迟超标，候选仅保留在 staging，由用户确认是否采用。
 - 所有采用操作通过 staging、Git 分支和 PR。
@@ -1095,7 +1106,7 @@ SkillLoader 增加版本/hash/状态读取；ToolRegistry 增加工具示例、�
 3. 在 Audit 中记录 retrieval/write/forget 事件。
 4. 实现一个只读 `MEMORY_READ` 路由器。
 5. 为一个 Skill 建立最小 Wiki 案例页面、索引字段和人工确认流程。
-6. 用 10～20 个真实但已脱敏的任务建立 baseline/held-out 数据集。
+6. 先用约 20 道自动生成题建立 EvalPack 草案；真实任务积累后补入至少 10 道脱敏、可复现任务和失败回归题，再建立正式 baseline/held-out 数据集。
 7. 运行一次“只生成候选、不自动采用”的 SkillOpt 风格离线实验。
 
 ## 17. 参考资料
@@ -1128,6 +1139,7 @@ SkillLoader 增加版本/hash/状态读取；ToolRegistry 增加工具示例、�
 13. 每个 Skill 使用自己的 EvalPack；评测题和 rubric 由 Agent 根据 Skill、Case 和 Trace 自动生成草案，后台审核、封存和回放，用户不需要手工编写整套评测集。
 14. EvalPack 不足时 candidate 只能停留 staging；生成、审核、执行、评分和发布职责分离，禁止同一 Agent 自评自批。
 15. 线上失败 Trace 和用户纠正可自动转为回归评测题；EvalPack 版本化并通过 `dataset_hash` 封存。
+16. EvalPack 默认采用 Hermes 的 20 道题起步配置（10 train / 5 validation / 5 holdout），但正式发布必须满足 nanobot 的最低质量门槛、固定划分和 holdout 封存规则；synthetic 题只能启动候选流程，不能单独作为正式发布依据。
 
 ### 18.2 建议决策
 
