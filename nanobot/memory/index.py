@@ -6,7 +6,7 @@ import sqlite3
 from dataclasses import dataclass
 
 FTS_TABLE_SQL = """
-CREATE VIRTUAL TABLE {table_name} USING fts5(
+CREATE VIRTUAL TABLE IF NOT EXISTS {table_name} USING fts5(
   object_type UNINDEXED, object_id UNINDEXED, title, summary, body, tags,
   tokenize='unicode61 remove_diacritics 2'
 )

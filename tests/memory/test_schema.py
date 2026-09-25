@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+import nanobot.memory.index as memory_index
 from nanobot.memory.db import (
     MemoryWorkspaceError,
     connect_memory_db,
@@ -127,6 +128,7 @@ def test_fts_initialization_rebuild_and_active_filtering() -> None:
     connection = _db()
     status = initialize_fts(connection)
     assert status.available is True
+    assert initialize_fts(connection).available is True
     connection.execute(
         "INSERT INTO memory_records(memory_id,memory_type,source_actor,title,summary,status,created_at,updated_at) "
         "VALUES('active','fact','test','Active memory','summary','active','now','now')"
@@ -152,3 +154,19 @@ def test_fts_initialization_rebuild_and_active_filtering() -> None:
     connection.commit()
     assert rebuild_fts(connection) == 1
     assert [row["object_id"] for row in search_memory(connection, "keyword")] == ["active"]
+
+
+def test_fts_detection_reports_degraded_status(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FailingConnection:
+        def execute(self, statement: str, parameters: tuple[str, ...] = ()):
+            if "sqlite_version" in statement:
+                return type("Result", (), {"fetchone": lambda self: ("3.0.0",)})()
+            raise sqlite3.OperationalError("fts5 unavailable")
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(memory_index.sqlite3, "connect", lambda _: FailingConnection())
+    status = memory_index.detect_fts5()
+    assert status.available is False
+    assert status.error == "fts5 unavailable"
