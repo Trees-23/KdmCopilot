@@ -256,6 +256,18 @@ score =
 
 关键原则：**先保存原始证据，再生成派生记忆；派生记忆可以修改和淘汰，但不能反向覆盖原始 Trace。**
 
+#### 5.7.1 低风险自动写入白名单
+
+“低风险自动写入”不表示任何记忆对象都可直接生效。首版采用如下白名单：
+
+- 可自动进入 active：有 Trace 来源、脱敏通过、置信度达标的 `trace_summary`；
+- 可自动写入 candidate：Case、事实修正建议、关系建议、Skill candidate；
+- `wiki_link` 仅在来源和目标都属于当前 workspace、关系类型在允许枚举、且不涉及用户偏好或正式决策时可作为低风险操作；
+- 必须取得用户明确确认：用户偏好、正式决策、正式 Skill、外部写操作、Git PR、永久删除；
+- 永不自动：覆盖 active 页面、`wiki_unlink`、`wiki_forget(archive=false)`、正式发布或切换 Skill current 指针。
+
+Case candidate 不是“已验证的正式经验”；只有准入、去重和需要时的人工确认完成后，才可提升为 active。
+
 ### 5.8 后台维护服务与受限维护 Agent
 
 记忆维护和 Skill 整合不使用当前用户任务里的普通 `spawn` 子 Agent。普通子 Agent 服务于当前 turn，绑定用户交付和工作区上下文；记忆治理属于后台、低优先级、需要串行和可恢复的系统维护任务。
@@ -303,7 +315,8 @@ propose_skill_reference  建立或修改 Skill references candidate
 | 现有 Wiki 工具 | 首版用途 | 使用边界 |
 |---|---|---|
 | `wiki_search`、`wiki_read` | 查询事实、决策、Case、Trace 摘要 | 可供主 Agent 和维护 Agent 只读调用 |
-| `wiki_link`、`wiki_unlink` | 维护页面关系 | 主 Agent 仅对低风险显式请求使用；维护 Agent 通过候选提案间接使用 |
+| `wiki_link` | 建立页面关系 | 满足 5.7.1 白名单时可低风险写入；维护 Agent 通过候选提案间接使用 |
+| `wiki_unlink` | 移除页面关系 | `restricted`；仅用户明确确认后由主 Agent 执行，维护 Agent 不直接调用 |
 | `wiki_status`、`wiki_doctor` | 检查索引、页面和存储健康 | 诊断工具，不进入正常推理上下文 |
 | `wiki_import` | 受控导入历史知识源 | 仅后台迁移任务调用，不暴露给日常 Agent |
 | `wiki_upsert` | 页面底层创建与更新 | 由用户显式写入或后台服务校验后的提案落盘；维护 Agent 不直接调用 |
@@ -381,6 +394,8 @@ Trace 工具属于 Audit，而不是 Wiki：`trace_search` 做受时间、worksp
 
 `read_only` 只表示可无副作用并发执行，`_scopes` 只表示工具可被哪类 Agent 加载；两者都不能代替 `ToolPolicy`。策略判断必须发生在实际执行之前，不能只依赖模型对工具描述的理解。
 
+用户确认采用**本轮、一次、动作指纹绑定**的语义：确认记录包含 `tool_name + target_id + 关键参数摘要`，只能消费一次；目标、关键参数或会话 turn 改变后失效。确认“归档 `case-123`”不能授权删除其他页面、发布 Skill 或在下一轮重复执行。后台服务只能执行已通过该门禁的动作，不能把候选提案自行扩大成正式发布。
+
 #### 5.10.1 每个工具必须声明的契约
 
 无论是已有工具的升级，还是新增工具，都必须定义下列项：
@@ -429,7 +444,7 @@ JSON Schema 输入：必填项、范围、枚举、分页 cursor、最大结果�
 | `skill_catalog_search` | `query`、capabilities、最大风险、可用性、`limit`、`cursor` | 主 Agent、维护 Agent；只读 | manifest 摘要、版本/hash、依赖、风险、最小调用示例 |
 | `skill_propose` | operation、目标 Skill/版本、结构化 Skill definition、Case/Trace evidence、评测计划 | 仅维护 Agent；只写 staging | `candidate_id`、缺失字段、评测要求、`audit_id` |
 
-`wiki_forget(archive=false)`、正式 Skill 发布、Git PR、外部写操作和有副作用工具统一为 `require_confirmation` 或仅 `backend_service`。低风险自动写入只适用于经过来源、脱敏、schema 和路径校验的普通事实/Case candidate；不等同于可以自动删除、覆盖或发布。
+`wiki_forget(archive=false)`、正式 Skill 发布、Git PR、外部写操作和有副作用工具统一为 `require_confirmation`；`backend_service` 只在已有本轮动作指纹确认后代为执行。低风险自动写入只适用于 5.7.1 的白名单，并且必须经过来源、脱敏、schema 和路径校验；不等同于可以自动删除、覆盖或发布。
 
 #### 5.10.4 Skill 的正式定义与候选结构
 
@@ -526,7 +541,7 @@ SYSTEM_CONTROL       停止、恢复、压缩、导出
 
 - 第 1 层当前上下文：直接由 `Session.get_history()` 和 `ContextGovernor` 管理，每轮必有。
 - 第 2 层 Trace：默认不注入原始事件；只在 `TRACE_INSPECT`、失败恢复、评测和用户要求时，通过 `trace_search`/`trace_read` 查询。
-- 第 3 层知识图谱：不把整个 Wiki 放入 system prompt；路由后查询 3～8 个高分页面摘要，必要时再调用 `wiki_read`。
+- 第 3 层知识图谱：不把整个 Wiki 放入 system prompt；路由后最多初召回 8 个高分页面，重排后只注入最多 3 条短摘要，必要时再调用 `wiki_read`。
 - 第 4 层 Skill：Skill summary 可保留在稳定上下文；完整 SKILL.md 和案例仅在意图命中后加载，避免所有 Skill 常驻。
 - 第 5 层 Retention：不作为模型事实注入，而是作为检索过滤器、排序因子和写入门禁。
 
@@ -731,6 +746,29 @@ score =
 ```
 
 页面 chunk 应附带标题、项目、类型、来源、时间和关系上下文，避免只以裸文本进行关键词匹配。
+
+### 10.4 首版上下文与深查预算
+
+首版不按模型的完整上下文窗口无限放大记忆注入。自动记忆注入使用“少量高信号 + 按需深查”的预算，既控制输入成本，也避免上下文污染：
+
+| 场景 | 首版默认上限 |
+|---|---:|
+| 路由后自动注入的记忆总量 | 软上限 2,000 tokens；硬上限 3,000 tokens |
+| 自动注入项 | 最多 3 条；通常为最多 2 条事实/决策和最多 2 条 Case，但总数不超过 3 |
+| 初召回候选 | 最多 8 条，仅用于重排，不全部注入 |
+| 单条注入摘要 | 400～700 tokens，必须带来源、时间、置信度与风险 |
+| `wiki_read(view=summary)` | 800 tokens |
+| `wiki_read(view=full)` | 3,500 tokens；超出时使用 cursor 分页 |
+| `trace_read_summary` | 1,000 tokens；不自动注入原始 Trace |
+| 单次深查累计工具结果 | 5,000 tokens；超出后先压缩已有结果或分页 |
+
+自动注入硬上限按模型窗口自适应：
+
+```text
+min(3,000, max(1,200, context_window_tokens × 6%))
+```
+
+稳定的 system prompt、工具 schema 和 Skill 目录保持在 stable 段以复用 prompt cache；检索记忆只放入 dynamic 段。长 Wiki/Trace 工具结果不应永久跟随之后的每次模型调用：任务完成或阶段切换时，由 `ContextGovernor` 压缩为短工作摘要或清除原始结果。
 
 ## 11. Trace 派生和自进化闭环
 
@@ -942,6 +980,7 @@ SkillLoader 增加版本/hash/状态读取；ToolRegistry 增加工具示例、�
 - 从 Trace/Case 构造评测集。
 - 运行 baseline 与 candidate 对比。
 - 引入 held-out gate、LLM judge、成本和安全指标。
+- 首版 gate 固定为：held-out 成功率不低于 baseline；不新增高风险工具调用；无安全违规；成本和延迟无明显回归。
 - 所有采用操作通过 staging、Git 分支和 PR。
 
 验收：候选在 held-out 集上无回归；测试、大小、缓存兼容和安全检查通过；可生成回滚提交。
@@ -1006,6 +1045,10 @@ SkillLoader 增加版本/hash/状态读取；ToolRegistry 增加工具示例、�
 5. Trace 默认保留：原始 Audit 事件 18 天；含完整明文的 payload 7 天；脱敏摘要、用户确认知识、Case 和架构决策长期保留。
 6. 后台维护使用 SQLite 持久状态与单 worker；每个会话采用可延期防抖状态，在 idle 后按 `last_review_cursor` 到 `snapshot_cursor` 的整批内容处理，而不按单条消息处理。
 7. Wiki/Case 修改先保存不可变 revision；workspace Skill adopt 永不覆盖旧版本，采用新版本目录和 current 指针回滚。
+8. 低风险自动写入遵循 5.7.1 白名单；Case、修正建议和 Skill candidate 先进入 candidate，正式资产、删除、外部写入和 Git PR 必须用户确认。
+9. 用户确认只对本轮、一次、单个动作指纹有效；目标或关键参数改变后失效。
+10. 自动记忆注入采用 2,000 tokens 软上限、3,000 tokens 硬上限和 6% 窗口自适应规则；完整内容通过分页深查加载。
+11. 首版 Skill 评测 gate：held-out 成功率不低于 baseline、不新增高风险工具、无安全违规、成本和延迟无明显回归。
 
 ### 18.2 建议决策
 
@@ -1018,4 +1061,3 @@ SkillLoader 增加版本/hash/状态读取；ToolRegistry 增加工具示例、�
 ### 18.3 下一轮实施前需要确认
 
 1. 首个代码审查/仓库定位 Skill 是否有可用的 10～20 个脱敏任务？
-2. 初始评测门槛如何量化：是否接受“held-out 成功率不低于基线、无高风险工具增量、无安全违规、成本和延迟无明显回归”的首版 gate？
