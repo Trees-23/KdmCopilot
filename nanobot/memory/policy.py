@@ -8,6 +8,10 @@ from typing import Iterable
 from nanobot.memory.intent import IntentDecision
 
 
+class ToolPolicyError(PermissionError):
+    """Raised when a tool is outside the active agent role's allowlist."""
+
+
 @dataclass(frozen=True, slots=True)
 class MemoryScope:
     """A bounded retrieval policy for one intent."""
@@ -46,4 +50,40 @@ class MemoryScopePolicy:
 
 MemoryPolicy = MemoryScopePolicy
 
-__all__ = ["MemoryPolicy", "MemoryScope", "MemoryScopePolicy"]
+
+class ToolPolicy:
+    """Fail-closed role matrix evaluated before tool parameter execution."""
+
+    _DENIED_BY_ROLE = {
+        "maintenance": {
+            "write_file", "edit_file", "apply_patch", "exec", "write_stdin", "git",
+            "message", "cron", "create_goal", "update_goal", "skill_propose",
+        },
+        "evaluation": {
+            "write_file", "edit_file", "apply_patch", "exec", "write_stdin", "git",
+            "message", "cron", "create_goal", "update_goal", "skill_propose",
+        },
+    }
+    _HIGH_RISK_PREFIXES = ("mcp_",)
+
+    def __init__(self, *, role: str = "agent", configured: bool = True) -> None:
+        self.role = role
+        self.configured = configured
+
+    def check(self, tool_name: str, *, role: str | None = None) -> None:
+        active_role = role or self.role
+        if not self.configured:
+            raise ToolPolicyError("ToolPolicy is not configured; refusing tool call")
+        denied = self._DENIED_BY_ROLE.get(active_role, set())
+        if tool_name in denied or (active_role in {"maintenance", "evaluation"} and tool_name.startswith(self._HIGH_RISK_PREFIXES)):
+            raise ToolPolicyError(f"tool '{tool_name}' is denied for role '{active_role}'")
+
+    def allows(self, tool_name: str, *, role: str | None = None) -> bool:
+        try:
+            self.check(tool_name, role=role)
+        except ToolPolicyError:
+            return False
+        return True
+
+
+__all__ = ["MemoryPolicy", "MemoryScope", "MemoryScopePolicy", "ToolPolicy", "ToolPolicyError"]

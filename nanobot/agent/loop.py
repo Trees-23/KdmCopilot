@@ -67,6 +67,8 @@ from nanobot.bus.runtime_events import (
 from nanobot.command import CommandContext, CommandRouter, register_builtin_commands
 from nanobot.config.schema import AgentDefaults, ModelPresetConfig
 from nanobot.cron.session_turns import is_cron_turn
+from nanobot.memory.maintenance import open_maintenance_db, upsert_activity
+from nanobot.memory.policy import ToolPolicy
 from nanobot.providers.base import LLMProvider
 from nanobot.providers.factory import ProviderSnapshot
 from nanobot.runtime_context import (
@@ -409,6 +411,7 @@ class AgentLoop:
         self.goal_orchestration = GoalOrchestrationStore(self.sessions)
         self.sessions.set_file_cap_archiver(self.context.memory.raw_archive)
         self.tools = ToolRegistry()
+        self.tools.set_tool_policy(ToolPolicy())
         # One file-read/write tracker per logical session. The tool registry is
         # shared by this loop, so tools resolve the active state via contextvars.
         self._file_state_store = FileStateStore()
@@ -1929,6 +1932,18 @@ class AgentLoop:
         if ctx.session is None:
             ctx.session = self.sessions.get_or_create(ctx.session_key)
         if ctx.kind is TurnKind.USER:
+            try:
+                scope = self.workspace_scopes.for_message(msg, ctx.session.metadata)
+                connection = open_maintenance_db(scope.project_path or self.workspace)
+                upsert_activity(
+                    connection,
+                    workspace=str((scope.project_path or self.workspace).resolve()),
+                    session_key=ctx.session_key,
+                    message_cursor=str(msg.metadata.get("message_id") or ctx.turn_id),
+                )
+                connection.close()
+            except Exception:
+                logger.warning("Failed to upsert maintenance activity", exc_info=True)
             if (
                 msg.sender_id != "subagent"
                 and not turn_continuation.internal_continuation_inbound(msg.metadata)
