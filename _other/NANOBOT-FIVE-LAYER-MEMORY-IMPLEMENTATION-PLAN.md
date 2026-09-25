@@ -103,7 +103,8 @@ Wiki / Case Store / Skill Staging
   "last_accessed_at": "...",
   "access_count": 0,
   "decay_score": 0.0,
-  "status": "candidate|active|stale|archived|deleted",
+  "status": "candidate|active|stale|archived",
+  "deletion_state": "none|tombstoned",
   "sensitivity": "public|private|secret",
   "source_actor": "user|main_agent|maintenance_agent|system",
   "supersedes": [],
@@ -177,6 +178,8 @@ Skill 定义继续使用 `skills/<name>/SKILL.md`，增加版本和内容 hash�
 首版沿用 Hermes 的实用默认值：总计约 20 道题，按 10 train / 5 validation / 5 holdout 划分。与 Hermes 不同，nanobot 增加最低质量门槛：至少 10 道有效题、至少 3 道 holdout、至少覆盖 3 类任务、至少包含 1 道失败或边界题；每道题必须可执行、rubric 可判断、通过去重和敏感信息检查。若题目不足或无法验证，不能伪装成合格 EvalPack。
 
 EvalPack 的小样本切分规则固定如下：有效题数不少于 20 时使用 50% train、25% validation、25% holdout；有效题数为 10～19 时，holdout 至少 3 道、validation 至少 2 道，其余放入 train（10 道题时为 5/2/3）；少于 10 道有效题时标记为 `insufficient_evidence`，不得进行正式发布评测。
+
+10～19 道题的 EvalPack 额外标记 `evidence_grade=limited`：同一封存 EvalPack 至少完成两次独立回放，且每次都不得出现安全违规或严重任务级回归；结果只能作为低风险、需用户确认的 provisional evidence，不能触发自动采用。达到 20 道及以上并通过完整 gate 后，才标记 `evidence_grade=standard`。
 
 评测包封存后，candidate 不得修改其 holdout 内容、fixture、答案或评分标准。生成题目的 Agent、审核题目/评分标准的 Agent、运行任务的评测 Agent、最终评分器和发布主体必须逻辑分离；不能由同一个 Agent 自己出题、自己判分并批准发布。评测集不足时，状态为 `eval_pack_missing` 或 `insufficient_evidence`，candidate 只能停留 staging。
 
@@ -950,9 +953,11 @@ effective_score =
 ### 12.2 生命周期
 
 ```text
-candidate → active → stale → archived → deleted
+candidate → active → stale → archived
              ↑         │
              └─ reaffirm ┘
+
+安全/合规删除是生命周期之外的异常分支：`active|stale|archived → tombstoned`。
 ```
 
 ### 12.3 保留规则
@@ -967,7 +972,9 @@ Trace 默认分层保留：原始 Audit 事件保留 **18 天**；可能含完�
 
 删除必须同步处理页面、关系、FTS 索引和案例引用；Audit 只保留最小化删除事件，不保留被删除的敏感正文。
 
-普通生命周期不进入 `deleted`，而是停留在 `archived`。`deleted` 仅用于用户明确删除、安全秘密清除、权限违规或数据主体删除请求，并保留不含正文的 tombstone（`memory_id`、删除时间、原因和原内容 hash），以便审计而不恢复敏感内容。
+普通生命周期不进入删除状态，而是停留在 `archived`。安全或合规删除不再伪装成普通生命周期：先移除正文、关系和检索内容，再保留一个 `deletion_state=tombstoned` 的无正文记录（`memory_id`、删除时间、原因和原内容 hash）。该 tombstone 仅用于审计和阻止旧索引复活，不可恢复敏感正文。
+
+长期保留内容采用冷热分层而非自动硬删除：`active` 内容参与默认 FTS，`archived` 内容保留不可变 revision 但默认排除检索，可按明确历史查询读取。后台持续统计 workspace 的页面数、SQLite 大小、归档占比和索引失败数；超过运维阈值时生成维护告警，优先压缩归档和重建索引，不因容量告警自动删除记忆。
 
 ## 13. 与现有 nanobot 的集成点
 
@@ -1176,6 +1183,9 @@ SkillLoader 增加版本/hash/状态读取；ToolRegistry 增加工具示例、�
 23. 首个只读代码审查 Skill 使用固定 fixture 的临时只读 workspace，默认禁网、禁写、禁 Git 提交。
 24. 普通记忆检索失败不阻塞主任务；用户明确要求历史查询或记忆修改时，失败必须显式报错。
 25. Skill、工具 schema、system prompt、模型配置、fixture 或 EvalPack hash 变化会使 baseline 失效，必须重新评测。
+26. 普通生命周期只到 `archived`；安全/合规删除走独立的 `tombstoned` 异常分支，保留无正文 tombstone，不允许恢复敏感正文。
+27. 长期记忆采用 active/archive 冷热分层和容量监控，容量告警优先压缩归档、重建索引，不自动硬删除记忆。
+28. 10～19 道题的 EvalPack 标记 `evidence_grade=limited`，同一封存集至少两次独立回放且只能作为需用户确认的 provisional evidence；20 道及以上才标记 `standard`。
 
 ### 18.2 建议决策
 
