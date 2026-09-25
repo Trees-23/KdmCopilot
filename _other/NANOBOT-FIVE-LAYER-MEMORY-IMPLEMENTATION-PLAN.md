@@ -107,6 +107,8 @@ Wiki / Case Store / Skill Staging
   "sensitivity": "public|private|secret",
   "source_actor": "user|main_agent|maintenance_agent|system",
   "supersedes": [],
+  "revision_id": "mem_01...:v1",
+  "previous_revision_id": null,
   "last_skill_review_at": null,
   "activity_epoch": 0,
   "version": 1
@@ -133,6 +135,9 @@ Skill 定义继续使用 `skills/<name>/SKILL.md`，增加版本和内容 hash�
   "confidence": 0.86,
   "user_confirmed": true,
   "status": "candidate|active|archived|rejected",
+  "version": 1,
+  "revision_id": "case_01...:v1",
+  "previous_revision_id": null,
   "created_at": "...",
   "last_used_at": "...",
   "use_count": 4
@@ -154,6 +159,7 @@ Skill 定义继续使用 `skills/<name>/SKILL.md`，增加版本和内容 hash�
 | Trace 摘要 | Wiki `trace_summary` 页面 | FTS、来源、状态、时间索引 | 按需摘要注入 |
 | 稳定事实/决策 | `SOUL.md`、`USER.md`、`memory/MEMORY.md`、Wiki 页面 Markdown | Wiki `wiki.db`、FTS5、关系表 | 按意图检索 |
 | 案例 | Wiki `page_type=case` 的 Markdown 页面 | Wiki `wiki.db` 的结构化字段、FTS5、关系索引 | 检索摘要后注入 |
+| Wiki/Case revision | `memory/wiki/revisions/<page_id>/<version>.md` 不可变快照 | revision 索引、父版本、变更原因、来源和审计 ID | 不直接注入 |
 | Skill 正文 | `skills/<name>/SKILL.md` | Skill manifest、版本、hash、评测索引 | 摘要常驻，正文按需 |
 | Skill 候选 | `memory/skill-staging/<skill>/<version>/` | 候选状态和评测索引 | 不直接注入 |
 
@@ -227,8 +233,8 @@ score =
 
 - **会话**：由 `SessionManager` 原子保存；压缩只改变 live suffix，历史归档另写 `history.jsonl`。
 - **Trace**：不修改旧事件；重试、恢复和更正追加新事件；索引可重建。
-- **Wiki/案例**：通过 `wiki_upsert` 更新页面，保留 `updated_at`、版本、来源和 supersedes 关系；普通“忘记”默认转为修正、合并、降权或 archive，不直接硬删除。
-- **Skill**：不由运行中的 Agent 直接覆盖正式版本；生成 candidate，经过评测后通过 Git PR 或 workspace adopt 发布。
+- **Wiki/案例**：修改 active 页面前，先在 `memory/wiki/revisions/<page_id>/<version>.md` 保存不可变 Markdown 快照；页面记录单调递增的 `version`、`revision_id`、`previous_revision_id`、变更原因、来源和 `supersedes`。`expected_version` 防止后台任务覆盖较新的页面。普通“忘记”默认转为修正、合并、降权或 archive，不直接硬删除。
+- **Skill**：不由运行中的 Agent 直接覆盖正式版本；candidate 与正式版本均保存 version 和 content hash。workspace adopt 永不覆盖旧 `SKILL.md`，而是生成新版本目录并切换 current 指针；builtin/shared Skill 经过评测后通过 Git PR 发布，可切回上一个已验证版本或提交。
 - **Skill manifest/SQLite 索引**：由文件扫描或变更钩子重建，索引损坏不影响 Markdown 和 Skill 正文。
 
 ### 5.7 写入流水线
@@ -259,16 +265,20 @@ score =
 - **后台维护服务**：计时、去重、排队、workspace 级互斥锁、状态保存、索引重建、权限校验和审计。
 - **受限维护 Agent**：仅在需要语义判断时由后台服务启动，类似 Dream 的 ephemeral Agent；只读 Trace/Wiki/Skill manifest，只能写 Wiki candidate、Case 和 `memory/skill-staging/`，不能覆盖正式 Skill、执行 shell 或调用外部副作用工具。
 
+维护不是“每条消息各创建一次 45 分钟后的任务”，而是**每个会话一条可反复延期的防抖维护状态**。每条新消息只更新同一条状态的 `last_activity_at`、`last_message_cursor` 和 `due_at=last_activity_at+45m`，不会单独触发总结。
+
 ```text
-用户会话结束
-  → 45 分钟 idle 检测
-  → 后台服务检查 activity epoch、活跃任务和 workspace 锁
-  → 启动一次受限维护 Agent
-  → 输出结构化维护决定
-  → 后台服务校验、写入候选、更新索引和审计
+连续会话 A、B、C
+  → 同一 session_maintenance_state 持续更新 due_at
+  → C 后连续 45 分钟无新消息
+  → 单 worker 对 (last_review_cursor, last_message_cursor] 的整批消息/Trace 做一次 review
+  → 记录 review cursor 与状态
+  → 下一条新消息才开启新的 activity epoch
 ```
 
-每个 workspace 同一时刻最多运行一个维护任务。新用户消息会取消尚未开始的维护任务；已经进入语义分析的任务可完成只读分析或安全写入 staging，但不能改动正式资产。
+持久状态至少包含：`session_key`（主键）、`activity_epoch`、`last_activity_at`、`last_message_cursor`、`last_review_cursor`、`due_at`、`status=active|pending|running|completed`、`lease_until`。Gateway 重启后由 SQLite 中的 pending 状态恢复到期检查；worker 取任务时再次核对 cursor/epoch，旧任务标为 `obsolete` 而不执行。
+
+每个 workspace 同一时刻最多运行一个维护任务。维护 Agent 启动后先固定本次处理的 `snapshot_cursor`；若分析期间收到新消息，当前任务只处理到该快照，新消息留给下一次 idle 批次。新用户消息会使尚未开始的任务延期；已经进入语义分析的任务可完成只读分析或安全写入 staging，但不能改动正式资产。
 
 维护 Agent 只允许输出下列动作：
 
@@ -760,12 +770,13 @@ score =
 
 Skill 总结不在每次会话结束时执行，也不因为超时就直接生成 Skill。首版采用固定的空闲触发窗口：**会话连续 45 分钟没有新消息后，只触发一次 Skill review 检查**。
 
-触发流程：
+触发流程以连续会话批次为单位，而不是以单条消息为单位：
 
 ```text
-会话持续进行
+会话内连续消息持续写入
+  → 每条消息只刷新同一 session 的 due_at = last_activity_at + 45m
   → 45 分钟无新消息
-  → 标记当前 activity epoch 为 idle
+  → 固定 (last_review_cursor, snapshot_cursor] 作为本轮批次
   → 触发一次 Skill review
   → Agent 判断是否存在可复用流程
   → 无流程：结束
@@ -773,11 +784,12 @@ Skill 总结不在每次会话结束时执行，也不因为超时就直接生�
   → 稳定、可重复流程：生成 Skill candidate
 ```
 
-下一条新消息会开启新的 `activity_epoch`，之后重新计算 45 分钟窗口。为避免重复总结，状态至少记录：
+review 完成后，下一条新消息才开启新的 `activity_epoch`，之后重新计算 45 分钟窗口。若 review 期间有新消息到达，该消息不进入已固定的 `snapshot_cursor`，留给下一次 idle 批次。为避免重复总结，状态至少记录：
 
 - `activity_epoch`；
 - `last_skill_review_at`；
 - `skill_review_cursor`；
+- `last_message_cursor`、`snapshot_cursor`、`due_at`；
 - 本轮是否已经 review。
 
 Skill review 的准入条件：流程有多个步骤、结果可验证、不是一次性偶然操作、与现有 Skill 不重复，并且能抽象成跨任务可复用的方法。超时只负责触发检查，不能直接决定生成 Skill。
@@ -806,6 +818,8 @@ candidate → active → stale → archived → deleted
 ```
 
 ### 12.3 保留规则
+
+Trace 默认分层保留：原始 Audit 事件保留 **18 天**；可能含完整明文的 payload 保留 **7 天**；脱敏 Trace 摘要、用户确认的知识、Case 和架构决策长期保留。期限配置化，但首版以该默认值实现。
 
 永久保留：用户明确标记、仍有效的安全规则、未被取代的架构决策、当前项目关键事实。
 
@@ -989,18 +1003,19 @@ SkillLoader 增加版本/hash/状态读取；ToolRegistry 增加工具示例、�
 2. 长期记忆允许低风险自动写入，但必须满足来源、脱敏、namespace、置信度和可回滚要求；普通内容默认通过合并、修正、降权和归档维护，不做永久删除。
 3. 暂不更换向量方案。首版使用 SQLite、FTS5、标签、别名和图关系；只有在实际规模和召回指标证明不足时，才评估额外向量数据库。
 4. 会话连续 45 分钟无新消息后，只触发一次 Skill review 检查；是否生成案例或 Skill candidate 由 Agent 根据可复用性判断。
+5. Trace 默认保留：原始 Audit 事件 18 天；含完整明文的 payload 7 天；脱敏摘要、用户确认知识、Case 和架构决策长期保留。
+6. 后台维护使用 SQLite 持久状态与单 worker；每个会话采用可延期防抖状态，在 idle 后按 `last_review_cursor` 到 `snapshot_cursor` 的整批内容处理，而不按单条消息处理。
+7. Wiki/Case 修改先保存不可变 revision；workspace Skill adopt 永不覆盖旧版本，采用新版本目录和 current 指针回滚。
 
 ### 18.2 建议决策
 
-1. Trace 保留策略建议默认分层：原始事件保留 18 天；含完整明文的 payload 默认保留 14 天；Trace 摘要、用户确认的知识、案例和架构决策长期保留。所有期限配置化，并允许按 workspace 覆盖。
-2. 首个自进化 Skill 建议选择“只读代码审查/仓库问题定位”类任务：频率较高、结果可用测试或人工 rubric 评估，不直接修改代码、不合并 PR，适合作为低风险 baseline。
-3. 建议区分两种采用方式：
+1. 首个自进化 Skill 建议选择“只读代码审查/仓库问题定位”类任务：频率较高、结果可用测试或人工 rubric 评估，不直接修改代码、不合并 PR，适合作为低风险 baseline。
+2. 建议区分两种采用方式：
    - **Git PR 采用**：生成版本化分支和 PR，适合 builtin/shared skill、需要团队审查的变更，具备完整 diff、评测记录和回滚能力。
    - **workspace skill adopt**：把候选复制到当前 workspace 的 `skills/`，适合个人实验和快速试用，不经过远端 PR，治理和审查能力较弱。
    - 推荐默认：共享或内置 Skill 必须 Git PR；个人 workspace Skill 可人工确认后 adopt，但仍保留候选、评测和原版本备份。
 
 ### 18.3 下一轮实施前需要确认
 
-1. 18 天原始事件、14 天明文 payload 是否符合实际合规要求？
-2. 首个代码审查/仓库定位 Skill 是否有可用的 10～20 个脱敏任务？
-3. workspace adopt 是否允许覆盖现有 Skill，还是必须生成新版本目录？
+1. 首个代码审查/仓库定位 Skill 是否有可用的 10～20 个脱敏任务？
+2. 初始评测门槛如何量化：是否接受“held-out 成功率不低于基线、无高风险工具增量、无安全违规、成本和延迟无明显回归”的首版 gate？
