@@ -837,13 +837,13 @@ Phase 0 只有在以下全部通过后才可进入 Phase 1：
 
 #### P0-T01：确认 memory 模块文件边界
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
 - 涉及文件：第 3 节目标目录及对应现有模块；执行时记录最终路径。
 - 不涉及文件：原计划文档、无关生产模块、用户既有无关修改。
-- 实施内容：遵循既定 schema、事实源边界、单 worker、权限和失败恢复规则；当前未开始。
+- 实施内容：建立 `nanobot.memory` 及 `nanobot.memory.migrations` 基础包，并建立对应的 `tests/memory` 测试边界。包内暂不导出数据库连接、迁移、锁或 outbox API，不创建数据库，也不接入 Agent。
 - 输入和输出：输入为前置任务产物和临时 fixture；输出为代码/测试/审计证据或评审结论。
 - 数据库或协议变化：仅允许本文已定义的表、字段、状态、迁移和协议；需改变时先登记阻塞。
 - 测试方法：使用临时 workspace/SQLite/fixture，执行单元、集成、安全和失败恢复测试。
@@ -851,12 +851,12 @@ Phase 0 只有在以下全部通过后才可进入 Phase 1：
 - 失败恢复：保留旧事实源和旧 schema，记录脱敏错误，按 retry/degraded/rollback 处理。
 - 证据要求：记录命令、结果、日志/trace、schema/hash 或审计事件路径。
 - 完成后勾选：
-  - [ ] 代码或文档变更已完成
-  - [ ] 测试已运行
-  - [ ] 测试结果已记录
-  - [ ] 审计/证据路径已记录
-  - [ ] 提交编号已记录
-- 实施记录：完成日期：；提交：；测试：；证据：；遗留问题：
+  - [x] 代码或文档变更已完成
+  - [x] 测试已运行
+  - [x] 测试结果已记录
+  - [x] 审计/证据路径已记录
+  - [x] 提交编号已记录
+- 实施记录：完成日期：2026-09-25；提交：5d54eb22；测试：`pytest -q tests/memory/test_package_boundary.py`（2 passed），`ruff check nanobot/memory tests/memory`（通过）；证据：`tests/memory/test_package_boundary.py`；遗留问题：数据库路径、连接、schema、migration、lock、outbox 和 FTS5 仍由后续 P0 任务实施。
 
 #### P0-T02：实现 workspace 数据库路径解析
 
@@ -2850,7 +2850,7 @@ Phase 0 只有在以下全部通过后才可进入 Phase 1：
 
 | 任务 ID | 状态 | 日期 | 提交 | 测试 | 证据 | 备注 |
 |---|---|---|---|---|---|---|
-| P0-T01 | [ ] |  |  |  |  |  |
+| P0-T01 | [x] | 2026-09-25 | 5d54eb22 | `pytest -q tests/memory/test_package_boundary.py`；`ruff check nanobot/memory tests/memory` | `tests/memory/test_package_boundary.py` | 仅建立包边界，未创建数据库 |
 | P0-T02 | [ ] |  |  |  |  |  |
 | P0-T03 | [ ] |  |  |  |  |  |
 | P0-T04 | [ ] |  |  |  |  |  |
