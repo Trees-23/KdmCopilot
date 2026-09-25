@@ -146,6 +146,32 @@ Skill 定义继续使用 `skills/<name>/SKILL.md`，增加版本和内容 hash�
 
 准入条件：Trace 完整、结果可验证、无秘密、无越权、通过评测或用户确认，并且与已有案例去重。
 
+### 4.3 Skill 专属评测包（EvalPack）
+
+每个 Skill 使用自己的评测包，不要求所有 Skill 共用同一套题目。评测包由维护 Agent 根据 Skill 定义、成功/失败 Case 和脱敏 Trace 自动生成草案；后台服务校验、封存和执行，用户不需要手工编写全部评测题。
+
+```json
+{
+  "eval_pack_id": "eval_repo_code_review_v1",
+  "skill_id": "repo-code-review",
+  "skill_version": "candidate-3",
+  "dataset_hash": "sha256:...",
+  "sources": {"case_ids": [], "trace_ids": [], "synthetic": true},
+  "train": [{"task_input": "...", "rubric": ["..."]}],
+  "validation": [{"task_input": "...", "rubric": ["..."]}],
+  "holdout": [{"task_input": "...", "rubric": ["..."]}],
+  "fixture_refs": ["workspace-snapshot-..."],
+  "allowed_tools": ["read_file", "grep", "list_dir"],
+  "forbidden_actions": ["write_file", "external_side_effect"],
+  "baseline_ref": "skill:repo-code-review@1.0.0",
+  "status": "draft|reviewed|sealed|evaluating|passed|failed|insufficient_evidence"
+}
+```
+
+评测题可以来自四类来源：Skill 读取后由强模型合成的题目、真实 Session/Trace 挖掘出的成功和失败任务、失败 Trace 自动转成的回归题，以及可自动验证的固定 fixture（例如带已知问题的测试仓库）。题目要求描述任务和评分 rubric，不要求固定措辞答案。
+
+评测包封存后，candidate 不得修改其 holdout 内容、fixture、答案或评分标准。生成题目的 Agent、审核题目/评分标准的 Agent、运行任务的评测 Agent、最终评分器和发布主体必须逻辑分离；不能由同一个 Agent 自己出题、自己判分并批准发布。评测集不足时，状态为 `eval_pack_missing` 或 `insufficient_evidence`，candidate 只能停留 staging。
+
 ## 5. 存储分层、事实源与修改方式
 
 五层记忆不应全部写入同一个 Markdown 文件，也不应全部写入同一个数据库。推荐采用“原始记录不可变、派生内容可版本化、索引可重建、Markdown 保留可读性”的结构。
@@ -834,6 +860,50 @@ Skill review 的准入条件：流程有多个步骤、结果可验证、不是�
 
 Skill review 由后台维护服务发起，并使用受限维护 Agent 完成语义判断；它不是当前用户 turn 的普通子 Agent。对于已有 Skill，维护 Agent 只能提出新建、修改合并或 references candidate，正式 Skill 的整合必须经过评测和人工确认。
 
+### 11.4 自动评测与发布闭环
+
+自进化不是“生成 Skill 后直接覆盖文件”，而是一个可恢复的状态机：
+
+```text
+真实会话 / Trace
+  → Case 与失败模式
+  → 维护 Agent 生成 Skill candidate
+  → 同时生成该 Skill 的 EvalPack 草案
+  → 评测审核 Agent 检查题目、rubric、fixture 和禁止行为
+  → 后台服务封存 EvalPack（dataset_hash）
+  → baseline 与 candidate 在隔离 workspace 分别回放
+  → 独立评分器按 Skill 专属 rubric 打分
+  → 安全、工具风险、成本、延迟和回归 gate
+  → staging / awaiting_confirmation
+  → 用户确认后 Git PR 或 workspace adopt
+  → 线上 Trace 持续补充新题和失败回归题
+  → 定期重新评测，必要时回滚
+```
+
+职责边界：
+
+- **维护 Agent**：从 Case/Trace 生成 candidate 和 EvalPack 草案，只能写 staging；
+- **评测审核 Agent**：检查题目是否覆盖适用范围、非目标和安全边界，不能发布 Skill；
+- **后台评测服务**：固定数据集、创建隔离 workspace、运行 baseline/candidate、统计 token、延迟、工具风险并保存 evidence log；
+- **独立评分器**：按固定 rubric 对结果评分，不能修改 EvalPack；LLM judge 只作为评分组件，不能单独决定发布；
+- **用户**：确认是否采用已通过 gate 的候选。
+
+候选状态统一为：
+
+```text
+candidate_created
+→ eval_pack_missing
+→ eval_pack_ready
+→ evaluating
+→ passed | failed | insufficient_evidence
+→ awaiting_confirmation
+→ adopted | rejected | rolled_back
+```
+
+Hermes 的主要借鉴是自动合成评测题、SessionDB 挖掘、train/validation/holdout 划分、baseline 对比、Trace 反思和 PR 发布。Hermes 当前实现允许生成题目和 LLM judge 使用同一评测模型；nanobot 首版增加 EvalPack 封存、独立审核、禁止同一 Agent 自评自批，以及候选状态机，避免评测泄漏和虚假通过。
+
+评测集不需要在 Phase 0～4 开始前准备好。没有足够真实任务时，可以先使用自动合成题和少量真实题生成 EvalPack 草案；正式 Skill 发布前必须达到最低证据要求。真实任务不足时，candidate 只做 staging，不阻塞 Trace、Case、检索和 Skill review 的实现。积累到足够的脱敏、可复现任务后，再启动该 Skill 的正式 baseline/held-out 评测。
+
 ## 12. 遗忘、降权、归档和删除
 
 ### 12.1 降权公式
@@ -952,6 +1022,7 @@ SkillLoader 增加版本/hash/状态读取；ToolRegistry 增加工具示例、�
 - 加入敏感信息检测、去重、用户确认和案例准入。
 - 将案例与 Skill 版本、工具调用、Trace 建立关系。
 - 实现 `memory_review_batch`、`trace_search`、`trace_read_summary` 和 `wiki_propose_maintenance`；维护 Agent 只产生候选提案。
+- 由维护 Agent 自动生成 Skill 专属 EvalPack 草案；评测集不足时只保存 `eval_pack_missing` / `insufficient_evidence` 状态，不阻塞 Case 沉淀。
 
 验收：案例可按任务特征检索；失败案例不会被误当作成功模板；每个案例有完整来源。
 
@@ -968,6 +1039,7 @@ SkillLoader 增加版本/hash/状态读取；ToolRegistry 增加工具示例、�
 - 增加 45 分钟空闲窗口和每个 activity epoch 仅一次的 Skill review 检查。
 - 增加 workspace 级串行后台维护服务，以及受限维护 Agent 的白名单工具和结构化动作校验。
 - 增加 `skill_catalog_search`、`skill_read`、`skill_propose` 和由后台服务执行的 candidate validate/evaluate/publish 流程。
+- 增加 EvalPack 审核、封存、隔离回放、独立评分和 candidate 状态机；维护 Agent 不得自评自批。
 
 验收：重复事实不增长；旧事实可降权/归档；用户 forget 可穿透所有索引；Skill 更新可回滚。
 
@@ -980,6 +1052,8 @@ SkillLoader 增加版本/hash/状态读取；ToolRegistry 增加工具示例、�
 - 从 Trace/Case 构造评测集。
 - 运行 baseline 与 candidate 对比。
 - 引入 held-out gate、LLM judge、成本和安全指标。
+- 自动生成并封存每个 Skill 的 EvalPack；按 Skill 专属 rubric 评估，不使用一套全局题目替代。
+- 评测包达到最低证据要求后，运行隔离 workspace 的 baseline/candidate 回放；真实任务不足时不发布。
 - 首版 gate 固定为：held-out 成功率不低于 baseline；不新增高风险工具调用；无安全违规；单任务总 token 成本增幅不超过 15%；P50 完成延迟增幅不超过 20%。若成功率明显提升但成本或延迟超标，候选仅保留在 staging，由用户确认是否采用。
 - 所有采用操作通过 staging、Git 分支和 PR。
 
@@ -995,6 +1069,7 @@ SkillLoader 增加版本/hash/状态读取；ToolRegistry 增加工具示例、�
 - 默认生成候选，不自动合并。
 - 记录完整 evidence log。
 - 定期比较成功率、成本、延迟、恢复率和安全事件。
+- 线上失败 Trace 自动转为该 Skill 的回归题，定期更新 EvalPack；更新后重新封存版本并回归评测。
 
 验收：连续运行不会造成记忆膨胀、权限越界或 Skill 漂移；出现回归可自动停止并回滚候选。
 
@@ -1050,6 +1125,9 @@ SkillLoader 增加版本/hash/状态读取；ToolRegistry 增加工具示例、�
 10. 自动记忆注入采用 2,000 tokens 软上限、3,000 tokens 硬上限和 6% 窗口自适应规则；完整内容通过分页深查加载。
 11. 首版 Skill 评测 gate：held-out 成功率不低于 baseline、不新增高风险工具、无安全违规、单任务总 token 成本增幅不超过 15%、P50 完成延迟增幅不超过 20%；超标但效果明显提升的候选停留在 staging，需用户确认。
 12. 自动进入 active 的 `trace_summary` 必须具备完整 Trace 来源、脱敏和可验证工具结果，且 `confidence >= 0.85`；不满足时仅写入 candidate。
+13. 每个 Skill 使用自己的 EvalPack；评测题和 rubric 由 Agent 根据 Skill、Case 和 Trace 自动生成草案，后台审核、封存和回放，用户不需要手工编写整套评测集。
+14. EvalPack 不足时 candidate 只能停留 staging；生成、审核、执行、评分和发布职责分离，禁止同一 Agent 自评自批。
+15. 线上失败 Trace 和用户纠正可自动转为回归评测题；EvalPack 版本化并通过 `dataset_hash` 封存。
 
 ### 18.2 建议决策
 
@@ -1059,6 +1137,6 @@ SkillLoader 增加版本/hash/状态读取；ToolRegistry 增加工具示例、�
    - **workspace skill adopt**：把候选复制到当前 workspace 的 `skills/`，适合个人实验和快速试用，不经过远端 PR，治理和审查能力较弱。
    - 推荐默认：共享或内置 Skill 必须 Git PR；个人 workspace Skill 可人工确认后 adopt，但仍保留候选、评测和原版本备份。
 
-### 18.3 下一轮实施前需要确认
+### 18.3 暂不阻塞实施的事项
 
-1. 首个代码审查/仓库定位 Skill 是否有可用的 10～20 个脱敏任务？
+1. 首个代码审查/仓库定位 Skill 的 10～20 个脱敏真实任务尚未积累；Phase 0～4 先采集真实 Trace、生成 Case 和 EvalPack 草案，待任务足够后再启动 Phase 5 正式 baseline/held-out 评测。
