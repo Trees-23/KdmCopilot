@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from nanobot.memory.db import connect_memory_db_path
 from nanobot.memory.lock import acquire_lock, release_lock, renew_lock
@@ -21,18 +22,20 @@ def _db():
     return connection
 
 
-def test_lock_competition_expiry_generation_and_stale_renewal() -> None:
-    connection = _db()
+def test_lock_competition_expiry_generation_and_stale_renewal(tmp_path: Path) -> None:
+    first_connection = connect_memory_db_path(tmp_path / "memory.sqlite3")
+    apply_migrations(first_connection)
+    second_connection = connect_memory_db_path(tmp_path / "memory.sqlite3")
     base = datetime(2026, 9, 25, tzinfo=UTC)
-    first = acquire_lock(connection, "workspace", "worker-a", now=base, lease_seconds=60)
+    first = acquire_lock(first_connection, "workspace", "worker-a", now=base, lease_seconds=60)
     assert first is not None and first.generation == 1
-    assert acquire_lock(connection, "workspace", "worker-b", now=base + timedelta(seconds=1)) is None
-    renewed = renew_lock(connection, first, now=base + timedelta(seconds=10), lease_seconds=60)
+    assert acquire_lock(second_connection, "workspace", "worker-b", now=base + timedelta(seconds=1)) is None
+    renewed = renew_lock(first_connection, first, now=base + timedelta(seconds=10), lease_seconds=60)
     assert renewed is not None
-    takeover = acquire_lock(connection, "workspace", "worker-b", now=base + timedelta(seconds=71))
+    takeover = acquire_lock(second_connection, "workspace", "worker-b", now=base + timedelta(seconds=71))
     assert takeover is not None and takeover.generation == 2
-    assert renew_lock(connection, first, now=base + timedelta(seconds=72)) is None
-    assert release_lock(connection, takeover)
+    assert renew_lock(first_connection, first, now=base + timedelta(seconds=72)) is None
+    assert release_lock(second_connection, takeover)
 
 
 def test_outbox_idempotency_superseded_retry_and_dead_letter() -> None:
