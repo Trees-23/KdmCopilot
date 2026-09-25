@@ -105,7 +105,7 @@ Wiki / Case Store / Skill Staging
   "decay_score": 0.0,
   "status": "candidate|active|stale|archived|deleted",
   "sensitivity": "public|private|secret",
-  "owner": "...",
+  "source_actor": "user|main_agent|maintenance_agent|system",
   "supersedes": [],
   "last_skill_review_at": null,
   "activity_epoch": 0,
@@ -295,7 +295,7 @@ propose_skill_reference  建立或修改 Skill references candidate
 | `wiki_search`、`wiki_read` | 查询事实、决策、Case、Trace 摘要 | 可供主 Agent 和维护 Agent 只读调用 |
 | `wiki_link`、`wiki_unlink` | 维护页面关系 | 主 Agent 仅对低风险显式请求使用；维护 Agent 通过候选提案间接使用 |
 | `wiki_status`、`wiki_doctor` | 检查索引、页面和存储健康 | 诊断工具，不进入正常推理上下文 |
-| `wiki_import` | 受控导入历史 Markdown | 仅管理员/迁移任务调用，不暴露给日常 Agent |
+| `wiki_import` | 受控导入历史知识源 | 仅后台迁移任务调用，不暴露给日常 Agent |
 | `wiki_upsert` | 页面底层创建与更新 | 由用户显式写入或后台服务校验后的提案落盘；维护 Agent 不直接调用 |
 | `wiki_forget` | archive 或永久删除 | 永久删除仅限用户明确请求、秘密、权限违规或合规删除；后台维护不可调用 |
 
@@ -310,7 +310,7 @@ MCP 侧已有同义的 `knowledge_search`、`knowledge_read`、`knowledge_upsert
 - Markdown 的未知 frontmatter 必须读取、保留并原样写回（round-trip）；
 - `id`、`title`、`page_type`、`tags`、`aliases`、`confidence`、时间和 source cursor 仍保留一等字段，便于索引和兼容旧页面。
 
-首版统一约定的扩展元数据包括：`trace_ids`、`skill_id`、`skill_version`、`intent`、`task_signature`、`domain`、`language`、`risk`、`outcome`、`namespace`、`owner`、`status`、`supersedes`、`activity_epoch`、`candidate_reason`、`reviewed_at`。字段可缺省；不可把未经验证的推测伪装成稳定事实。
+首版统一约定的扩展元数据包括：`trace_ids`、`skill_id`、`skill_version`、`intent`、`task_signature`、`domain`、`language`、`risk`、`outcome`、`namespace`、`source_actor`、`status`、`supersedes`、`activity_epoch`、`candidate_reason`、`reviewed_at`。`source_actor` 只记录写入来源（`user`、`main_agent`、`maintenance_agent`、`system`），不代表多用户身份、租户或所有权。字段可缺省；不可把未经验证的推测伪装成稳定事实。
 
 #### 5.9.2 搜索、Case 和图关系
 
@@ -355,6 +355,100 @@ case_search = wiki_search(page_types=["case"], metadata_filters={...})
 | 生命周期与删除 | 无维护 Agent 直连删除权 | archive 执行、索引清理、明确授权后的永久删除 |
 
 Trace 工具属于 Audit，而不是 Wiki：`trace_search` 做受时间、workspace 和权限约束的定位，`trace_read_summary` 返回脱敏摘要，`trace_read` 仅在诊断需要且权限允许时返回最小原始片段。Skill 工具属于 Skill 系统：`skill_catalog_search` 查询 manifest 摘要，`skill_read` 按需读取正文，`skill_propose` 只写入 staging。索引重建、候选评测和发布均不可交给模型自行决定或执行。
+
+### 5.10 工具契约、单 workspace 权限与 Skill 定义
+
+本项目是单用户、单 workspace、无租户设计。这里的权限不是用户身份、`user_id` 或 RBAC；它只防止不同运行角色越过当前任务的操作边界。所有工具执行前统一经过 `ToolPolicy`：
+
+```text
+调用者类型（main_agent | maintenance_agent | backend_service）
+  + 当前 workspace 边界
+  + 工具名与已校验参数
+  + 本轮是否已有用户明确确认
+  + 数据敏感级别
+  → allow | require_confirmation | deny
+```
+
+`read_only` 只表示可无副作用并发执行，`_scopes` 只表示工具可被哪类 Agent 加载；两者都不能代替 `ToolPolicy`。策略判断必须发生在实际执行之前，不能只依赖模型对工具描述的理解。
+
+#### 5.10.1 每个工具必须声明的契约
+
+无论是已有工具的升级，还是新增工具，都必须定义下列项：
+
+```text
+name / version
+use_when（适用）与 do_not_use_when（明确不适用）
+caller_allowlist（可调用角色）与 risk（read_only | low_risk_write | restricted | external_side_effect）
+JSON Schema 输入：必填项、范围、枚举、分页 cursor、最大结果数、additionalProperties=false
+前置条件、幂等键或 expected_version、可否重试
+确认条件、脱敏与 workspace 路径约束
+结构化成功/失败输出、稳定 error_code、audit_id 与来源证据
+```
+
+工具参数不能只写“字符串”或“内容”。例如 `wiki_upsert` 需要明确目标页面标识、更新模式、`expected_version`、来源 Trace/Cursor、敏感级别和写入原因；`wiki_import(path)` 必须先解析并验证路径位于当前 workspace 的允许导入目录内。`wiki_unlink` 在未指定 relation 时会删除多个关系，因此默认属于 `restricted`，不允许普通 Agent 静默调用。
+
+#### 5.10.2 统一输出与错误语义
+
+现有 Wiki 工具主要返回面向人阅读的字符串；首版升级后，所有新工具及改造后的记忆工具应返回可 JSON 序列化的统一信封。底层 nanobot 若仍以文本承载工具结果，则把该 JSON 序列化为文本，同时保留 `ToolResult` 的错误元数据。
+
+```json
+{
+  "ok": true,
+  "status": "completed|staged|needs_confirmation|not_found|rejected",
+  "data": {},
+  "warnings": [],
+  "next_actions": [],
+  "provenance": {"page_ids": [], "trace_ids": [], "skill_ids": []},
+  "audit_id": "audit_...",
+  "error": null
+}
+```
+
+失败时 `ok=false`，并使用稳定的 `error.code`：`invalid_argument`、`not_found`、`conflict`、`permission_denied`、`confirmation_required`、`sensitive_content`、`precondition_failed`、`rate_limited`、`internal_error`；同时给出 `retryable` 和面向模型的安全下一步。搜索结果必须带 `limit`、`next_cursor`、命中 ID、摘要、时间、置信度与来源，而不是只返回拼接文本。
+
+#### 5.10.3 首批工具的最小 schema 与权限矩阵
+
+| 工具 | 关键输入 | 调用者与策略 | 必须输出 |
+|---|---|---|---|
+| `wiki_search` | `query`、`page_types`、`metadata_filters`、`limit<=25`、`cursor` | 主 Agent、维护 Agent；只读 | 命中摘要、过滤原因、`next_cursor`、来源 |
+| `wiki_read` | `selector`、`view=summary|full` | 主 Agent、维护 Agent；只读 | 页面、版本、metadata、关联来源；长正文可裁剪 |
+| `wiki_neighbors` | `selector`、`relations`、`depth=1`、`limit` | 主 Agent、维护 Agent；只读 | 受限一跳邻居、关系类型、截断状态 |
+| `trace_search` | `query`、时间窗、`status`、`limit`、`cursor` | 主 Agent、维护 Agent；只读且按 workspace 范围过滤 | 脱敏 Trace 摘要、`trace_id`、时间、状态 |
+| `trace_read_summary` | `trace_id` | 主 Agent、维护 Agent；只读 | 脱敏步骤、结果、失败/恢复、关联工具 |
+| `wiki_propose_maintenance` | action、目标/来源页面、`expected_version`、候选内容/metadata、reason、confidence | 仅维护 Agent；只写 candidate | `candidate_id`、校验状态、冲突/敏感告警、`audit_id` |
+| `skill_catalog_search` | `query`、capabilities、最大风险、可用性、`limit`、`cursor` | 主 Agent、维护 Agent；只读 | manifest 摘要、版本/hash、依赖、风险、最小调用示例 |
+| `skill_propose` | operation、目标 Skill/版本、结构化 Skill definition、Case/Trace evidence、评测计划 | 仅维护 Agent；只写 staging | `candidate_id`、缺失字段、评测要求、`audit_id` |
+
+`wiki_forget(archive=false)`、正式 Skill 发布、Git PR、外部写操作和有副作用工具统一为 `require_confirmation` 或仅 `backend_service`。低风险自动写入只适用于经过来源、脱敏、schema 和路径校验的普通事实/Case candidate；不等同于可以自动删除、覆盖或发布。
+
+#### 5.10.4 Skill 的正式定义与候选结构
+
+Skill 是一个**可版本化、可评测、可审查的可复用任务方法包**，不是单次任务记录、Trace 副本或工具代码。它必须说明何时适用和不适用、前置条件、允许工具、执行步骤、验证标准、停止条件与安全边界。Case 保留“这一次怎么做、结果如何”；多个 Case 及评测证据证明可复用后，才可能生成 Skill。
+
+```yaml
+name: repo-code-review
+description: 对可读代码仓库执行只读问题定位与代码审查。
+triggers: [代码审查, 仓库问题定位]
+non_goals: [不修改代码, 不提交 PR, 不访问未授权外部系统]
+risk: read_only
+required_tools: [read_file, grep, list_dir]
+preconditions: [目标仓库可读]
+workflow: 具体步骤与每步证据要求
+verification: [给出文件与行号, 区分事实与推断]
+stop_conditions: [缺少仓库访问权限, 需要写操作]
+references: [case-..., trace-...]
+```
+
+`skill_propose` 不只接收一段 Markdown，至少应包含 `operation=create|revise|merge|add_reference`、`target_skill_id`、`expected_version`、上述 `definition`、`case_ids`、`trace_ids`、`reason`、`evaluation_plan`。后台服务再检查定义完整性、工具风险是否匹配、证据是否充分、是否与现有 Skill 重复；通过前只写入 `memory/skill-staging/`。
+
+#### 5.10.5 工具说明与 few-shot
+
+工具 description 必须自包含地写明“何时用、何时不用、数据范围、不可执行的动作和确认要求”。少量 few-shot 用于复杂组合工具，但不作为权限控制：
+
+- 对普通工具，在 schema description 中给出最小参数示例和常见边界；
+- `tool_search` / `skill_catalog_search` 在返回候选时附一个最小合法调用示例及一个常见错误；
+- `wiki_propose_maintenance`、`skill_propose` 的 1～2 个高质量 few-shot 放在受限维护 Agent 的专用 prompt/template 中，而不是注入每轮主 Agent 上下文；
+- few-shot 之外仍由 JSON Schema、`ToolPolicy`、版本检查、脱敏扫描和审计强制执行。
 
 ## 6. 用户意图路由层
 
@@ -762,6 +856,7 @@ SkillLoader 增加版本/hash/状态读取；ToolRegistry 增加工具示例、�
 
 - 定义 memory、case、retrieval、retention schema。
 - 定义 Wiki 扩展 `metadata` schema、frontmatter round-trip 规则及 `wiki_*` / `trace_*` / `skill_*` 工具契约。
+- 实现单 workspace `ToolPolicy` 骨架，以及统一输出信封、错误码和调用审计字段；不引入用户身份或 RBAC。
 - 统一 `trace_id`、`history_cursor`、`skill_version`、`namespace`。
 - 增加检索和写入的审计事件。
 - 设计秘密检测、脱敏和权限边界。
@@ -856,7 +951,7 @@ SkillLoader 增加版本/hash/状态读取；ToolRegistry 增加工具示例、�
 |---|---|
 | 错误事实进入长期记忆 | 来源引用、置信度、用户确认、冲突检测 |
 | Trace 泄露秘密 | payload 脱敏、敏感字段扫描、默认摘要化 |
-| Wiki 跨 Agent 越权 | namespace、owner、workspace ACL |
+| 不同运行角色越过工具边界 | `ToolPolicy`、调用者白名单、workspace 路径约束、确认门禁 |
 | Skill 自我强化错误 | held-out gate、人工审核、版本回滚 |
 | 后台维护与用户任务冲突 | workspace 级互斥锁、新消息取消未开始任务、正式资产只读 |
 | 上下文污染 | intent scope、rerank、token budget、摘要化 |
@@ -868,7 +963,7 @@ SkillLoader 增加版本/hash/状态读取；ToolRegistry 增加工具示例、�
 ## 16. 建议的第一批任务
 
 1. 创建统一 schema 和 memory scope 枚举，不改变默认行为。
-2. 为 Wiki 工具补充 `trace_id`、namespace、source refs 和权限校验。
+2. 为 Wiki 工具补充 `trace_id`、namespace、`source_actor`、source refs 和 `ToolPolicy` 校验。
 3. 在 Audit 中记录 retrieval/write/forget 事件。
 4. 实现一个只读 `MEMORY_READ` 路由器。
 5. 为一个 Skill 建立最小 Wiki 案例页面、索引字段和人工确认流程。
