@@ -10,7 +10,7 @@
 
 ## 当前实施状态
 
-截至 2026-09-26，已完成 M1 的第一工作单元，Phase 6 仍保持关闭：
+截至 2026-09-26，M0 已完成，M1 已完成，M2 已完成离线编排第一工作单元；Phase 6 仍保持关闭：
 
 - 已加入独立的 `shadow_mode`、主动通知、采用和发布开关，默认全部关闭；当前运行态仍未打开 Phase 6。
 - 已确认 Proposal 确认码有效期为 12 小时（720 分钟），每群每日主动通知上限为 12 条。
@@ -18,9 +18,10 @@
 - 已实现 Proposal 状态转移、版本 CAS、确认码哈希与过期、管理员动作幂等、通知去重和群范围写入的本地仓储。
 - 已将现有 `make_proposal()` 接入可选持久化入口 `persist_proposal()`；它只写入 `eligible_for_confirmation`，不会采用 Skill、创建 PR 或发布。
 - 已完成相关单元测试、配置测试、memory 测试和全量 pytest；当前尚未接入 QQ 命令、主动通知器或真实群验收。
+- 已完成显式调用的离线编排器：workspace lease、Trace 低风险筛选、失败 Case、EvalPack、独立 fixture 回放、Gate 和 Proposal 持久化；Phase 6 关闭时无副作用。
 - 回滚基线已记录：Gateway 构建 `git-f7583e93e78a`，健康检查通过；`phase6.enabled=false`，未打开任何进化写路径。
 
-M0 的目标群、审批管理员、@要求、Proposal 有效期和每日通知上限已确认并写入运行态；真实 openid 不写入 Git。通知时段暂按全天处理（当前还未实现时间窗限制），发布仓库沿用当前 fork 的 `Trees-23/KdmCopilot:main`。在 M1 并发专项测试和 M3 QQ 命令接线完成前，不打开 M4 的 `phase6.enabled`。
+M0 的目标群、审批管理员、@要求、Proposal 有效期和每日通知上限已确认并写入运行态；真实 openid 不写入 Git。通知时段暂按全天处理（当前还未实现时间窗限制），发布仓库沿用当前 fork 的 `Trees-23/KdmCopilot:main`。在 M3 QQ 命令接线完成前，不打开 M4 的 `phase6.enabled`。
 
 ## 1. 决策摘要
 
@@ -331,18 +332,18 @@ workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → �
 - [x] 新增迁移和 repository；实现 Proposal、Delivery、Action、Group Scope 的不可变/可变字段边界。
 - [x] 实现状态转移、版本 CAS、过期、确认码哈希、动作幂等与审计。
 - [x] 将现有 `make_proposal()` 接入持久化模型，但保持 Phase 6 默认关闭。
-- [ ] 编写单元和并发测试：重复批准、过期批准、旧基线、重复通知、迁移恢复。
+- [x] 编写单元和并发测试：重复批准、过期批准、旧基线、重复通知、迁移恢复。
 
-当前进度：M1 已完成持久化、状态机和基础安全测试；并发专项测试仍待补齐，因此 M1 尚未整体验收关闭。
+完成条件：不依赖 QQ 即可通过 API/测试构造、查询和安全地终结一份 Proposal。M1 已完成。
 
 ### M2：自动评审编排（离线与 fixture）
 
 - [ ] 实现系统级受限周期任务和 workspace lease，但先只能被测试/维护命令显式调用。
-- [ ] 接通 Trace → 低风险选择 → Case → EvalPack → 独立回放 → Gate → Proposal。
+- [x] 接通 Trace → 低风险选择 → Case → EvalPack → 独立回放 → Gate → Proposal。
 - [ ] 实现配额、去重、暂停开关、回归保护和 dead-letter 告警。
-- [ ] 完成 Phase 6 关闭时的负向测试：不扫描、不写 Proposal、不发 QQ 消息。
+- [x] 完成 Phase 6 关闭时的负向测试：不扫描、不写 Proposal、不发 QQ 消息。
 
-完成条件：在 fixture Trace 集中可重复生成同一 Gate 与 Proposal；Gateway 仍保持 Phase 6 关闭。
+当前进度：M2 已完成显式离线编排、workspace lease、Trace→Gate→Proposal 链路和关闭态负向测试；系统周期调度、通知配额、Proposal 投递 dead-letter 仍待补齐，因此尚未整体验收关闭。
 
 ### M3：QQ 通知与群内命令接线（默认关闭）
 

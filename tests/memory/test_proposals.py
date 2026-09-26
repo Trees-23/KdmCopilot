@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -93,3 +94,64 @@ def test_transition_uses_epoch_cas_and_delivery_is_deduplicated(tmp_path):
     repo.upsert_group_scope(group_openid="group-1", namespace="qq:group-1", notification_enabled=True)
     row = repo.connection.execute("SELECT notification_enabled,namespace FROM group_memory_scopes WHERE group_openid='group-1'").fetchone()
     assert tuple(row) == (1, "qq:group-1")
+
+
+def test_concurrent_approvals_have_one_winner_and_no_duplicate_adoption(tmp_path):
+    workspace, repo = _repo(tmp_path)
+    proposal = _create(repo, str(workspace))
+    repo.issue_confirmation(proposal.proposal_id, code="4821")
+    database = workspace / ".nanobot" / "memory.sqlite3"
+
+    def approve(request_id: str):
+        connection_repo = ProposalRepository(open_maintenance_db(workspace))
+        try:
+            return connection_repo.approve(
+                proposal.proposal_id,
+                workspace=str(workspace),
+                actor_openid="admin-1",
+                group_openid="group-1",
+                code="4821",
+                idempotency_key=request_id,
+            ).status
+        except ProposalConflict:
+            return "conflict"
+        finally:
+            connection_repo.connection.close()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        statuses = sorted(pool.map(approve, ("concurrent-a", "concurrent-b")))
+    assert statuses[0] == "approved"
+    assert statuses[1] in {"conflict", "idempotent"}
+    assert repo.get(proposal.proposal_id).status == "approved"
+    assert repo.connection.execute(
+        "SELECT count(*) FROM proposal_actions WHERE proposal_id=?", (proposal.proposal_id,)
+    ).fetchone()[0] == 2
+    assert database.exists()
+
+
+def test_concurrent_same_idempotency_key_returns_same_record(tmp_path):
+    workspace, repo = _repo(tmp_path)
+    proposal = _create(repo, str(workspace))
+    repo.issue_confirmation(proposal.proposal_id, code="4821")
+
+    def approve():
+        connection_repo = ProposalRepository(open_maintenance_db(workspace))
+        try:
+            return connection_repo.approve(
+                proposal.proposal_id,
+                workspace=str(workspace),
+                actor_openid="admin-1",
+                group_openid="group-1",
+                code="4821",
+                idempotency_key="same-request",
+            )
+        finally:
+            connection_repo.connection.close()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda _: approve(), (1, 2)))
+    assert {result.status for result in results} <= {"approved", "idempotent"}
+    assert len({result.action_id for result in results}) == 1
+    assert repo.connection.execute(
+        "SELECT count(*) FROM proposal_actions WHERE idempotency_key='same-request'"
+    ).fetchone()[0] == 1

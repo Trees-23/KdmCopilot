@@ -307,6 +307,22 @@ class ProposalRepository:
             )
             if cursor.rowcount != 1:
                 self.connection.rollback()
+                current_after = self.get(proposal_id)
+                if current_after is not None and current_after.status in {
+                    "approved", "adopting", "adopted", "creating_pr", "pr_created",
+                }:
+                    return self._record_action(
+                        proposal_id=proposal_id,
+                        workspace=workspace,
+                        action="approve",
+                        actor_openid=actor_openid,
+                        group_openid=group_openid,
+                        idempotency_key=idempotency_key,
+                        request_digest=request_digest,
+                        result_status="idempotent",
+                        result={"status": current_after.status},
+                        now=now,
+                    )
                 raise ProposalConflict("Proposal changed while approving")
             self.connection.commit()
         except ProposalConflict:
