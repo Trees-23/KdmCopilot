@@ -14,6 +14,7 @@ from typing import Any, Callable, Mapping
 from nanobot.bus.events import OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.memory.db import connect_memory_db
+from nanobot.memory.evolution_commands import _format_beijing_time
 from nanobot.memory.migrations.runner import apply_migrations
 from nanobot.memory.proposal_repository import (
     ProposalConflict,
@@ -64,7 +65,7 @@ class ProposalNotifier:
 
     @staticmethod
     def _content(record: Any, code: str) -> str:
-        expires = record.confirmation_expires_at or "配置有效期内"
+        expires = _format_beijing_time(record.confirmation_expires_at)
         return (
             "【Skill 升级候选】\n"
             f"提案：{record.proposal_id}\n"

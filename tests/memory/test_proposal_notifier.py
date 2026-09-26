@@ -51,6 +51,9 @@ async def test_notifier_persists_payload_and_publishes_group_message(tmp_path):
     queued = notifier.enqueue(proposal_id, group_openid="group-1")
     assert queued.status == "queued"
     assert "/evolve approve" in (queued.content or "")
+    assert "有效期：" in (queued.content or "")
+    assert "（北京时间）" in (queued.content or "")
+    assert "T" not in (queued.content or "")
     assert notifier.enqueue(proposal_id, group_openid="other").status == "group_not_allowed"
 
     assert await notifier.deliver_once() == "sent"
@@ -74,3 +77,16 @@ def test_notifier_does_not_send_when_notifications_are_disabled(tmp_path):
     proposal_id = _seed(tmp_path)
     notifier = ProposalNotifier(str(tmp_path), _config(enabled=False), MessageBus())
     assert notifier.enqueue(proposal_id, group_openid="group-1").status == "disabled"
+
+
+def test_notification_content_formats_expiry_in_beijing_time():
+    record = SimpleNamespace(
+        confirmation_expires_at="2026-09-27T05:25:47+00:00",
+        proposal_id="prop-demo",
+        skill_name="demo",
+        source_kind="workspace",
+        gate_result="passed",
+    )
+    content = ProposalNotifier._content(record, "123456")
+    assert "有效期：2026年09月27日 13:25:47（北京时间）" in content
+    assert "2026-09-27T05:25:47+00:00" not in content
