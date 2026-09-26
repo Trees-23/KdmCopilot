@@ -2208,11 +2208,11 @@ Phase 5 实施证据：`nanobot/memory/derivation.py` 将结构化 Trace outcome
 - 失败恢复：保留旧事实源和旧 schema，记录脱敏错误，按 retry/degraded/rollback 处理。
 - 证据要求：记录命令、结果、日志/trace、schema/hash 或审计事件路径。
 - 完成后勾选：
-  - [ ] 代码或文档变更已完成
-  - [ ] 测试已运行
-  - [ ] 测试结果已记录
-  - [ ] 审计/证据路径已记录
-  - [ ] 提交编号已记录
+-  - [x] 代码或文档变更已完成
+-  - [x] 测试已运行
+-  - [x] 测试结果已记录
+-  - [x] 审计/证据路径已记录
+-  - [x] 提交编号已记录
 - 实施记录：完成日期：2026-09-26；提交：1960e869；测试：10 项 Phase 6 聚焦测试；证据：`.nanobot/phase6/evidence.jsonl`；遗留问题：默认关闭。
 
 #### P6-T02：低风险任务筛选
@@ -2231,11 +2231,11 @@ Phase 5 实施证据：`nanobot/memory/derivation.py` 将结构化 Trace outcome
 - 失败恢复：保留旧事实源和旧 schema，记录脱敏错误，按 retry/degraded/rollback 处理。
 - 证据要求：记录命令、结果、日志/trace、schema/hash 或审计事件路径。
 - 完成后勾选：
-  - [ ] 代码或文档变更已完成
-  - [ ] 测试已运行
-  - [ ] 测试结果已记录
-  - [ ] 审计/证据路径已记录
-  - [ ] 提交编号已记录
+-  - [x] 代码或文档变更已完成
+-  - [x] 测试已运行
+-  - [x] 测试结果已记录
+-  - [x] 审计/证据路径已记录
+-  - [x] 提交编号已记录
 - 实施记录：完成日期：2026-09-26；提交：1960e869；测试：低风险/敏感/写工具排除测试；证据：`select_low_risk_tasks`；遗留问题：默认关闭。
 
 #### P6-T03：失败 Trace 转回归题
@@ -2254,11 +2254,11 @@ Phase 5 实施证据：`nanobot/memory/derivation.py` 将结构化 Trace outcome
 - 失败恢复：保留旧事实源和旧 schema，记录脱敏错误，按 retry/degraded/rollback 处理。
 - 证据要求：记录命令、结果、日志/trace、schema/hash 或审计事件路径。
 - 完成后勾选：
-  - [ ] 代码或文档变更已完成
-  - [ ] 测试已运行
-  - [ ] 测试结果已记录
-  - [ ] 审计/证据路径已记录
-  - [ ] 提交编号已记录
+-  - [x] 代码或文档变更已完成
+-  - [x] 测试已运行
+-  - [x] 测试结果已记录
+-  - [x] 审计/证据路径已记录
+-  - [x] 提交编号已记录
 - 实施记录：完成日期：2026-09-26；提交：1960e869；测试：失败、超时和成功拒绝测试；证据：`regression_case_from_trace`；遗留问题：仅 staging。
 
 #### P6-T04：EvalPack 版本更新
@@ -2277,11 +2277,11 @@ Phase 5 实施证据：`nanobot/memory/derivation.py` 将结构化 Trace outcome
 - 失败恢复：保留旧事实源和旧 schema，记录脱敏错误，按 retry/degraded/rollback 处理。
 - 证据要求：记录命令、结果、日志/trace、schema/hash 或审计事件路径。
 - 完成后勾选：
-  - [ ] 代码或文档变更已完成
-  - [ ] 测试已运行
-  - [ ] 测试结果已记录
-  - [ ] 审计/证据路径已记录
-  - [ ] 提交编号已记录
+-  - [x] 代码或文档变更已完成
+-  - [x] 测试已运行
+-  - [x] 测试结果已记录
+-  - [x] 审计/证据路径已记录
+-  - [x] 提交编号已记录
 - 实施记录：完成日期：2026-09-26；提交：1960e869；测试：版本/hash 递增测试；证据：`eval_packs.split_policy_json`；遗留问题：不自动发布。
 
 #### P6-T05：evidence log
@@ -2300,11 +2300,11 @@ Phase 5 实施证据：`nanobot/memory/derivation.py` 将结构化 Trace outcome
 - 失败恢复：保留旧事实源和旧 schema，记录脱敏错误，按 retry/degraded/rollback 处理。
 - 证据要求：记录命令、结果、日志/trace、schema/hash 或审计事件路径。
 - 完成后勾选：
-  - [ ] 代码或文档变更已完成
-  - [ ] 测试已运行
-  - [ ] 测试结果已记录
-  - [ ] 审计/证据路径已记录
-  - [ ] 提交编号已记录
+-  - [x] 代码或文档变更已完成
+-  - [x] 测试已运行
+-  - [x] 测试结果已记录
+-  - [x] 审计/证据路径已记录
+-  - [x] 提交编号已记录
 - 实施记录：完成日期：2026-09-26；提交：1960e869；测试：脱敏、append-only、fsync 测试；证据：`.nanobot/phase6/evidence.jsonl`；遗留问题：不记录原始 payload。
 
 #### P6-T06：回归自动暂停
@@ -2323,11 +2323,11 @@ Phase 5 实施证据：`nanobot/memory/derivation.py` 将结构化 Trace outcome
 - 失败恢复：保留旧事实源和旧 schema，记录脱敏错误，按 retry/degraded/rollback 处理。
 - 证据要求：记录命令、结果、日志/trace、schema/hash 或审计事件路径。
 - 完成后勾选：
-  - [ ] 代码或文档变更已完成
-  - [ ] 测试已运行
-  - [ ] 测试结果已记录
-  - [ ] 审计/证据路径已记录
-  - [ ] 提交编号已记录
+-  - [x] 代码或文档变更已完成
+-  - [x] 测试已运行
+-  - [x] 测试结果已记录
+-  - [x] 审计/证据路径已记录
+-  - [x] 提交编号已记录
 - 实施记录：完成日期：2026-09-26；提交：1960e869；测试：回归阈值、权限、FTS、容量告警测试；证据：`state.json`；遗留问题：暂停需独立复核恢复。
 
 #### P6-T07：Skill rollback
@@ -2346,11 +2346,11 @@ Phase 5 实施证据：`nanobot/memory/derivation.py` 将结构化 Trace outcome
 - 失败恢复：保留旧事实源和旧 schema，记录脱敏错误，按 retry/degraded/rollback 处理。
 - 证据要求：记录命令、结果、日志/trace、schema/hash 或审计事件路径。
 - 完成后勾选：
-  - [ ] 代码或文档变更已完成
-  - [ ] 测试已运行
-  - [ ] 测试结果已记录
-  - [ ] 审计/证据路径已记录
-  - [ ] 提交编号已记录
+-  - [x] 代码或文档变更已完成
+-  - [x] 测试已运行
+-  - [x] 测试结果已记录
+-  - [x] 审计/证据路径已记录
+-  - [x] 提交编号已记录
 - 实施记录：完成日期：2026-09-26；提交：633fff28；测试：CAS baseline rollback 测试；证据：`pause_and_rollback`；遗留问题：不绕过 ToolPolicy。
 
 #### P6-T08：容量和索引失败告警
@@ -2369,11 +2369,11 @@ Phase 5 实施证据：`nanobot/memory/derivation.py` 将结构化 Trace outcome
 - 失败恢复：保留旧事实源和旧 schema，记录脱敏错误，按 retry/degraded/rollback 处理。
 - 证据要求：记录命令、结果、日志/trace、schema/hash 或审计事件路径。
 - 完成后勾选：
-  - [ ] 代码或文档变更已完成
-  - [ ] 测试已运行
-  - [ ] 测试结果已记录
-  - [ ] 审计/证据路径已记录
-  - [ ] 提交编号已记录
+-  - [x] 代码或文档变更已完成
+-  - [x] 测试已运行
+-  - [x] 测试结果已记录
+-  - [x] 审计/证据路径已记录
+-  - [x] 提交编号已记录
 - 实施记录：完成日期：2026-09-26；提交：633fff28；测试：18/7 retention 与容量指标测试；证据：`plan_retention`；遗留问题：不删除长期摘要。
 
 #### P6-T09：Phase 6 DoD
@@ -2392,11 +2392,11 @@ Phase 5 实施证据：`nanobot/memory/derivation.py` 将结构化 Trace outcome
 - 失败恢复：保留旧事实源和旧 schema，记录脱敏错误，按 retry/degraded/rollback 处理。
 - 证据要求：记录命令、结果、日志/trace、schema/hash 或审计事件路径。
 - 完成后勾选：
-  - [ ] 代码或文档变更已完成
-  - [ ] 测试已运行
-  - [ ] 测试结果已记录
-  - [ ] 审计/证据路径已记录
-  - [ ] 提交编号已记录
+-  - [x] 代码或文档变更已完成
+-  - [x] 测试已运行
+-  - [x] 测试结果已记录
+-  - [x] 审计/证据路径已记录
+-  - [x] 提交编号已记录
 - 实施记录：完成日期：2026-09-26；提交：633fff28；测试：63 memory + 100 config/Agent 回归、ruff；证据：本节 DoD；遗留问题：默认开关关闭，待用户另行启用。
 
 ### Phase 6 Definition of Done
