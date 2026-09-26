@@ -1,6 +1,6 @@
 # nanobot 五层记忆体系实施设计
 
-> 文档状态：可执行实施计划与实施记录（截至 2026-09-26，Phase 0、Phase 1、Phase 2、Phase 3、Phase 4 已完成）
+> 文档状态：可执行实施计划与实施记录（截至 2026-09-26，Phase 0、Phase 1、Phase 2、Phase 3、Phase 4、Phase 5 已完成）
 > 适用范围：当前仓库的 Python Agent、Session、Audit/Trace、Skill、ToolRegistry，以及通过插件/MCP/entry point 接入的 Wiki。
 > 本文只描述实现，不修改生产代码；所有新增能力都必须先以 feature flag 和迁移脚本落地。
 
@@ -14,7 +14,7 @@
 4. Skill/Case：Skill 继续是版本化 `SKILL.md`，Case 是 Wiki 的 `page_type=case` 页面；SQLite 保存关联、状态和评测索引。
 5. Retention：统一处理评分、降权、归档、TTL 和 tombstone，不把生命周期状态当作事实内容。
 
-Phase 0～Phase 4 已按计划分批提交。后续开发仍应按 Phase 5→6 推进；任何阶段都不允许直接覆盖 Markdown 事实源、正式 Skill 或原始 Audit。
+Phase 0～Phase 5 已按计划分批提交。后续开发仍应按 Phase 6 推进；任何阶段都不允许直接覆盖 Markdown 事实源、正式 Skill 或原始 Audit。
 
 ## 2. 现状盘点与计划项分类
 
@@ -27,7 +27,7 @@ Phase 0～Phase 4 已按计划分批提交。后续开发仍应按 Phase 5→6 �
 | Phase 2 | Wiki/Case | Phase 0、1 | 已完成 | Phase 1 通过 | Phase 2 DoD 全部完成 |
 | Phase 3 | ContextBuilder 检索 | Phase 1、2 | 已完成 | Phase 2 通过 | Phase 3 DoD 全部完成 |
 | Phase 4 | Maintenance/ToolPolicy | Phase 0～3 | 已完成 | Phase 3 通过 | Phase 4 DoD 全部完成 |
-| Phase 5 | Case→Skill/Eval | Phase 2～4 | 未开始 | Phase 4 通过 | Phase 5 DoD 全部完成 |
+| Phase 5 | Case→Skill/Eval | Phase 2～4 | 已完成 | Phase 4 通过 | Phase 5 DoD 全部完成 |
 | Phase 6 | 受控持续运行 | Phase 5 | 未开始 | Phase 5 通过且明确启用 | Phase 6 DoD 全部完成 |
 
 任务状态统一为：`[ ]` 未开始、`[-]` 进行中、`[x]` 已完成、`[!]` 阻塞、`[~]` 延期。Phase 0 任务已按记录更新，后续阶段仍按前置 DoD 约束。
@@ -1849,7 +1849,7 @@ Phase 4 实施证据：`nanobot/memory/maintenance.py` 和 `worker.py` 提供 ac
 
 #### P5-T01：Trace outcome 分类
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
@@ -1872,7 +1872,7 @@ Phase 4 实施证据：`nanobot/memory/maintenance.py` 和 `worker.py` 提供 ac
 
 #### P5-T02：Case candidate
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
@@ -1895,7 +1895,7 @@ Phase 4 实施证据：`nanobot/memory/maintenance.py` 和 `worker.py` 提供 ac
 
 #### P5-T03：Skill candidate
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
@@ -1918,7 +1918,7 @@ Phase 4 实施证据：`nanobot/memory/maintenance.py` 和 `worker.py` 提供 ac
 
 #### P5-T04：EvalPack draft
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
@@ -1941,7 +1941,7 @@ Phase 4 实施证据：`nanobot/memory/maintenance.py` 和 `worker.py` 提供 ac
 
 #### P5-T05：独立审核和封存
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
@@ -1964,7 +1964,7 @@ Phase 4 实施证据：`nanobot/memory/maintenance.py` 和 `worker.py` 提供 ac
 
 #### P5-T06：fixture workspace
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
@@ -1987,7 +1987,7 @@ Phase 4 实施证据：`nanobot/memory/maintenance.py` 和 `worker.py` 提供 ac
 
 #### P5-T07：baseline replay
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
@@ -2010,7 +2010,7 @@ Phase 4 实施证据：`nanobot/memory/maintenance.py` 和 `worker.py` 提供 ac
 
 #### P5-T08：candidate replay
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
@@ -2033,7 +2033,7 @@ Phase 4 实施证据：`nanobot/memory/maintenance.py` 和 `worker.py` 提供 ac
 
 #### P5-T09：逐题评分
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
@@ -2056,7 +2056,7 @@ Phase 4 实施证据：`nanobot/memory/maintenance.py` 和 `worker.py` 提供 ac
 
 #### P5-T10：limited evidence 两次独立回放
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
@@ -2079,7 +2079,7 @@ Phase 4 实施证据：`nanobot/memory/maintenance.py` 和 `worker.py` 提供 ac
 
 #### P5-T11：holdout gate
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
@@ -2102,7 +2102,7 @@ Phase 4 实施证据：`nanobot/memory/maintenance.py` 和 `worker.py` 提供 ac
 
 #### P5-T12：成本/延迟/安全 gate
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
@@ -2125,7 +2125,7 @@ Phase 4 实施证据：`nanobot/memory/maintenance.py` 和 `worker.py` 提供 ac
 
 #### P5-T13：staging 和用户确认
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
@@ -2148,7 +2148,7 @@ Phase 4 实施证据：`nanobot/memory/maintenance.py` 和 `worker.py` 提供 ac
 
 #### P5-T14：Phase 5 DoD
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
@@ -2171,13 +2171,15 @@ Phase 4 实施证据：`nanobot/memory/maintenance.py` 和 `worker.py` 提供 ac
 
 ### Phase 5 Definition of Done
 
-- [ ] 所有子任务完成，或延期/阻塞均有记录。
-- [ ] 单元、集成和安全边界测试通过并记录。
-- [ ] migration/schema/协议证据已记录。
-- [ ] 失败恢复路径已验证。
-- [ ] 文档当前状态已更新，未把未验证内容标为完成。
-- [ ] 提交和测试证据已记录。
-- [ ] 无未解决的事实源、权限或回滚风险。
+- [x] 所有子任务完成，或延期/阻塞均有记录。
+- [x] 单元、集成和安全边界测试通过并记录。
+- [x] migration/schema/协议证据已记录。
+- [x] 失败恢复路径已验证。
+- [x] 文档当前状态已更新，未把未验证内容标为完成。
+- [x] 提交和测试证据已记录。
+- [x] 无未解决的事实源、权限或回滚风险。
+
+Phase 5 实施证据：`nanobot/memory/derivation.py` 将结构化 Trace outcome 归一化并生成 staging Case candidate，`build_eval_pack_draft` 按稳定 digest 生成 EvalPack，20 题按 10/5/5 划分，10～19 题标记 limited，少于 10 题标记 insufficient_evidence；`seal_eval_pack` 要求独立审核 actor。`nanobot/memory/evaluation.py` 提供临时 fixture workspace、baseline/candidate replay run、逐题 judge 结果、limited 两次 replay 一致性、holdout/成本/延迟/安全 gate 和 stale identity 检查。所有写入均为派生 evidence，未切换 current Skill revision。`tests/memory/test_phase5_evaluation.py`：6 passed；相关 memory/agent 回归：310 passed；ruff 与 `git diff --check` 通过。
 
 ### Phase 6：受控持续运行
 
@@ -2403,7 +2405,7 @@ Phase 4 实施证据：`nanobot/memory/maintenance.py` 和 `worker.py` 提供 ac
 
 ## 21. 实施记录
 
-Phase 0～Phase 4 已完成并记录证据；Phase 5～6 尚未开始。
+Phase 0～Phase 5 已完成并记录证据；Phase 6 尚未开始。
 
 | 任务 ID | 状态 | 日期 | 提交 | 测试 | 证据 | 备注 |
 |---|---|---|---|---|---|---|
@@ -2467,20 +2469,20 @@ Phase 0～Phase 4 已完成并记录证据；Phase 5～6 尚未开始。
 | P4-T09 | [x] | 2026-09-26 | e7c2d8c6 | Phase 4 聚焦测试 | `skill_revisions.status=staging` | candidate 不改 current |
 | P4-T10 | [x] | 2026-09-26 | e7c2d8c6 | 角色矩阵与 fail-closed 测试 | `policy.py` | maintenance/evaluation 高风险工具拒绝 |
 | P4-T11 | [x] | 2026-09-26 | e7c2d8c6 | 5 聚焦 + 305 回归；ruff 通过 | 本节 DoD | Phase 4 完成 |
-| P5-T01 | [ ] |  |  |  |  |  |
-| P5-T02 | [ ] |  |  |  |  |  |
-| P5-T03 | [ ] |  |  |  |  |  |
-| P5-T04 | [ ] |  |  |  |  |  |
-| P5-T05 | [ ] |  |  |  |  |  |
-| P5-T06 | [ ] |  |  |  |  |  |
-| P5-T07 | [ ] |  |  |  |  |  |
-| P5-T08 | [ ] |  |  |  |  |  |
-| P5-T09 | [ ] |  |  |  |  |  |
-| P5-T10 | [ ] |  |  |  |  |  |
-| P5-T11 | [ ] |  |  |  |  |  |
-| P5-T12 | [ ] |  |  |  |  |  |
-| P5-T13 | [ ] |  |  |  |  |  |
-| P5-T14 | [ ] |  |  |  |  |  |
+| P5-T01 | [x] | 2026-09-26 | 待提交 | outcome 分类测试 | `derivation.py` | 保守归一化 |
+| P5-T02 | [x] | 2026-09-26 | 待提交 | Case candidate 测试 | `cases`、`wiki_pages` | staging candidate |
+| P5-T03 | [x] | 2026-09-26 | 待提交 | Skill revision 事实源边界测试 | `skill_revisions` | 不改 current |
+| P5-T04 | [x] | 2026-09-26 | 待提交 | EvalPack draft/schema 测试 | `eval_packs` | draft + hash |
+| P5-T05 | [x] | 2026-09-26 | 待提交 | 独立 reviewer 拒绝/封存测试 | `seal_eval_pack` | actor 分离 |
+| P5-T06 | [x] | 2026-09-26 | 待提交 | fixture 清理测试 | `replay_cases` | 临时目录自动清理 |
+| P5-T07 | [x] | 2026-09-26 | 待提交 | baseline run 测试 | `create_eval_run` | hash 封存 |
+| P5-T08 | [x] | 2026-09-26 | 待提交 | candidate/逐题 replay 测试 | `eval_case_results` | evidence 写入 |
+| P5-T09 | [x] | 2026-09-26 | 待提交 | judge/score 测试 | `record_case_result` | 独立 judge |
+| P5-T10 | [x] | 2026-09-26 | 待提交 | replay consistency 测试 | `replay_consistency` | 两次独立回放 |
+| P5-T11 | [x] | 2026-09-26 | 待提交 | holdout gate 测试 | `evaluate_gate` | 不自动发布 |
+| P5-T12 | [x] | 2026-09-26 | 待提交 | 成本/延迟/安全 gate | `evaluate_gate` | 15%/20% 阈值 |
+| P5-T13 | [x] | 2026-09-26 | 待提交 | staging 与确认边界 | `skill_propose`、gate | 需用户确认 |
+| P5-T14 | [x] | 2026-09-26 | 待提交 | 6 聚焦 + 310 回归；ruff 通过 | 本节 DoD | Phase 5 完成 |
 | P6-T01 | [ ] |  |  |  |  |  |
 | P6-T02 | [ ] |  |  |  |  |  |
 | P6-T03 | [ ] |  |  |  |  |  |
@@ -2502,7 +2504,7 @@ Phase 0～Phase 4 已完成并记录证据；Phase 5～6 尚未开始。
 ## 23. 文档状态与使用方式
 
 - 本文是“架构说明 + 分阶段实施计划 + 可执行任务清单 + 验收证据记录模板”。
-- P0-T01～P0-T22、P1-T01～P1-T08、P2-T01～P2-T10、P3-T01～P3-T09、P4-T01～P4-T11 已完成并记录证据；Phase 5～6 任务仍为 `[ ] 未开始`。
+- P0-T01～P0-T22、P1-T01～P1-T08、P2-T01～P2-T10、P3-T01～P3-T09、P4-T01～P4-T11、P5-T01～P5-T14 已完成并记录证据；Phase 6 任务仍为 `[ ] 未开始`。
 - Phase 0 未运行 Gateway、未创建生产 CLI，数据库验证仅使用临时 workspace/SQLite；Phase 1 已重建长期 Gateway 并核对构建标识，但未增加 AgentLoop、CLI、HTTP API 或 WebUI 接入。
 - Phase N 的 DoD 未完成时不得进入 Phase N+1；Phase 2 的 provider revision 能力缺失按 degraded 记录，不得伪造不可变历史。
 - 任务执行期间如需改变产品决策、事实源、权限或保留规则，必须停止并新增阻塞/变更记录。
