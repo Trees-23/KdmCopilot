@@ -429,6 +429,7 @@ class ProposalRepository:
         workspace: str,
         group_openid: str,
         content_hash: str,
+        payload: str | None = None,
         now: datetime | None = None,
     ) -> str:
         delivery_id = f"delivery-{uuid4()}"
@@ -458,8 +459,9 @@ class ProposalRepository:
                     raise DeliveryQuotaExceededError("group notification quota exceeded")
             self.connection.execute(
                 "INSERT INTO proposal_deliveries(delivery_id,proposal_id,workspace,group_openid,content_hash,status,"
-                "next_attempt_at,created_at,updated_at) VALUES(?,?,?,?,?,'pending',?,?,?)",
-                (delivery_id, proposal_id, workspace, group_openid, content_hash, timestamp, timestamp, timestamp),
+                "payload,next_attempt_at,created_at,updated_at) VALUES(?,?,?,?,?,'pending',?,?,?,?)",
+                (delivery_id, proposal_id, workspace, group_openid, content_hash, payload,
+                 timestamp, timestamp, timestamp),
             )
             self.connection.commit()
         except Exception:
@@ -503,6 +505,19 @@ class ProposalRepository:
         except Exception:
             self.connection.rollback()
             raise
+
+    def latest_delivery(
+        self,
+        proposal_id: str,
+        *,
+        group_openid: str,
+    ) -> sqlite3.Row | None:
+        """Return the newest durable payload for a Proposal/group pair."""
+        return self.connection.execute(
+            "SELECT * FROM proposal_deliveries WHERE proposal_id=? AND group_openid=? "
+            "ORDER BY created_at DESC LIMIT 1",
+            (proposal_id, group_openid),
+        ).fetchone()
 
     def mark_delivery_sent(
         self,

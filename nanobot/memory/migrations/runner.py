@@ -8,12 +8,13 @@ from datetime import UTC, datetime
 from nanobot.memory.schema import (
     APP_BUILD,
     BASE_REQUIRED_TABLES,
+    DELIVERY_PAYLOAD_MIGRATION_PATH,
     MIGRATION_ID,
     MIGRATION_VERSION,
-    PHASE6_MIGRATION_PATH,
     REQUIRED_TABLES,
     base_migration_sql,
     migration_sql,
+    phase6_migration_sql,
     schema_hash,
 )
 
@@ -148,6 +149,9 @@ def apply_migrations(
         apply_one(1, "0001_memory_base", sql, BASE_REQUIRED_TABLES)
         return
     apply_one(1, "0001_memory_base", base_migration_sql(), BASE_REQUIRED_TABLES)
+    # Keep each migration immutable.  Version 2 creates the Proposal tables;
+    # version 3 adds durable notification payloads for restart-safe delivery.
+    apply_one(2, "0002_phase6_proposals", phase6_migration_sql(), REQUIRED_TABLES)
     apply_one(MIGRATION_VERSION, MIGRATION_ID, migration_sql(), REQUIRED_TABLES)
     verify_schema(connection, schema_hash(migration_sql()))
 
@@ -180,4 +184,4 @@ def _record_failed_version(
 def migration_file_path() -> str:
     """Expose the latest checked-in migration path for evidence and diagnostics."""
 
-    return str(PHASE6_MIGRATION_PATH)
+    return str(DELIVERY_PAYLOAD_MIGRATION_PATH)

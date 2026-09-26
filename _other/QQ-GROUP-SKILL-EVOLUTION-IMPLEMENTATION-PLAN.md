@@ -341,19 +341,19 @@ workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → �
 
 - [x] 实现系统级受限周期任务和 workspace lease，但先只能被测试/维护命令显式调用。
 - [x] 接通 Trace → 低风险选择 → Case → EvalPack → 独立回放 → Gate → Proposal。
-- [ ] 实现配额、去重、暂停开关、回归保护和 dead-letter 告警。
+- [x] 实现配额、去重、暂停开关、回归保护和 dead-letter 告警；通知正文持久化，Gateway 启动后可继续投递。
 - [x] 完成 Phase 6 关闭时的负向测试：不扫描、不写 Proposal、不发 QQ 消息。
 
-当前进度：M2 已完成显式离线编排、调度状态、workspace lease、Trace→Gate→Proposal 链路、通知配额、Delivery retry/dead-letter 状态和关闭态负向测试；QQ 投递器、dead-letter 主动告警和真实周期运行仍待补齐，因此尚未整体验收关闭。
+当前进度：M2 的离线编排、调度状态、workspace lease、Trace→Gate→Proposal 链路、配额/去重、Delivery retry/dead-letter、主动告警和关闭态负向测试均已完成；周期调度仍保持显式调用，Phase 6 未打开。
 
 ### M3：QQ 通知与群内命令接线（默认关闭）
 
-- [ ] 实现群目标路由与 `qq_chat_type=group` 投递；保留投递重试和结果审计。
+- [x] 实现群目标路由与 `qq_chat_type=group` 投递；通知正文持久化，经 MessageBus 投递并保留重试、dead-letter 和审计引用。
 - [x] 实现 `/evolve status/list/review/approve/reject`，命令绕过 LLM；批准只记录 Proposal 状态，不执行 Skill 采用或发布。
 - [x] 实现群白名单、管理员 openid 校验、确认码校验、@要求、脱敏输出和跨群拒绝；补充错误权限、错误群、重放命令协议测试。
 - [ ] 增加官方群收发模拟测试及真实 Gateway 的安全测试群验收，但不打开长期自动评审。
 
-当前进度：M3 已完成命令与授权的本地协议单元测试；QQ 主动通知投递器、真实群收发和 Gateway 安全验收仍待补齐。完成条件仍为：非管理员、错误群、错误码、过期码、重复命令均被拒绝，并在测试 Proposal 上完成“通知—审阅—批准”协议测试。
+当前进度：M3 已完成通知器、命令与授权的本地协议单元测试，并接入 Gateway 的独立投递循环；真实 QQ 群收发和 Gateway 安全验收仍待补齐。完成条件仍为：非管理员、错误群、错误码、过期码、重复命令均被拒绝，并在测试 Proposal 上完成“通知—审阅—批准”协议测试。
 
 ### M4：开启自进化开关——影子模式
 

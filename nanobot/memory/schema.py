@@ -5,19 +5,20 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-MIGRATION_VERSION = 2
-MIGRATION_ID = "0002_phase6_proposals"
+MIGRATION_VERSION = 3
+MIGRATION_ID = "0003_phase6_delivery_payload"
 APP_BUILD = "memory-phase1"
 
 MIGRATIONS_DIR = Path(__file__).with_name("migrations")
 BASE_MIGRATION_PATH = MIGRATIONS_DIR / "0001_memory_base.sql"
 PHASE6_MIGRATION_PATH = MIGRATIONS_DIR / "0002_phase6_proposals.sql"
+DELIVERY_PAYLOAD_MIGRATION_PATH = MIGRATIONS_DIR / "0003_phase6_delivery_payload.sql"
 
 
 def migration_sql() -> str:
     """Return the checked-in latest migration SQL."""
 
-    return PHASE6_MIGRATION_PATH.read_text(encoding="utf-8")
+    return DELIVERY_PAYLOAD_MIGRATION_PATH.read_text(encoding="utf-8")
 
 
 def base_migration_sql() -> str:
@@ -31,6 +32,12 @@ def schema_hash(sql: str | None = None) -> str:
 
     payload = (migration_sql() if sql is None else sql).encode("utf-8")
     return "sha256:" + hashlib.sha256(payload).hexdigest()
+
+
+def phase6_migration_sql() -> str:
+    """Return the Proposal tables migration (version 2)."""
+
+    return PHASE6_MIGRATION_PATH.read_text(encoding="utf-8")
 
 
 REQUIRED_TABLES = frozenset(
