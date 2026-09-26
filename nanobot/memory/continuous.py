@@ -47,6 +47,16 @@ class Phase6RuntimeConfig:
     retention_days: int = 18
     payload_retention_days: int = 7
 
+    @classmethod
+    def from_config(cls, config: Any) -> "Phase6RuntimeConfig":
+        """Build the runtime DTO from ``Config.phase6`` or a mapping."""
+
+        if isinstance(config, Mapping):
+            values = config
+        else:
+            values = {name: getattr(config, name) for name in cls.__dataclass_fields__ if hasattr(config, name)}
+        return cls(**values)
+
     def __post_init__(self) -> None:
         if self.min_repeat_count < 2:
             raise ValueError("min_repeat_count must be at least 2")
@@ -157,6 +167,8 @@ def _is_low_risk(record: Mapping[str, Any]) -> bool:
     if any(marker in lowered for marker in SENSITIVE_MARKERS):
         return False
     tools = record.get("tools") or ()
+    if not tools and int(record.get("tool_count") or 0) > 0:
+        return False
     return all(str(tool) in READ_ONLY_TOOLS for tool in tools)
 
 
@@ -185,6 +197,28 @@ def select_low_risk_tasks(
     ]
     candidates.sort(key=lambda item: (-item.frequency, -item.value_score, item.task_key))
     return tuple(candidates[: int(_config_value(config, "max_candidates_per_cycle", 20))])
+
+
+def load_trace_records(connection: sqlite3.Connection) -> tuple[dict[str, Any], ...]:
+    """Read only redacted Trace index summaries for the selector."""
+
+    rows = connection.execute(
+        "SELECT trace_id,outcome,summary,event_count,tool_count FROM trace_index ORDER BY started_at"
+    ).fetchall()
+    return tuple({
+        "trace_id": row[0], "outcome": row[1], "summary": row[2],
+        "event_count": row[3], "tool_count": row[4],
+    } for row in rows)
+
+
+def load_failed_trace_records(connection: sqlite3.Connection) -> tuple[dict[str, Any], ...]:
+    """Return failed/partial/blocked summaries without provider payloads."""
+
+    rows = connection.execute(
+        "SELECT trace_id,outcome,summary FROM trace_index "
+        "WHERE outcome IN ('failure','failed','partial','blocked') ORDER BY started_at"
+    ).fetchall()
+    return tuple({"trace_id": row[0], "outcome": row[1], "summary": row[2]} for row in rows)
 
 
 def regression_case_from_trace(
@@ -542,7 +576,8 @@ __all__ = [
     "EvidenceRecord", "Phase6CycleResult", "Phase6Disabled", "Phase6DisabledError", "Phase6Proposal",
     "Phase6RuntimeConfig", "Phase6State",
     "RetentionPlan", "TraceCandidate", "append_evidence", "build_versioned_evalpack",
-    "load_state", "make_proposal", "next_evalpack_version", "phase6_active", "plan_retention",
+    "load_failed_trace_records", "load_state", "load_trace_records", "make_proposal",
+    "next_evalpack_version", "phase6_active", "plan_retention",
     "record_index_failure", "regression_case_from_trace", "require_active", "resume_after_review",
     "rollback_skill_revision", "run_cycle", "save_state", "select_low_risk_tasks", "update_health",
     "collect_capacity_metrics", "pause_and_rollback",
