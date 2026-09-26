@@ -351,9 +351,10 @@ workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → �
 - [x] 实现群目标路由与 `qq_chat_type=group` 投递；通知正文持久化，经 MessageBus 投递并保留重试、dead-letter 和审计引用。
 - [x] 实现 `/evolve status/list/review/approve/reject`，命令绕过 LLM；批准只记录 Proposal 状态，不执行 Skill 采用或发布。
 - [x] 实现群白名单、管理员 openid 校验、确认码校验、@要求、脱敏输出和跨群拒绝；补充错误权限、错误群、重放命令协议测试。
-- [ ] 增加官方群收发模拟测试及真实 Gateway 的安全测试群验收，但不打开长期自动评审。
+- [x] 完成真实 QQ 群的 `/evolve status`、`list pending`、`review`、管理员 `approve` 安全验收；临时 Proposal 已清理。
+- [ ] 完成主动通知投递的真实 QQ 验收；当前通知开关保持关闭，不打开长期自动评审。
 
-当前进度：M3 已完成通知器、命令与授权的本地协议单元测试，并接入 Gateway 的独立投递循环；真实 QQ 群收发和 Gateway 安全验收仍待补齐。完成条件仍为：非管理员、错误群、错误码、过期码、重复命令均被拒绝，并在测试 Proposal 上完成“通知—审阅—批准”协议测试。
+当前进度：M3 已完成通知器、命令与授权的本地协议单元测试，并接入 Gateway 的独立投递循环；真实 QQ 命令安全验收已完成，主动通知投递仍需在后续明确开启测试开关后验收，因此 M3 尚未整体关闭。
 
 ### M4：开启自进化开关——影子模式
 
