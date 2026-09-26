@@ -17,6 +17,7 @@
 - 已实现 Proposal 状态转移、版本 CAS、确认码哈希与过期、管理员动作幂等、通知去重和群范围写入的本地仓储。
 - 已将现有 `make_proposal()` 接入可选持久化入口 `persist_proposal()`；它只写入 `eligible_for_confirmation`，不会采用 Skill、创建 PR 或发布。
 - 已完成相关单元测试、配置测试、memory 测试和全量 pytest；当前尚未接入 QQ 命令、主动通知器或真实群验收。
+- 回滚基线已记录：Gateway 构建 `git-f7583e93e78a`，健康检查通过；`phase6.enabled=false`，未打开任何进化写路径。
 
 M0 的真实群标识、管理员标识、配额、通知时段和发布仓库仍待运行态确认；在这些值确认前不进入 M3，也不打开 M4 的 `phase6.enabled`。
 
@@ -320,18 +321,18 @@ workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → �
 - [ ] 将聊天 `allowFrom` 与审批 `approvalAdminOpenids` 分离；评审 `allowFrom: ["*"]` 是否应收窄。
 - [ ] 明确群内通知时段、每天配额、Proposal 有效期、是否同时私聊管理员。
 - [ ] 确认 GitHub Draft PR 的目标仓库、默认分支、CI 状态检查与部署责任人。
-- [ ] 记录当前 Gateway 构建标识、镜像、运行根目录和当前 Phase 6 关闭状态，作为回滚基线。
+- [x] 记录当前 Gateway 构建标识、镜像、运行根目录和当前 Phase 6 关闭状态，作为回滚基线。
 
 完成条件：所有标识和策略通过运行态配置注入，Git 不含真实 openid、token 或 secret。
 
 ### M1：Proposal 持久化与状态机
 
-- [ ] 新增迁移和 repository；实现 Proposal、Delivery、Action、Group Scope 的不可变/可变字段边界。
-- [ ] 实现状态转移、版本 CAS、过期、确认码哈希、动作幂等与审计。
-- [ ] 将现有 `make_proposal()` 接入持久化模型，但保持 Phase 6 默认关闭。
+- [x] 新增迁移和 repository；实现 Proposal、Delivery、Action、Group Scope 的不可变/可变字段边界。
+- [x] 实现状态转移、版本 CAS、过期、确认码哈希、动作幂等与审计。
+- [x] 将现有 `make_proposal()` 接入持久化模型，但保持 Phase 6 默认关闭。
 - [ ] 编写单元和并发测试：重复批准、过期批准、旧基线、重复通知、迁移恢复。
 
-完成条件：不依赖 QQ 即可通过 API/测试构造、查询和安全地终结一份 Proposal。
+当前进度：M1 已完成持久化、状态机和基础安全测试；并发专项测试仍待补齐，因此 M1 尚未整体验收关闭。
 
 ### M2：自动评审编排（离线与 fixture）
 
