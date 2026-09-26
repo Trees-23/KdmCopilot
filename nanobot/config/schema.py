@@ -426,6 +426,65 @@ class AuditConfig(Base):
     additional_secret_patterns: list[str] = Field(default_factory=list)
 
 
+class Phase6EvolutionConfig(Base):
+    """Independent gates for the Proposal notification and release lifecycle."""
+
+    shadow_mode: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("shadowMode", "shadow_mode"),
+        serialization_alias="shadowMode",
+    )
+    notifications_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("notificationsEnabled", "notifications_enabled"),
+        serialization_alias="notificationsEnabled",
+    )
+    adoption_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("adoptionEnabled", "adoption_enabled"),
+        serialization_alias="adoptionEnabled",
+    )
+    publish_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("publishEnabled", "publish_enabled"),
+        serialization_alias="publishEnabled",
+    )
+    observation_groups: list[str] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("observationGroups", "observation_groups"),
+        serialization_alias="observationGroups",
+    )
+    notification_groups: list[str] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("notificationGroups", "notification_groups"),
+        serialization_alias="notificationGroups",
+    )
+    approval_admin_openids: list[str] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("approvalAdminOpenids", "approval_admin_openids"),
+        serialization_alias="approvalAdminOpenids",
+    )
+    command_require_mention: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("commandRequireMention", "command_require_mention"),
+        serialization_alias="commandRequireMention",
+    )
+    proposal_ttl_minutes: int = Field(
+        default=15,
+        ge=1,
+        validation_alias=AliasChoices("proposalTtlMinutes", "proposal_ttl_minutes"),
+        serialization_alias="proposalTtlMinutes",
+    )
+    max_notifications_per_group_per_day: int = Field(
+        default=3,
+        ge=1,
+        validation_alias=AliasChoices(
+            "maxNotificationsPerGroupPerDay", "max_notifications_per_group_per_day"
+        ),
+        serialization_alias="maxNotificationsPerGroupPerDay",
+    )
+
+
 class Phase6Config(Base):
     """Opt-in controlled continuous-memory review configuration.
 
@@ -436,6 +495,7 @@ class Phase6Config(Base):
 
     enabled: bool = False
     kill_switch: bool = False
+    evolution: Phase6EvolutionConfig = Field(default_factory=Phase6EvolutionConfig)
     min_repeat_count: int = Field(default=2, ge=2)
     max_candidates_per_cycle: int = Field(default=20, ge=1)
     regression_pause_threshold: int = Field(default=3, ge=1)

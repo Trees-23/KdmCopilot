@@ -7,10 +7,12 @@ from datetime import UTC, datetime
 
 from nanobot.memory.schema import (
     APP_BUILD,
-    BASE_MIGRATION_PATH,
+    BASE_REQUIRED_TABLES,
     MIGRATION_ID,
     MIGRATION_VERSION,
+    PHASE6_MIGRATION_PATH,
     REQUIRED_TABLES,
+    base_migration_sql,
     migration_sql,
     schema_hash,
 )
@@ -65,29 +67,24 @@ def verify_schema(connection: sqlite3.Connection, expected_hash: str | None = No
         raise MigrationError("memory schema hash mismatch")
 
 
-def _record_failed(connection: sqlite3.Connection, message: str, app_build: str) -> None:
-    _bootstrap_schema_meta(connection)
-    connection.execute("BEGIN IMMEDIATE")
-    try:
-        connection.execute(
-            "INSERT INTO schema_meta(version,migration_id,app_build,schema_hash,status,applied_at,error_message) "
-            "VALUES(?,?,?,?,?,?,?) ON CONFLICT(version) DO UPDATE SET "
-            "migration_id=excluded.migration_id,app_build=excluded.app_build,schema_hash=excluded.schema_hash,"
-            "status='failed',applied_at=excluded.applied_at,error_message=excluded.error_message",
-            (
-                MIGRATION_VERSION,
-                MIGRATION_ID,
-                app_build,
-                schema_hash(),
-                "failed",
-                utc_now(),
-                message[:500],
-            ),
-        )
-        connection.commit()
-    except Exception:
-        connection.rollback()
-        raise
+def _verify_version(
+    connection: sqlite3.Connection,
+    *,
+    version: int,
+    migration_id: str,
+    expected_hash: str,
+    required_tables: set[str] | frozenset[str],
+) -> None:
+    missing = required_tables - _table_names(connection)
+    if missing:
+        raise MigrationError(f"memory schema missing tables: {', '.join(sorted(missing))}")
+    row = connection.execute(
+        "SELECT migration_id,schema_hash,status FROM schema_meta WHERE version=?", (version,)
+    ).fetchone()
+    if row is None or row[0] != migration_id or row[2] != "applied":
+        raise MigrationError(f"memory migration {version} is not applied")
+    if row[1] != expected_hash:
+        raise MigrationError(f"memory migration {version} schema hash mismatch")
 
 
 def apply_migrations(
@@ -96,53 +93,91 @@ def apply_migrations(
     app_build: str = APP_BUILD,
     sql: str | None = None,
 ) -> None:
-    """Apply the base migration idempotently and verify its resulting schema."""
+    """Apply all checked-in migrations idempotently and verify the schema.
+
+    ``sql`` remains a test-only escape hatch for exercising failed migration
+    recovery. It is applied as the base migration and never replaces the
+    checked-in Phase 6 migration.
+    """
 
     if connection.in_transaction:
         raise MigrationError("migration requires an idle SQLite connection")
     _bootstrap_schema_meta(connection)
-    expected_hash = schema_hash() if sql is None else schema_hash(sql)
-    current = connection.execute(
-        "SELECT version,migration_id,schema_hash,status FROM schema_meta "
-        "WHERE version=?",
-        (MIGRATION_VERSION,),
-    ).fetchone()
-    if current and current[3] == "applied":
-        if current[1] != MIGRATION_ID or current[2] != expected_hash:
-            raise MigrationError("applied memory migration does not match checked-in schema")
-        verify_schema(connection, expected_hash)
-        return
 
+    def apply_one(version: int, migration_id: str, migration_text: str,
+                  required_tables: set[str] | frozenset[str]) -> None:
+        expected_hash = schema_hash(migration_text)
+        current = connection.execute(
+            "SELECT migration_id,schema_hash,status FROM schema_meta WHERE version=?", (version,)
+        ).fetchone()
+        if current and current[2] == "applied":
+            if current[0] != migration_id or current[1] != expected_hash:
+                raise MigrationError(f"applied memory migration {version} does not match checked-in schema")
+            _verify_version(connection, version=version, migration_id=migration_id,
+                            expected_hash=expected_hash, required_tables=required_tables)
+            return
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            connection.execute(
+                "INSERT INTO schema_meta(version,migration_id,app_build,schema_hash,status,applied_at,error_message) "
+                "VALUES(?,?,?,?,?,?,NULL) ON CONFLICT(version) DO UPDATE SET "
+                "migration_id=excluded.migration_id,app_build=excluded.app_build,schema_hash=excluded.schema_hash,"
+                "status='running',applied_at=excluded.applied_at,error_message=NULL",
+                (version, migration_id, app_build, expected_hash, "running", utc_now()),
+            )
+            for statement in migration_text.split(";"):
+                if statement.strip():
+                    connection.execute(statement)
+            missing = required_tables - _table_names(connection)
+            if missing:
+                raise MigrationError(f"migration missing tables: {', '.join(sorted(missing))}")
+            connection.execute(
+                "UPDATE schema_meta SET status='applied',app_build=?,schema_hash=?,applied_at=?,error_message=NULL "
+                "WHERE version=?",
+                (app_build, expected_hash, utc_now(), version),
+            )
+            connection.commit()
+        except Exception as exc:
+            connection.rollback()
+            _record_failed_version(connection, version, migration_id, expected_hash, str(exc), app_build)
+            raise MigrationError(f"memory migration failed: {exc}") from exc
+        _verify_version(connection, version=version, migration_id=migration_id,
+                        expected_hash=expected_hash, required_tables=required_tables)
+
+    if sql is not None:
+        apply_one(1, "0001_memory_base", sql, BASE_REQUIRED_TABLES)
+        return
+    apply_one(1, "0001_memory_base", base_migration_sql(), BASE_REQUIRED_TABLES)
+    apply_one(MIGRATION_VERSION, MIGRATION_ID, migration_sql(), REQUIRED_TABLES)
+    verify_schema(connection, schema_hash(migration_sql()))
+
+
+def _record_failed_version(
+    connection: sqlite3.Connection,
+    version: int,
+    migration_id: str,
+    expected_hash: str,
+    message: str,
+    app_build: str,
+) -> None:
+    """Record a failed migration without assuming it is the latest version."""
+    _bootstrap_schema_meta(connection)
     connection.execute("BEGIN IMMEDIATE")
     try:
         connection.execute(
             "INSERT INTO schema_meta(version,migration_id,app_build,schema_hash,status,applied_at,error_message) "
-            "VALUES(?,?,?,?,?,?,NULL) ON CONFLICT(version) DO UPDATE SET "
+            "VALUES(?,?,?,?,?,?,?) ON CONFLICT(version) DO UPDATE SET "
             "migration_id=excluded.migration_id,app_build=excluded.app_build,schema_hash=excluded.schema_hash,"
-            "status='running',applied_at=excluded.applied_at,error_message=NULL",
-            (MIGRATION_VERSION, MIGRATION_ID, app_build, expected_hash, "running", utc_now()),
-        )
-        migration_text = sql if sql is not None else migration_sql()
-        for statement in migration_text.split(";"):
-            if statement.strip():
-                connection.execute(statement)
-        missing = REQUIRED_TABLES - _table_names(connection)
-        if missing:
-            raise MigrationError(f"migration missing tables: {', '.join(sorted(missing))}")
-        connection.execute(
-            "UPDATE schema_meta SET status='applied',app_build=?,schema_hash=?,applied_at=?,error_message=NULL "
-            "WHERE version=?",
-            (app_build, expected_hash, utc_now(), MIGRATION_VERSION),
+            "status='failed',applied_at=excluded.applied_at,error_message=excluded.error_message",
+            (version, migration_id, app_build, expected_hash, "failed", utc_now(), message[:500]),
         )
         connection.commit()
-    except Exception as exc:
+    except Exception:
         connection.rollback()
-        _record_failed(connection, str(exc), app_build)
-        raise MigrationError(f"memory migration failed: {exc}") from exc
-    verify_schema(connection, expected_hash)
+        raise
 
 
 def migration_file_path() -> str:
-    """Expose the checked-in migration path for evidence and diagnostics."""
+    """Expose the latest checked-in migration path for evidence and diagnostics."""
 
-    return str(BASE_MIGRATION_PATH)
+    return str(PHASE6_MIGRATION_PATH)

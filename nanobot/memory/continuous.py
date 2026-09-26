@@ -122,7 +122,7 @@ class Phase6Proposal:
     trace_ids: tuple[str, ...]
     case_ids: tuple[str, ...]
     eval_run_ids: tuple[str, ...]
-    status: str = "awaiting_confirmation"
+    status: str = "eligible_for_confirmation"
 
 
 def _now(value: datetime | None = None) -> datetime:
@@ -537,6 +537,44 @@ def make_proposal(
     return Phase6Proposal(f"phase6-proposal:{uuid4()}", target, tuple(trace_ids), tuple(case_ids), tuple(eval_run_ids))
 
 
+def persist_proposal(
+    connection: sqlite3.Connection,
+    proposal: Phase6Proposal,
+    *,
+    workspace: str,
+    skill_name: str,
+    source_kind: str,
+    baseline_hash: str,
+    candidate_hash: str,
+    baseline_revision_id: str | None = None,
+    candidate_revision_id: str | None = None,
+    skill_id: str | None = None,
+    gate_snapshot: Mapping[str, Any] | None = None,
+) -> Phase6Proposal:
+    """Persist a generated Proposal without changing any current Skill pointer."""
+
+    from nanobot.memory.proposal_repository import ProposalRepository
+
+    ProposalRepository(connection).create_proposal(
+        proposal_id=proposal.proposal_id,
+        workspace=workspace,
+        skill_name=skill_name,
+        source_kind=source_kind,
+        target=proposal.target,
+        baseline_hash=baseline_hash,
+        candidate_hash=candidate_hash,
+        baseline_revision_id=baseline_revision_id,
+        candidate_revision_id=candidate_revision_id,
+        skill_id=skill_id,
+        trace_ids=proposal.trace_ids,
+        case_ids=proposal.case_ids,
+        eval_run_ids=proposal.eval_run_ids,
+        gate_snapshot=gate_snapshot,
+        status="eligible_for_confirmation",
+    )
+    return proposal
+
+
 def rollback_skill_revision(
     connection: sqlite3.Connection,
     *,
@@ -576,7 +614,7 @@ __all__ = [
     "EvidenceRecord", "Phase6CycleResult", "Phase6Disabled", "Phase6DisabledError", "Phase6Proposal",
     "Phase6RuntimeConfig", "Phase6State",
     "RetentionPlan", "TraceCandidate", "append_evidence", "build_versioned_evalpack",
-    "load_failed_trace_records", "load_state", "load_trace_records", "make_proposal",
+    "load_failed_trace_records", "load_state", "load_trace_records", "make_proposal", "persist_proposal",
     "next_evalpack_version", "phase6_active", "plan_retention",
     "record_index_failure", "regression_case_from_trace", "require_active", "resume_after_review",
     "rollback_skill_revision", "run_cycle", "save_state", "select_low_risk_tasks", "update_health",

@@ -5,16 +5,23 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-MIGRATION_VERSION = 1
-MIGRATION_ID = "0001_memory_base"
-APP_BUILD = "memory-phase0"
+MIGRATION_VERSION = 2
+MIGRATION_ID = "0002_phase6_proposals"
+APP_BUILD = "memory-phase1"
 
 MIGRATIONS_DIR = Path(__file__).with_name("migrations")
 BASE_MIGRATION_PATH = MIGRATIONS_DIR / "0001_memory_base.sql"
+PHASE6_MIGRATION_PATH = MIGRATIONS_DIR / "0002_phase6_proposals.sql"
 
 
 def migration_sql() -> str:
-    """Return the checked-in base migration SQL."""
+    """Return the checked-in latest migration SQL."""
+
+    return PHASE6_MIGRATION_PATH.read_text(encoding="utf-8")
+
+
+def base_migration_sql() -> str:
+    """Return the immutable Phase 0 migration SQL."""
 
     return BASE_MIGRATION_PATH.read_text(encoding="utf-8")
 
@@ -45,5 +52,13 @@ REQUIRED_TABLES = frozenset(
         "tombstones",
         "retrieval_events",
         "memory_outbox",
+        "skill_proposals",
+        "proposal_deliveries",
+        "proposal_actions",
+        "group_memory_scopes",
     }
+)
+
+BASE_REQUIRED_TABLES = REQUIRED_TABLES - frozenset(
+    {"skill_proposals", "proposal_deliveries", "proposal_actions", "group_memory_scopes"}
 )

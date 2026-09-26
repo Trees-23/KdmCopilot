@@ -19,6 +19,7 @@ from nanobot.memory.continuous import (
     load_trace_records,
     make_proposal,
     pause_and_rollback,
+    persist_proposal,
     phase6_active,
     plan_retention,
     regression_case_from_trace,
@@ -190,7 +191,20 @@ def test_proposal_is_traceable_and_rollback_is_explicit_cas(tmp_path) -> None:
     with pytest.raises(ValueError):
         make_proposal(source_kind="workspace", trace_ids=["t"], case_ids=[], eval_run_ids=["run"], config=_cfg())
 
-    _workspace, connection = _db(tmp_path)
+    workspace, connection = _db(tmp_path)
+    persisted = persist_proposal(
+        connection,
+        proposal,
+        workspace=str(workspace),
+        skill_name="demo",
+        source_kind="shared",
+        baseline_hash="sha256:base",
+        candidate_hash="sha256:candidate",
+    )
+    assert persisted.proposal_id == proposal.proposal_id
+    assert tuple(connection.execute(
+        "SELECT status,target FROM skill_proposals WHERE proposal_id=?", (proposal.proposal_id,)
+    ).fetchone()) == ("eligible_for_confirmation", "git_pr_proposal")
     _skill(connection)
     assert rollback_skill_revision(
         connection, skill_id="s", target_revision_id="r1", expected_current_revision_id="r2",
