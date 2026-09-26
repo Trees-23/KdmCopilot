@@ -32,6 +32,8 @@ workspace Skill 原子采用 / 共享 Skill 创建 Draft PR
 
 核心结论：自动评审可以自动化，正式采用和发布不可自动化。评测通过的唯一含义是 `eligible_for_confirmation`，不是自动切换当前 Skill，也不是自动创建、合并或发布 GitHub PR。
 
+当前执行位置：处于本方案的 M0 之前，Phase 6 仍关闭。M1～M3 可以先开发和验收；“打开自进化开关”本身是独立的 M4，不会随着代码合并或 QQ 接线自动发生。只有 M0～M3 通过并记录验收证据后，才允许把 `phase6.enabled` 切换为 `true`。
+
 首版以 QQ 文本命令交互，不依赖内联按钮。当前 QQ 通道能发送 plain/markdown 文本，但尚未实现 `OutboundMessage.buttons` 的 QQ 渲染与交互回调；文本命令在 C2C 与群聊中都更稳定、可审计、可回放。
 
 ## 2. 当前基线与问题
@@ -281,7 +283,26 @@ workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → �
 
 ## 10. 分阶段实施计划
 
-### M0：上线前配置与安全基线
+### 10.1 阶段总览与开关顺序
+
+“实现功能”和“打开自进化”是两件事，必须拆成不同阶段。前面的阶段可以在 Phase 6 关闭时完成；只有完成影子验收后，才进入正式打开开关的阶段。
+
+| 阶段 | 名称 | `phase6.enabled` | 通知 | 采用/建 PR | 发布 | 目标 |
+|---|---|---:|---:|---:|---:|---|
+| M0 | 配置与安全基线 | 关闭 | 关闭 | 关闭 | 关闭 | 明确群、管理员、配额和回滚基线 |
+| M1 | Proposal 持久化与状态机 | 关闭 | 关闭 | 关闭 | 关闭 | 先把证据、状态和确认门禁做可靠 |
+| M2 | 自动评审编排（离线） | 关闭 | 关闭 | 关闭 | 关闭 | 用 fixture 验证候选、评测、Gate 和 Proposal |
+| M3 | QQ 通知与群命令接线 | 关闭 | 关闭/测试群 | 关闭 | 关闭 | 接好群路由、权限、确认码和审计 |
+| M4 | **开启自进化开关：影子模式** | **开启** | 关闭 | 关闭 | 关闭 | 真实运行自动评审，但不通知、不修改、不建 PR |
+| M5 | 开启主动通知 | 开启 | 开启 | 关闭 | 关闭 | 评测通过后主动推送，仍不能升级 |
+| M6 | 开启人工批准后的 workspace 采用 | 开启 | 开启 | 仅 workspace 白名单 | 关闭 | 你确认后才原子更新 Skill，可回滚 |
+| M7 | 开启共享 Skill Draft PR | 开启 | 开启 | 允许建 Draft PR | 关闭 | 你确认后建 PR，不能自动合并/部署 |
+| M8 | 开启受控发布 | 开启 | 开启 | 已批准 Proposal | **二次确认** | CI 通过且再次确认后才发布 |
+| M9 | 稳态运行与运营复盘 | 开启 | 开启 | 按白名单 | 按策略 | 监控、限流、暂停和定期复审 |
+
+每个阶段都必须有独立验收记录。任何阶段失败都回退到上一阶段的开关状态；不能跳过 M4 直接打开通知、采用或发布。
+
+### M0：配置与安全基线
 
 - [ ] 确认目标 QQ group openid、审批管理员 QQ user openid、是否要求 @ 才接收 `/evolve`。
 - [ ] 将聊天 `allowFrom` 与审批 `approvalAdminOpenids` 分离；评审 `allowFrom: ["*"]` 是否应收窄。
@@ -300,49 +321,77 @@ workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → �
 
 完成条件：不依赖 QQ 即可通过 API/测试构造、查询和安全地终结一份 Proposal。
 
-### M2：系统自动评审编排
+### M2：自动评审编排（离线与 fixture）
 
-- [ ] 实现系统级受限周期任务和 workspace lease。
+- [ ] 实现系统级受限周期任务和 workspace lease，但先只能被测试/维护命令显式调用。
 - [ ] 接通 Trace → 低风险选择 → Case → EvalPack → 独立回放 → Gate → Proposal。
 - [ ] 实现配额、去重、暂停开关、回归保护和 dead-letter 告警。
-- [ ] 先提供影子模式：生成评测和 Proposal，但不通知、不采用。
+- [ ] 完成 Phase 6 关闭时的负向测试：不扫描、不写 Proposal、不发 QQ 消息。
 
-完成条件：在 fixture Trace 集中可重复生成同一 Gate 与 Proposal，Phase 6 关闭时无任何写入或通知。
+完成条件：在 fixture Trace 集中可重复生成同一 Gate 与 Proposal；Gateway 仍保持 Phase 6 关闭。
 
-### M3：QQ 通知与群内命令
+### M3：QQ 通知与群内命令接线（默认关闭）
 
 - [ ] 实现群目标路由与 `qq_chat_type=group` 投递；保留投递重试和结果审计。
 - [ ] 实现 `/evolve status/list/review/approve/reject`，命令绕过 LLM。
 - [ ] 实现群白名单、管理员 openid 校验、确认码校验、限流、脱敏输出和跨群拒绝。
-- [ ] 增加官方群收发模拟测试及真实 Gateway 的安全测试群验收。
+- [ ] 增加官方群收发模拟测试及真实 Gateway 的安全测试群验收，但不打开长期自动评审。
 
-完成条件：非管理员、错误群、错误码、过期码、重复命令均被拒绝；管理员能在测试群完成“通知—审阅—批准”的闭环。
+完成条件：非管理员、错误群、错误码、过期码、重复命令均被拒绝；测试 Proposal 可完成“通知—审阅—批准”协议测试。
 
-### M4：workspace Skill 采用与回滚
+### M4：开启自进化开关——影子模式
 
+这是“打开 Phase 6”的独立实施阶段，不与代码完成或 QQ 接线混在一起。只有 M0～M3 全部通过后才能执行。
+
+- [ ] 将 `phase6.enabled` 设为 `true`，同时保持 `shadow_mode=true`、`notifications_enabled=false`、`adoption_enabled=false`、`publish_enabled=false`。
+- [ ] 运行至少 7 天或完成约定数量的真实周期，只允许生成内部评测证据和 Proposal，不允许 QQ 主动通知、文件写入、建 PR 或发布。
+- [ ] 核对候选数量、Gate 通过率、敏感任务过滤、回归暂停、kill switch 和资源增长。
+- [ ] 人工检查 Proposal 质量和误报原因，确认没有跨群数据进入候选。
+
+完成条件：影子运行期间无越权写入、无跨群泄露、无未处理 dead-letter；管理员签字后才可进入 M5。失败则关闭 `phase6.enabled`，保留证据用于修复。
+
+### M5：开启 QQ 主动通知
+
+- [ ] 保持 `phase6.enabled=true`，开启 `notifications_enabled=true`，其他采用/发布开关继续关闭。
+- [ ] 只向 `notification_groups` 推送 `eligible_for_confirmation`，通知限流、去重、重试和过期均生效。
+- [ ] 验收群内 `/evolve review`、错误权限、错误码、重复通知和通知失败恢复。
+
+完成条件：连续 7 天通知可追溯且无越权；群内只能看到 Proposal，不能因回复通知而自动升级。
+
+### M6：开启人工批准后的 workspace 采用
+
+- [ ] 开启 `adoption_enabled=true`，仅允许显式 workspace Skill 白名单。
 - [ ] 实现原子采用器、revision 对比、落盘 hash 校验和错误回滚。
 - [ ] 实现 `/evolve rollback`，只能恢复已知 revision，必须二次确认码。
 - [ ] 验证新 Skill 在下一条独立群消息中生效，当前执行 turn 不受中途替换影响。
 
-完成条件：真实 Gateway 场景中可以对测试 Skill 采用、验证、回滚，且不改变长期 workspace 的无关文件。
+完成条件：真实 Gateway 场景中可以对测试 Skill 采用、验证、回滚，且不改变长期 workspace 的无关文件。共享/代码 Skill 仍不可自动建 PR 或发布。
 
-### M5：GitHub Draft PR 与受控发布
+### M7：开启共享 Skill Draft PR
 
 - [ ] 实现已批准 Proposal 到专用分支、中文提交、Draft PR 的适配器。
 - [ ] PR 正文自动附“改动内容、评测证据、验证结果、风险与注意事项”，不泄露聊天内容。
-- [ ] 实现 `/evolve publish` 二次确认，串联 CI、PR 状态和既有发布流程。
-- [ ] 合并后按仓库规则重建长期 Gateway，并记录构建标识与场景证据。
+- [ ] 验收 `approve` 只创建 Draft PR，不合并、不部署、不切换当前版本。
 
 完成条件：从测试共享 Skill 创建 Draft PR；未执行 `publish` 前没有合并、部署或当前版本切换。
 
-### M6：灰度、观测与正式启用
+### M8：开启受控发布
 
-- [ ] 先影子运行 7 天，观察候选数量、Gate 通过率、通知失败率、管理员拒绝率和误报原因。
-- [ ] 再启用“自动评审 + 群通知”，保持采用/发布需要人工确认。
-- [ ] workspace 采用稳定后，再开启 Draft PR 创建；发布仍始终二次确认。
-- [ ] 每周输出简短运营摘要，超过阈值自动暂停 Phase 6 并通知管理员。
+- [ ] 开启 `publish_enabled=true`，但只接受已批准、CI 成功且未过期的 Proposal。
+- [ ] 实现 `/evolve publish` 二次确认，串联 PR 状态、CI、合并和既有发布流程。
+- [ ] 合并后按仓库规则重建长期 Gateway，并记录构建标识与场景证据。
+- [ ] 验证发布失败、构建错配、回滚和 kill switch 行为。
 
-完成条件：连续 7 天无未处理 dead-letter、无越权命令成功、无自动发布、无跨群泄露，且管理员认可通知频率。
+完成条件：没有第二次确认就不能合并/部署；任何失败都保留 PR、构建和审计证据，不静默重试发布。
+
+### M9：稳态运行与运营复盘
+
+- [ ] 每周输出候选数量、Gate 通过率、通知失败率、管理员拒绝率、采用/回滚率和误报原因。
+- [ ] 超过阈值自动暂停 Phase 6，并向管理员通知暂停原因。
+- [ ] 定期复审群白名单、Skill 白名单、管理员名单、配额和通知内容。
+- [ ] 保持 `kill_switch` 可在不重启 Gateway 的情况下阻止新的自动化写路径（配置热刷新能力需单独验收）。
+
+完成条件：连续 7 天无未处理 dead-letter、无越权命令成功、无自动发布、无跨群泄露，且管理员认可通知频率和升级质量。
 
 ## 11. 测试与验收矩阵
 
@@ -378,6 +427,10 @@ phase6.evolution.publish_enabled       # 是否允许处理二次发布确认，
 phase6.kill_switch                      # 立即禁止所有自动化写路径
 ```
 
+开关的实际启用顺序必须遵循 M4～M8：先只开 `phase6.enabled` 做影子评审，再开通知，再开人工批准后的 workspace 采用，再开 Draft PR，最后才允许二次确认后的发布。单独打开 `phase6.enabled` 不会授予 Agent 自己修改正式 Skill、合并 PR 或部署的权限。
+
+当前运行态固定为：`phase6.enabled=false`、`shadow_mode`/通知/采用/发布均不启用。本文只规定未来配置目标，不在本次文档提交中修改运行态配置。
+
 `kill_switch` 不撤销已采用版本，但会停止新的扫描、通知、采用、PR 创建和发布。回滚必须由管理员显式命令完成，并使用现有 revision 证据。
 
 ### 12.2 监控指标
@@ -406,7 +459,7 @@ phase6.kill_switch                      # 立即禁止所有自动化写路径
 
 以下条件全部满足才可称为“QQ 群内受控 Skill 进化上线”：
 
-1. Phase 6 默认关闭，所有新增自动化都有独立 feature flag 和立即 kill switch。
+1. M0～M3 已完成并验收；M4 作为独立变更打开 `phase6.enabled` 进入影子模式，且所有新增自动化都有独立 feature flag 和立即 kill switch。
 2. 自动评测通过只会产生可追溯、可过期的 Proposal，不会自动升级或发布。
 3. 指定群能收到一次、脱敏、可审阅的通知；投递可重试、可查、可去重。
 4. 群命令是确定性路由，管理员、群、确认码、Proposal 状态和基线版本均经过校验。
