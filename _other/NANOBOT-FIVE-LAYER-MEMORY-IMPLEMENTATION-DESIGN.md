@@ -801,6 +801,8 @@ Phase 0 只有在以下全部通过后才可进入 Phase 1：
 
 Phase 6 聚焦测试共 10 项；`tests/memory` 共 63 项，配置/Agent 审计回归 100 项，`ruff check` 与 `git diff --check` 通过。
 
+真实 Gateway 验收使用构建 `git-e2383d0877eb`：默认关闭场景 trace `01a0dce9-ff2e-7c7a-babf-4330f057bdce`、回归保护场景 trace `01a0dcec-ac76-792a-860c-7adeb9a32549` 均为 `succeeded`、`integrity=valid`、`anomaly_count=0`；两条场景均未产生 Skill、文件或 Git 写入。
+
 ## 15. 测试清单
 
 * 单元：迁移幂等、hash/CAS、FTS 查询、评分/半衰期、split 稳定性、JSON schema、tombstone 过滤。
