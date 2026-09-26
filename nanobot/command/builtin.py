@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from typing import Literal
 
 from nanobot import __version__
-from nanobot.agent.goal_permission import goal_mutation_permission
 from nanobot.bus.events import OutboundMessage
 from nanobot.command.router import CommandContext, CommandRouter
 from nanobot.utils.helpers import build_status_content
@@ -170,6 +169,14 @@ BUILTIN_COMMAND_SPECS: tuple[BuiltinCommandSpec, ...] = (
         "List, approve, deny or revoke pairing requests.",
         "shield",
         "[list|approve <code>|deny <code>|revoke <user_id>]",
+        accepts_args=True,
+    ),
+    BuiltinCommandSpec(
+        "/evolve",
+        "Review Skill evolution",
+        "Inspect and approve controlled Skill evolution Proposals.",
+        "shield-check",
+        "[status|list|review|approve|reject]",
         accepts_args=True,
     ),
 )
@@ -846,6 +853,8 @@ async def cmd_history(ctx: CommandContext) -> OutboundMessage:
 
 async def cmd_goal(ctx: CommandContext) -> OutboundMessage | None:
     """Mark this turn as an explicit sustained-goal request."""
+    from nanobot.agent.goal_permission import goal_mutation_permission
+
     goal = ctx.args.strip()
     if not goal:
         return OutboundMessage(
@@ -894,6 +903,25 @@ async def cmd_pairing(ctx: CommandContext) -> OutboundMessage:
         chat_id=ctx.msg.chat_id,
         content=reply,
         metadata={PAIRING_COMMAND_META_KEY: True},
+    )
+
+
+async def cmd_evolve(ctx: CommandContext) -> OutboundMessage:
+    """Handle the deterministic Proposal command outside the LLM."""
+    service = getattr(ctx.loop, "evolution_commands", None)
+    if service is None:
+        content = "拒绝：当前运行时未接入 Skill 进化命令服务。"
+    else:
+        metadata = dict(ctx.msg.metadata or {})
+        metadata.setdefault("chat_id", ctx.msg.chat_id)
+        metadata.setdefault("sender_id", ctx.msg.sender_id)
+        result = service.handle(ctx.args, metadata=metadata)
+        content = result.content
+    return OutboundMessage(
+        channel=ctx.msg.channel,
+        chat_id=ctx.msg.chat_id,
+        content=content,
+        metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
     )
 
 
@@ -1020,3 +1048,5 @@ def register_builtin_commands(router: CommandRouter) -> None:
     router.exact("/help", cmd_help)
     router.exact("/pairing", cmd_pairing)
     router.prefix("/pairing ", cmd_pairing)
+    router.exact("/evolve", cmd_evolve)
+    router.prefix("/evolve ", cmd_evolve)

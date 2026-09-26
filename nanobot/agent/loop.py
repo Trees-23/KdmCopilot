@@ -67,6 +67,9 @@ from nanobot.bus.runtime_events import (
 from nanobot.command import CommandContext, CommandRouter, register_builtin_commands
 from nanobot.config.schema import AgentDefaults, ModelPresetConfig
 from nanobot.cron.session_turns import is_cron_turn
+from nanobot.memory.evolution_commands import EvolutionCommandService
+from nanobot.memory.maintenance import open_maintenance_db, upsert_activity
+from nanobot.memory.policy import ToolPolicy
 from nanobot.providers.base import LLMProvider
 from nanobot.providers.factory import ProviderSnapshot
 from nanobot.runtime_context import (
@@ -333,6 +336,7 @@ class AgentLoop:
         restart_mode: str = "auto",
         local_trigger_store: Any | None = None,
         audit_runtime: AuditRuntime | None = None,
+        phase6_config: Any | None = None,
     ):
         from nanobot.config.schema import ToolsConfig, _resolve_tool_config_refs
 
@@ -343,6 +347,12 @@ class AgentLoop:
         self.runtime_events = runtime_events or RuntimeEventBus()
         self.runtime_event_publisher = RuntimeEventPublisher(self.runtime_events)
         self.channels_config = channels_config
+        if phase6_config is None:
+            from nanobot.config.schema import Phase6Config
+
+            phase6_config = Phase6Config()
+        self.phase6_config = phase6_config
+        self.evolution_commands = EvolutionCommandService(workspace, phase6_config)
         self.restart_mode = restart_mode
         self._runtime_model_publisher = runtime_model_publisher
         self.workspace = workspace
@@ -409,6 +419,7 @@ class AgentLoop:
         self.goal_orchestration = GoalOrchestrationStore(self.sessions)
         self.sessions.set_file_cap_archiver(self.context.memory.raw_archive)
         self.tools = ToolRegistry()
+        self.tools.set_tool_policy(ToolPolicy())
         # One file-read/write tracker per logical session. The tool registry is
         # shared by this loop, so tools resolve the active state via contextvars.
         self._file_state_store = FileStateStore()
@@ -600,6 +611,7 @@ class AgentLoop:
             restart_mode=config.gateway.restart_mode,
             provider_snapshot_loader=provider_snapshot_loader,
             preset_snapshot_loader=preset_snapshot_loader,
+            phase6_config=config.phase6,
             **extra,
         )
 
@@ -824,6 +836,9 @@ class AgentLoop:
             include_memory_recent_history=not ctx.ephemeral,
             session_key=ctx.session.key,
             unified_session=self._unified_session,
+            trace_id=ctx.audit_turn.trace_id if ctx.audit_turn else None,
+            turn_id=ctx.audit_turn.turn_id if ctx.audit_turn else None,
+            context_window_tokens=ctx.runtime.context_window_tokens,
         )
 
     def _request_context_for_turn(self, ctx: TurnContext) -> RequestContext:
@@ -1926,6 +1941,18 @@ class AgentLoop:
         if ctx.session is None:
             ctx.session = self.sessions.get_or_create(ctx.session_key)
         if ctx.kind is TurnKind.USER:
+            try:
+                scope = self.workspace_scopes.for_message(msg, ctx.session.metadata)
+                connection = open_maintenance_db(scope.project_path or self.workspace)
+                upsert_activity(
+                    connection,
+                    workspace=str((scope.project_path or self.workspace).resolve()),
+                    session_key=ctx.session_key,
+                    message_cursor=str(msg.metadata.get("message_id") or ctx.turn_id),
+                )
+                connection.close()
+            except Exception:
+                logger.warning("Failed to upsert maintenance activity", exc_info=True)
             if (
                 msg.sender_id != "subagent"
                 and not turn_continuation.internal_continuation_inbound(msg.metadata)
