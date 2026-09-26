@@ -94,13 +94,12 @@ class EvolutionCommandService:
                 evolution = getattr(self.config, "evolution", self.config)
                 enabled = bool(getattr(self.config, "enabled", False))
                 return EvolutionCommandResult(
-                    "Phase 6 状态：{}；主动通知：{}；采用：{}；发布：{}；当前群：{}".format(
-                        "开启" if enabled else "关闭",
-                        "开启" if bool(getattr(evolution, "notifications_enabled", False)) else "关闭",
-                        "开启" if bool(getattr(evolution, "adoption_enabled", False)) else "关闭",
-                        "开启" if bool(getattr(evolution, "publish_enabled", False)) else "关闭",
-                        group,
-                    )
+                    "自进化模块状态\n"
+                    f"- 总开关：{'开启' if enabled else '关闭'}\n"
+                    f"- 主动通知：{'开启' if bool(getattr(evolution, 'notifications_enabled', False)) else '关闭'}\n"
+                    f"- 人工采用：{'开启' if bool(getattr(evolution, 'adoption_enabled', False)) else '关闭'}\n"
+                    f"- 发布能力：{'开启' if bool(getattr(evolution, 'publish_enabled', False)) else '关闭'}\n"
+                    "- 当前群：已通过群范围校验"
                 )
 
             if action == "list":

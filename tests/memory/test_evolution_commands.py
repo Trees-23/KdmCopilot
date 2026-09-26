@@ -60,7 +60,9 @@ def test_evolve_commands_are_deterministic_and_admin_gated(tmp_path):
     service = EvolutionCommandService(str(tmp_path), _config())
 
     status = service.handle("status", metadata=_metadata())
-    assert "Phase 6 状态：关闭" in status.content
+    assert "自进化模块状态" in status.content
+    assert "- 总开关：关闭" in status.content
+    assert "E217" not in status.content
 
     review = service.handle(f"review {proposal_id}", metadata=_metadata())
     assert proposal_id in review.content
