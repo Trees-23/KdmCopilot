@@ -1,6 +1,6 @@
 # nanobot 五层记忆体系实施设计
 
-> 文档状态：可执行实施计划与实施记录（截至 2026-09-26，Phase 0、Phase 1、Phase 2、Phase 3、Phase 4、Phase 5 已完成）
+> 文档状态：可执行实施计划与实施记录（截至 2026-09-26，Phase 0、Phase 1、Phase 2、Phase 3、Phase 4、Phase 5、Phase 6 已完成）
 > 适用范围：当前仓库的 Python Agent、Session、Audit/Trace、Skill、ToolRegistry，以及通过插件/MCP/entry point 接入的 Wiki。
 > 本文只描述实现，不修改生产代码；所有新增能力都必须先以 feature flag 和迁移脚本落地。
 
@@ -14,7 +14,7 @@
 4. Skill/Case：Skill 继续是版本化 `SKILL.md`，Case 是 Wiki 的 `page_type=case` 页面；SQLite 保存关联、状态和评测索引。
 5. Retention：统一处理评分、降权、归档、TTL 和 tombstone，不把生命周期状态当作事实内容。
 
-Phase 0～Phase 5 已按计划分批提交。后续开发仍应按 Phase 6 推进；任何阶段都不允许直接覆盖 Markdown 事实源、正式 Skill 或原始 Audit。
+Phase 0～Phase 6 已按计划分批提交。任何阶段都不允许直接覆盖 Markdown 事实源、正式 Skill 或原始 Audit。
 
 ## 2. 现状盘点与计划项分类
 
@@ -28,7 +28,7 @@ Phase 0～Phase 5 已按计划分批提交。后续开发仍应按 Phase 6 推�
 | Phase 3 | ContextBuilder 检索 | Phase 1、2 | 已完成 | Phase 2 通过 | Phase 3 DoD 全部完成 |
 | Phase 4 | Maintenance/ToolPolicy | Phase 0～3 | 已完成 | Phase 3 通过 | Phase 4 DoD 全部完成 |
 | Phase 5 | Case→Skill/Eval | Phase 2～4 | 已完成 | Phase 4 通过 | Phase 5 DoD 全部完成 |
-| Phase 6 | 受控持续运行 | Phase 5 | 未开始 | Phase 5 通过且明确启用 | Phase 6 DoD 全部完成 |
+| Phase 6 | 受控持续运行 | Phase 5 | 已完成 | Phase 5 通过且明确启用 | Phase 6 DoD 全部完成 |
 
 任务状态统一为：`[ ]` 未开始、`[-]` 进行中、`[x]` 已完成、`[!]` 阻塞、`[~]` 延期。Phase 0 任务已按记录更新，后续阶段仍按前置 DoD 约束。
 
@@ -794,6 +794,12 @@ Phase 0 只有在以下全部通过后才可进入 Phase 1：
 5. 共享 Skill 只生成 Git PR proposal；个人 Skill 只生成需用户确认的 workspace adopt proposal。
 
 **验收**：连续运行不增加重复事实、不绕过 ToolPolicy、不自动合并；回归可自动暂停并回滚 current；18/7 天 retention 不误删长期摘要；每次 proposal 都能追溯到 trace/case/eval run。**失败恢复**：kill switch 立即停止维护 worker 的候选处理；恢复旧 revision/current 指针；无法恢复时进入只读 degraded，不清理用户 workspace。**不做**：不自动 merge main、不自动删除普通记忆、不自动扩大工具权限、不把 Phase 6 当作默认线上行为。
+
+**实施结果（2026-09-26）**：新增 `nanobot/memory/continuous.py` 和 `Phase6Config`。运行开关默认关闭，kill switch 在所有候选写入前 fail-closed；低风险筛选只接受重复、成功、非敏感且只读工具任务；失败/partial/blocked Trace 只派生 staging Case。EvalPack 版本通过 `phase6_version` 和稳定数据 hash 递增，evidence 以脱敏、fsync 的 append-only JSONL 写入 workspace `.nanobot/phase6/evidence.jsonl`。
+
+健康检查对连续回归、权限拒绝、FTS 失败和容量增长自动暂停候选处理；暂停时可在 CAS 条件下恢复已知 baseline revision，失败则保持只读暂停。18/7 天 retention 只生成 payload 到期和摘要复核计划，不删除长期摘要；proposal 必须同时携带 trace/case/eval run 引用，共享 Skill 只生成 PR proposal，workspace Skill 只生成待确认 adopt proposal。未新增 migration、CLI、自动发布或自动合并。
+
+Phase 6 聚焦测试共 10 项；`tests/memory` 共 63 项，配置/Agent 审计回归 100 项，`ruff check` 与 `git diff --check` 通过。
 
 ## 15. 测试清单
 
@@ -2188,7 +2194,7 @@ Phase 5 实施证据：`nanobot/memory/derivation.py` 将结构化 Trace outcome
 
 #### P6-T01：默认关闭的持续运行开关
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
@@ -2207,11 +2213,11 @@ Phase 5 实施证据：`nanobot/memory/derivation.py` 将结构化 Trace outcome
   - [ ] 测试结果已记录
   - [ ] 审计/证据路径已记录
   - [ ] 提交编号已记录
-- 实施记录：完成日期：；提交：；测试：；证据：；遗留问题：
+- 实施记录：完成日期：2026-09-26；提交：1960e869；测试：10 项 Phase 6 聚焦测试；证据：`.nanobot/phase6/evidence.jsonl`；遗留问题：默认关闭。
 
 #### P6-T02：低风险任务筛选
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
@@ -2230,11 +2236,11 @@ Phase 5 实施证据：`nanobot/memory/derivation.py` 将结构化 Trace outcome
   - [ ] 测试结果已记录
   - [ ] 审计/证据路径已记录
   - [ ] 提交编号已记录
-- 实施记录：完成日期：；提交：；测试：；证据：；遗留问题：
+- 实施记录：完成日期：2026-09-26；提交：1960e869；测试：低风险/敏感/写工具排除测试；证据：`select_low_risk_tasks`；遗留问题：默认关闭。
 
 #### P6-T03：失败 Trace 转回归题
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
@@ -2253,11 +2259,11 @@ Phase 5 实施证据：`nanobot/memory/derivation.py` 将结构化 Trace outcome
   - [ ] 测试结果已记录
   - [ ] 审计/证据路径已记录
   - [ ] 提交编号已记录
-- 实施记录：完成日期：；提交：；测试：；证据：；遗留问题：
+- 实施记录：完成日期：2026-09-26；提交：1960e869；测试：失败、超时和成功拒绝测试；证据：`regression_case_from_trace`；遗留问题：仅 staging。
 
 #### P6-T04：EvalPack 版本更新
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
@@ -2276,11 +2282,11 @@ Phase 5 实施证据：`nanobot/memory/derivation.py` 将结构化 Trace outcome
   - [ ] 测试结果已记录
   - [ ] 审计/证据路径已记录
   - [ ] 提交编号已记录
-- 实施记录：完成日期：；提交：；测试：；证据：；遗留问题：
+- 实施记录：完成日期：2026-09-26；提交：1960e869；测试：版本/hash 递增测试；证据：`eval_packs.split_policy_json`；遗留问题：不自动发布。
 
 #### P6-T05：evidence log
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
@@ -2299,11 +2305,11 @@ Phase 5 实施证据：`nanobot/memory/derivation.py` 将结构化 Trace outcome
   - [ ] 测试结果已记录
   - [ ] 审计/证据路径已记录
   - [ ] 提交编号已记录
-- 实施记录：完成日期：；提交：；测试：；证据：；遗留问题：
+- 实施记录：完成日期：2026-09-26；提交：1960e869；测试：脱敏、append-only、fsync 测试；证据：`.nanobot/phase6/evidence.jsonl`；遗留问题：不记录原始 payload。
 
 #### P6-T06：回归自动暂停
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
@@ -2322,11 +2328,11 @@ Phase 5 实施证据：`nanobot/memory/derivation.py` 将结构化 Trace outcome
   - [ ] 测试结果已记录
   - [ ] 审计/证据路径已记录
   - [ ] 提交编号已记录
-- 实施记录：完成日期：；提交：；测试：；证据：；遗留问题：
+- 实施记录：完成日期：2026-09-26；提交：1960e869；测试：回归阈值、权限、FTS、容量告警测试；证据：`state.json`；遗留问题：暂停需独立复核恢复。
 
 #### P6-T07：Skill rollback
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
@@ -2345,11 +2351,11 @@ Phase 5 实施证据：`nanobot/memory/derivation.py` 将结构化 Trace outcome
   - [ ] 测试结果已记录
   - [ ] 审计/证据路径已记录
   - [ ] 提交编号已记录
-- 实施记录：完成日期：；提交：；测试：；证据：；遗留问题：
+- 实施记录：完成日期：2026-09-26；提交：633fff28；测试：CAS baseline rollback 测试；证据：`pause_and_rollback`；遗留问题：不绕过 ToolPolicy。
 
 #### P6-T08：容量和索引失败告警
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
@@ -2368,11 +2374,11 @@ Phase 5 实施证据：`nanobot/memory/derivation.py` 将结构化 Trace outcome
   - [ ] 测试结果已记录
   - [ ] 审计/证据路径已记录
   - [ ] 提交编号已记录
-- 实施记录：完成日期：；提交：；测试：；证据：；遗留问题：
+- 实施记录：完成日期：2026-09-26；提交：633fff28；测试：18/7 retention 与容量指标测试；证据：`plan_retention`；遗留问题：不删除长期摘要。
 
 #### P6-T09：Phase 6 DoD
 
-- 状态：[ ]
+- 状态：[x]
 - 类型：实现/测试/验收（按实际工作调整）
 - 目标：将本任务落实为可复现、可验证的独立工作单元。
 - 前置任务：本阶段前序任务及前置 Phase DoD。
@@ -2391,21 +2397,21 @@ Phase 5 实施证据：`nanobot/memory/derivation.py` 将结构化 Trace outcome
   - [ ] 测试结果已记录
   - [ ] 审计/证据路径已记录
   - [ ] 提交编号已记录
-- 实施记录：完成日期：；提交：；测试：；证据：；遗留问题：
+- 实施记录：完成日期：2026-09-26；提交：633fff28；测试：63 memory + 100 config/Agent 回归、ruff；证据：本节 DoD；遗留问题：默认开关关闭，待用户另行启用。
 
 ### Phase 6 Definition of Done
 
-- [ ] 所有子任务完成，或延期/阻塞均有记录。
-- [ ] 单元、集成和安全边界测试通过并记录。
-- [ ] migration/schema/协议证据已记录。
-- [ ] 失败恢复路径已验证。
-- [ ] 文档当前状态已更新，未把未验证内容标为完成。
-- [ ] 提交和测试证据已记录。
-- [ ] 无未解决的事实源、权限或回滚风险。
+- [x] 所有子任务完成，或延期/阻塞均有记录。
+- [x] 单元、集成和安全边界测试通过并记录。
+- [x] migration/schema/协议证据已记录（Phase 6 未新增 migration，沿用现有 schema）。
+- [x] 失败恢复路径已验证。
+- [x] 文档当前状态已更新，未把未验证内容标为完成。
+- [x] 提交和测试证据已记录。
+- [x] 无未解决的事实源、权限或回滚风险。
 
 ## 21. 实施记录
 
-Phase 0～Phase 5 已完成并记录证据；Phase 6 尚未开始。
+Phase 0～Phase 6 已完成并记录证据；Phase 6 默认开关保持关闭。
 
 | 任务 ID | 状态 | 日期 | 提交 | 测试 | 证据 | 备注 |
 |---|---|---|---|---|---|---|
@@ -2483,15 +2489,15 @@ Phase 0～Phase 5 已完成并记录证据；Phase 6 尚未开始。
 | P5-T12 | [x] | 2026-09-26 | f2ba98ee | 成本/延迟/安全 gate | `evaluate_gate` | 15%/20% 阈值 |
 | P5-T13 | [x] | 2026-09-26 | f2ba98ee | staging 与确认边界 | `skill_propose`、gate | 需用户确认 |
 | P5-T14 | [x] | 2026-09-26 | f2ba98ee | 6 聚焦 + 310 回归；ruff 通过 | 本节 DoD | Phase 5 完成 |
-| P6-T01 | [ ] |  |  |  |  |  |
-| P6-T02 | [ ] |  |  |  |  |  |
-| P6-T03 | [ ] |  |  |  |  |  |
-| P6-T04 | [ ] |  |  |  |  |  |
-| P6-T05 | [ ] |  |  |  |  |  |
-| P6-T06 | [ ] |  |  |  |  |  |
-| P6-T07 | [ ] |  |  |  |  |  |
-| P6-T08 | [ ] |  |  |  |  |  |
-| P6-T09 | [ ] |  |  |  |  |  |
+| P6-T01 | [x] | 2026-09-26 | 1960e869 | `Phase6Config` 默认关闭、kill switch、runtime gate | `continuous.py`、配置测试 | 未启用线上持续运行 |
+| P6-T02 | [x] | 2026-09-26 | 1960e869 | 重复成功、低敏感、只读工具筛选 | `select_low_risk_tasks` | 写工具/敏感任务拒绝 |
+| P6-T03 | [x] | 2026-09-26 | 1960e869 | failed/partial/blocked Trace 派生 regression Case | `regression_case_from_trace` | 仅 staging candidate |
+| P6-T04 | [x] | 2026-09-26 | 1960e869 | EvalPack `phase6_version` 与稳定 hash 递增 | `build_versioned_evalpack` | 不改 current |
+| P6-T05 | [x] | 2026-09-26 | 1960e869 | 脱敏、fsync、append-only evidence log | `.nanobot/phase6/evidence.jsonl` | 不记录原始 payload |
+| P6-T06 | [x] | 2026-09-26 | 1960e869 | 回归/权限/FTS/容量告警自动暂停 | `update_health`、`run_cycle` | kill switch 保持只读 |
+| P6-T07 | [x] | 2026-09-26 | 633fff28 | CAS baseline rollback 与显式 resume | `pause_and_rollback` | 旧 revision 可恢复 |
+| P6-T08 | [x] | 2026-09-26 | 633fff28 | 18/7 retention 计划与容量/索引告警 | `plan_retention`、`collect_capacity_metrics` | 不删除长期摘要 |
+| P6-T09 | [x] | 2026-09-26 | 633fff28 | 10 聚焦 + 63 memory + 100 config/Agent 回归；ruff 通过 | Phase 6 DoD | Phase 6 完成 |
 
 ## 22. 阻塞和变更记录
 
@@ -2504,7 +2510,7 @@ Phase 0～Phase 5 已完成并记录证据；Phase 6 尚未开始。
 ## 23. 文档状态与使用方式
 
 - 本文是“架构说明 + 分阶段实施计划 + 可执行任务清单 + 验收证据记录模板”。
-- P0-T01～P0-T22、P1-T01～P1-T08、P2-T01～P2-T10、P3-T01～P3-T09、P4-T01～P4-T11、P5-T01～P5-T14 已完成并记录证据；Phase 6 任务仍为 `[ ] 未开始`。
+- P0-T01～P0-T22、P1-T01～P1-T08、P2-T01～P2-T10、P3-T01～P3-T09、P4-T01～P4-T11、P5-T01～P5-T14、P6-T01～P6-T09 已完成并记录证据；Phase 6 默认开关保持关闭。
 - Phase 0 未运行 Gateway、未创建生产 CLI，数据库验证仅使用临时 workspace/SQLite；Phase 1 已重建长期 Gateway 并核对构建标识，但未增加 AgentLoop、CLI、HTTP API 或 WebUI 接入。
 - Phase N 的 DoD 未完成时不得进入 Phase N+1；Phase 2 的 provider revision 能力缺失按 degraded 记录，不得伪造不可变历史。
 - 任务执行期间如需改变产品决策、事实源、权限或保留规则，必须停止并新增阻塞/变更记录。
