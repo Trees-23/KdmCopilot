@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 
 from nanobot.memory.db import connect_memory_db
-from nanobot.memory.evolution_commands import EvolutionCommandService
+from nanobot.memory.evolution_commands import EvolutionCommandService, _format_beijing_time
 from nanobot.memory.migrations.runner import apply_migrations
 from nanobot.memory.proposal_repository import ProposalRepository
 
@@ -28,6 +28,12 @@ def _metadata(*, sender="member-1", group="group-1", mention=True, message_id="m
         "qq_mentioned_bot": mention,
         "message_id": message_id,
     }
+
+
+def test_confirmation_expiry_is_rendered_as_beijing_time():
+    assert _format_beijing_time("2026-09-27T05:25:47+00:00") == (
+        "2026年09月27日 13:25:47（北京时间）"
+    )
 
 
 def _proposal(tmp_path):

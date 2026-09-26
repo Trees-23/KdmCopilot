@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, Mapping
+from zoneinfo import ZoneInfo
 
 from nanobot.memory.db import connect_memory_db
 from nanobot.memory.migrations.runner import apply_migrations
@@ -24,6 +26,20 @@ from nanobot.memory.proposal_repository import (
 class EvolutionCommandResult:
     content: str
     handled: bool = True
+
+
+def _format_beijing_time(value: str | None) -> str:
+    """Render an internal UTC timestamp in a human-readable Beijing time."""
+    if not value:
+        return "未签发"
+    try:
+        parsed = datetime.fromisoformat(value)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        local = parsed.astimezone(ZoneInfo("Asia/Shanghai"))
+        return local.strftime("%Y年%m月%d日 %H:%M:%S（北京时间）")
+    except (TypeError, ValueError):
+        return value
 
 
 class EvolutionCommandService:
@@ -119,7 +135,7 @@ class EvolutionCommandService:
                 return EvolutionCommandResult("未找到该 Proposal，或它不属于当前工作区。")
 
             if action == "review":
-                expires = record.confirmation_expires_at or "未签发"
+                expires = _format_beijing_time(record.confirmation_expires_at)
                 return EvolutionCommandResult(
                     "Proposal 审阅：\n"
                     f"ID：{record.proposal_id}\n"
