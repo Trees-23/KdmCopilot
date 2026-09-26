@@ -426,6 +426,30 @@ class AuditConfig(Base):
     additional_secret_patterns: list[str] = Field(default_factory=list)
 
 
+class Phase6Config(Base):
+    """Opt-in controlled continuous-memory review configuration.
+
+    The defaults deliberately keep Phase 6 off.  Enabling this section only
+    permits derived proposals/evidence; publication and adoption remain
+    explicit, separate operations.
+    """
+
+    enabled: bool = False
+    kill_switch: bool = False
+    min_repeat_count: int = Field(default=2, ge=2)
+    max_candidates_per_cycle: int = Field(default=20, ge=1)
+    regression_pause_threshold: int = Field(default=3, ge=1)
+    max_memory_growth_ratio: float = Field(default=0.5, ge=0)
+    retention_days: int = Field(default=18, ge=1)
+    payload_retention_days: int = Field(default=7, ge=1)
+
+    @model_validator(mode="after")
+    def _validate_retention_window(self) -> "Phase6Config":
+        if self.payload_retention_days > self.retention_days:
+            raise ValueError("payload_retention_days must not exceed retention_days")
+        return self
+
+
 class Config(BaseSettings):
     """Root configuration for nanobot."""
 
@@ -437,6 +461,7 @@ class Config(BaseSettings):
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     audit: AuditConfig = Field(default_factory=AuditConfig)
+    phase6: Phase6Config = Field(default_factory=Phase6Config)
     model_presets: dict[str, ModelPresetConfig] = Field(
         default_factory=dict,
         validation_alias=AliasChoices("modelPresets", "model_presets"),
