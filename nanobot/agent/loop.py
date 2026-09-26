@@ -67,6 +67,7 @@ from nanobot.bus.runtime_events import (
 from nanobot.command import CommandContext, CommandRouter, register_builtin_commands
 from nanobot.config.schema import AgentDefaults, ModelPresetConfig
 from nanobot.cron.session_turns import is_cron_turn
+from nanobot.memory.evolution_commands import EvolutionCommandService
 from nanobot.memory.maintenance import open_maintenance_db, upsert_activity
 from nanobot.memory.policy import ToolPolicy
 from nanobot.providers.base import LLMProvider
@@ -335,6 +336,7 @@ class AgentLoop:
         restart_mode: str = "auto",
         local_trigger_store: Any | None = None,
         audit_runtime: AuditRuntime | None = None,
+        phase6_config: Any | None = None,
     ):
         from nanobot.config.schema import ToolsConfig, _resolve_tool_config_refs
 
@@ -345,6 +347,12 @@ class AgentLoop:
         self.runtime_events = runtime_events or RuntimeEventBus()
         self.runtime_event_publisher = RuntimeEventPublisher(self.runtime_events)
         self.channels_config = channels_config
+        if phase6_config is None:
+            from nanobot.config.schema import Phase6Config
+
+            phase6_config = Phase6Config()
+        self.phase6_config = phase6_config
+        self.evolution_commands = EvolutionCommandService(workspace, phase6_config)
         self.restart_mode = restart_mode
         self._runtime_model_publisher = runtime_model_publisher
         self.workspace = workspace
@@ -603,6 +611,7 @@ class AgentLoop:
             restart_mode=config.gateway.restart_mode,
             provider_snapshot_loader=provider_snapshot_loader,
             preset_snapshot_loader=preset_snapshot_loader,
+            phase6_config=config.phase6,
             **extra,
         )
 

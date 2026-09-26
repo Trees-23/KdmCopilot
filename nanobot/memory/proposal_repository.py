@@ -162,6 +162,41 @@ class ProposalRepository:
             return None
         return ProposalRecord(*row)
 
+    def list_proposals(
+        self,
+        *,
+        workspace: str,
+        statuses: Sequence[str] | None = None,
+        limit: int = 20,
+    ) -> list[ProposalRecord]:
+        """List proposals for a workspace without exposing confirmation secrets.
+
+        The command layer uses this read-only projection for ``/evolve list``.
+        Statuses are validated here so callers cannot accidentally construct an
+        unsafe SQL fragment from user supplied command text.
+        """
+        if limit < 1 or limit > 100:
+            raise ValueError("proposal list limit must be between 1 and 100")
+        selected = tuple(statuses or ())
+        unknown = set(selected) - PROPOSAL_STATUSES
+        if unknown:
+            raise ValueError(f"unsupported Proposal status: {sorted(unknown)!r}")
+        sql = (
+            "SELECT proposal_id,workspace,skill_name,source_kind,target,status,"
+            "baseline_revision_id,candidate_revision_id,baseline_hash,candidate_hash,"
+            "version_epoch,gate_result,confirmation_expires_at FROM skill_proposals "
+            "WHERE workspace=?"
+        )
+        params: list[Any] = [workspace]
+        if selected:
+            placeholders = ",".join("?" for _ in selected)
+            sql += f" AND status IN ({placeholders})"
+            params.extend(selected)
+        sql += " ORDER BY updated_at DESC LIMIT ?"
+        params.append(limit)
+        rows = self.connection.execute(sql, params).fetchall()
+        return [ProposalRecord(*row) for row in rows]
+
     def transition(
         self,
         proposal_id: str,

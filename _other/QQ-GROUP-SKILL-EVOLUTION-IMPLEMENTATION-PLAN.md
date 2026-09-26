@@ -17,10 +17,10 @@
 - 已加入 `0002_phase6_proposals` 数据库迁移，覆盖 Proposal、通知投递、管理员动作和群范围四类持久化对象。
 - 已实现 Proposal 状态转移、版本 CAS、确认码哈希与过期、管理员动作幂等、通知去重和群范围写入的本地仓储。
 - 已将现有 `make_proposal()` 接入可选持久化入口 `persist_proposal()`；它只写入 `eligible_for_confirmation`，不会采用 Skill、创建 PR 或发布。
-- 已完成相关单元测试、配置测试、memory 测试和全量 pytest；当前尚未接入 QQ 命令、主动通知器或真实群验收。
+- 已完成相关单元测试、配置测试、memory 测试和全量 pytest；M3 已开始接入确定性 QQ 命令，但主动通知器和真实群验收仍未完成。
 - 已完成显式调用的离线编排器：workspace lease、Trace 低风险筛选、失败 Case、EvalPack、独立 fixture 回放、Gate 和 Proposal 持久化；Phase 6 关闭时无副作用。
 - 已完成持久化的显式调度状态、群通知配额、Delivery claim/retry/dead-letter 状态；尚未接入 QQ 投递器和 dead-letter 主动告警。
-- 回滚基线已记录：Gateway 构建 `git-f7583e93e78a`，健康检查通过；`phase6.enabled=false`，未打开任何进化写路径。
+- 回滚基线已记录：Gateway 构建 `git-f7583e93e78a`，健康检查通过；`phase6.enabled=false`，未打开任何进化写路径。最近一次重建因网络下载 `packaging==26.3` 超时失败，未替换长期 Gateway。
 
 M0 的目标群、审批管理员、@要求、Proposal 有效期和每日通知上限已确认并写入运行态；真实 openid 不写入 Git。通知时段暂按全天处理（当前还未实现时间窗限制），发布仓库沿用当前 fork 的 `Trees-23/KdmCopilot:main`。在 M3 QQ 命令接线完成前，不打开 M4 的 `phase6.enabled`。
 
@@ -349,11 +349,11 @@ workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → �
 ### M3：QQ 通知与群内命令接线（默认关闭）
 
 - [ ] 实现群目标路由与 `qq_chat_type=group` 投递；保留投递重试和结果审计。
-- [ ] 实现 `/evolve status/list/review/approve/reject`，命令绕过 LLM。
-- [ ] 实现群白名单、管理员 openid 校验、确认码校验、限流、脱敏输出和跨群拒绝。
+- [x] 实现 `/evolve status/list/review/approve/reject`，命令绕过 LLM；批准只记录 Proposal 状态，不执行 Skill 采用或发布。
+- [x] 实现群白名单、管理员 openid 校验、确认码校验、@要求、脱敏输出和跨群拒绝；补充错误权限、错误群、重放命令协议测试。
 - [ ] 增加官方群收发模拟测试及真实 Gateway 的安全测试群验收，但不打开长期自动评审。
 
-完成条件：非管理员、错误群、错误码、过期码、重复命令均被拒绝；测试 Proposal 可完成“通知—审阅—批准”协议测试。
+当前进度：M3 已完成命令与授权的本地协议单元测试；QQ 主动通知投递器、真实群收发和 Gateway 安全验收仍待补齐。完成条件仍为：非管理员、错误群、错误码、过期码、重复命令均被拒绝，并在测试 Proposal 上完成“通知—审阅—批准”协议测试。
 
 ### M4：开启自进化开关——影子模式
 
