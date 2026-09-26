@@ -6,7 +6,11 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from nanobot.memory.maintenance import open_maintenance_db
-from nanobot.memory.proposal_repository import ProposalConflict, ProposalRepository
+from nanobot.memory.proposal_repository import (
+    DeliveryQuotaExceededError,
+    ProposalConflict,
+    ProposalRepository,
+)
 
 
 def _repo(tmp_path):
@@ -155,3 +159,27 @@ def test_concurrent_same_idempotency_key_returns_same_record(tmp_path):
     assert repo.connection.execute(
         "SELECT count(*) FROM proposal_actions WHERE idempotency_key='same-request'"
     ).fetchone()[0] == 1
+
+
+def test_delivery_quota_retry_and_dead_letter_are_bounded(tmp_path):
+    workspace, repo = _repo(tmp_path)
+    proposal = _create(repo, str(workspace))
+    repo.upsert_group_scope(group_openid="group-1", namespace="qq:group-1", notification_enabled=True,
+                            daily_notification_limit=1)
+    first = repo.enqueue_delivery(
+        proposal.proposal_id, workspace=str(workspace), group_openid="group-1", content_hash="sha256:first"
+    )
+    with pytest.raises(DeliveryQuotaExceededError):
+        repo.enqueue_delivery(
+            proposal.proposal_id, workspace=str(workspace), group_openid="group-1", content_hash="sha256:second"
+        )
+    claimed = repo.claim_delivery(workspace=str(workspace), worker_id="delivery-worker")
+    assert claimed is not None and claimed["delivery_id"] == first and claimed["attempt_count"] == 1
+    assert repo.mark_delivery_retry(first, "temporary") == "retry_wait"
+    claimed = repo.claim_delivery(workspace=str(workspace), worker_id="delivery-worker",
+                                  now=datetime.now(UTC) + timedelta(minutes=3))
+    assert claimed is not None
+    assert repo.mark_delivery_retry(first, "permanent", max_attempts=2) == "dead_letter"
+    assert repo.connection.execute(
+        "SELECT status FROM proposal_deliveries WHERE delivery_id=?", (first,)
+    ).fetchone()[0] == "dead_letter"

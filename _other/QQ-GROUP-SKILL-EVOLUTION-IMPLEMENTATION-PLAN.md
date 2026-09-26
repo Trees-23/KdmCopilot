@@ -19,6 +19,7 @@
 - 已将现有 `make_proposal()` 接入可选持久化入口 `persist_proposal()`；它只写入 `eligible_for_confirmation`，不会采用 Skill、创建 PR 或发布。
 - 已完成相关单元测试、配置测试、memory 测试和全量 pytest；当前尚未接入 QQ 命令、主动通知器或真实群验收。
 - 已完成显式调用的离线编排器：workspace lease、Trace 低风险筛选、失败 Case、EvalPack、独立 fixture 回放、Gate 和 Proposal 持久化；Phase 6 关闭时无副作用。
+- 已完成持久化的显式调度状态、群通知配额、Delivery claim/retry/dead-letter 状态；尚未接入 QQ 投递器和 dead-letter 主动告警。
 - 回滚基线已记录：Gateway 构建 `git-f7583e93e78a`，健康检查通过；`phase6.enabled=false`，未打开任何进化写路径。
 
 M0 的目标群、审批管理员、@要求、Proposal 有效期和每日通知上限已确认并写入运行态；真实 openid 不写入 Git。通知时段暂按全天处理（当前还未实现时间窗限制），发布仓库沿用当前 fork 的 `Trees-23/KdmCopilot:main`。在 M3 QQ 命令接线完成前，不打开 M4 的 `phase6.enabled`。
@@ -338,12 +339,12 @@ workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → �
 
 ### M2：自动评审编排（离线与 fixture）
 
-- [ ] 实现系统级受限周期任务和 workspace lease，但先只能被测试/维护命令显式调用。
+- [x] 实现系统级受限周期任务和 workspace lease，但先只能被测试/维护命令显式调用。
 - [x] 接通 Trace → 低风险选择 → Case → EvalPack → 独立回放 → Gate → Proposal。
 - [ ] 实现配额、去重、暂停开关、回归保护和 dead-letter 告警。
 - [x] 完成 Phase 6 关闭时的负向测试：不扫描、不写 Proposal、不发 QQ 消息。
 
-当前进度：M2 已完成显式离线编排、workspace lease、Trace→Gate→Proposal 链路和关闭态负向测试；系统周期调度、通知配额、Proposal 投递 dead-letter 仍待补齐，因此尚未整体验收关闭。
+当前进度：M2 已完成显式离线编排、调度状态、workspace lease、Trace→Gate→Proposal 链路、通知配额、Delivery retry/dead-letter 状态和关闭态负向测试；QQ 投递器、dead-letter 主动告警和真实周期运行仍待补齐，因此尚未整体验收关闭。
 
 ### M3：QQ 通知与群内命令接线（默认关闭）
 

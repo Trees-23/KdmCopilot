@@ -94,6 +94,10 @@ class ProposalConflictError(RuntimeError):
 ProposalConflict = ProposalConflictError
 
 
+class DeliveryQuotaExceededError(RuntimeError):
+    """Raised when a group has reached its configured daily notification quota."""
+
+
 class ProposalRepository:
     """Repository implementing Proposal state transitions with SQLite CAS."""
 
@@ -403,6 +407,20 @@ class ProposalRepository:
             if row:
                 self.connection.commit()
                 return row[0]
+            scope = self.connection.execute(
+                "SELECT notification_enabled,daily_notification_limit FROM group_memory_scopes "
+                "WHERE group_openid=?", (group_openid,)
+            ).fetchone()
+            if scope and int(scope[0]):
+                day_start = _iso(_now(now).replace(hour=0, minute=0, second=0, microsecond=0))
+                sent_count = self.connection.execute(
+                    "SELECT count(*) FROM proposal_deliveries WHERE group_openid=? AND created_at>=? "
+                    "AND status IN ('pending','leased','sent','retry_wait')",
+                    (group_openid, day_start),
+                ).fetchone()[0]
+                if int(sent_count) >= int(scope[1]):
+                    self.connection.rollback()
+                    raise DeliveryQuotaExceededError("group notification quota exceeded")
             self.connection.execute(
                 "INSERT INTO proposal_deliveries(delivery_id,proposal_id,workspace,group_openid,content_hash,status,"
                 "next_attempt_at,created_at,updated_at) VALUES(?,?,?,?,?,'pending',?,?,?)",
@@ -413,6 +431,83 @@ class ProposalRepository:
             self.connection.rollback()
             raise
         return delivery_id
+
+    def claim_delivery(
+        self,
+        *,
+        workspace: str,
+        worker_id: str,
+        lease_seconds: int = 60,
+        now: datetime | None = None,
+    ) -> sqlite3.Row | None:
+        """Lease one due Proposal notification for a bounded delivery worker."""
+
+        current = _now(now)
+        now_text = _iso(current)
+        lease_text = _iso(current + timedelta(seconds=lease_seconds))
+        self.connection.execute("BEGIN IMMEDIATE")
+        try:
+            row = self.connection.execute(
+                "SELECT * FROM proposal_deliveries WHERE workspace=? AND "
+                "((status IN ('pending','retry_wait') AND next_attempt_at<=?) OR "
+                "(status='leased' AND lease_until<=?)) ORDER BY created_at LIMIT 1",
+                (workspace, now_text, now_text),
+            ).fetchone()
+            if row is None:
+                self.connection.rollback()
+                return None
+            self.connection.execute(
+                "UPDATE proposal_deliveries SET status='leased',lease_until=?,attempt_count=attempt_count+1,"
+                "updated_at=? WHERE delivery_id=?",
+                (lease_text, now_text, row["delivery_id"]),
+            )
+            self.connection.commit()
+            return self.connection.execute(
+                "SELECT * FROM proposal_deliveries WHERE delivery_id=?", (row["delivery_id"],)
+            ).fetchone()
+        except Exception:
+            self.connection.rollback()
+            raise
+
+    def mark_delivery_sent(
+        self,
+        delivery_id: str,
+        *,
+        provider_message_id: str | None = None,
+        audit_ref: str | None = None,
+    ) -> bool:
+        cursor = self.connection.execute(
+            "UPDATE proposal_deliveries SET status='sent',lease_until=NULL,provider_message_id=?,"
+            "audit_ref=?,last_error=NULL,updated_at=? WHERE delivery_id=? AND status='leased'",
+            (provider_message_id, audit_ref, _iso(), delivery_id),
+        )
+        self.connection.commit()
+        return cursor.rowcount == 1
+
+    def mark_delivery_retry(
+        self,
+        delivery_id: str,
+        error: str,
+        *,
+        max_attempts: int = 5,
+        now: datetime | None = None,
+    ) -> str:
+        current = _now(now)
+        row = self.connection.execute(
+            "SELECT attempt_count,status FROM proposal_deliveries WHERE delivery_id=?", (delivery_id,)
+        ).fetchone()
+        if row is None or row["status"] != "leased":
+            return "unchanged"
+        attempts = int(row["attempt_count"])
+        status = "dead_letter" if attempts >= max_attempts else "retry_wait"
+        next_time = current + timedelta(minutes=2 ** max(0, attempts - 1))
+        self.connection.execute(
+            "UPDATE proposal_deliveries SET status=?,lease_until=NULL,next_attempt_at=?,last_error=?,updated_at=? "
+            "WHERE delivery_id=? AND status='leased'",
+            (status, _iso(next_time), error[:500], _iso(current), delivery_id),
+        )
+        self.connection.commit()
+        return status
 
     def upsert_group_scope(
         self,
@@ -442,6 +537,6 @@ class ProposalRepository:
 
 
 __all__ = [
-    "ActionResult", "ProposalConflict", "ProposalConflictError", "ProposalRecord", "ProposalRepository",
-    "PROPOSAL_STATUSES",
+    "ActionResult", "DeliveryQuotaExceededError", "ProposalConflict", "ProposalConflictError",
+    "ProposalRecord", "ProposalRepository", "PROPOSAL_STATUSES",
 ]
