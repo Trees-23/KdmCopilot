@@ -12,14 +12,15 @@
 
 截至 2026-09-26，已完成 M1 的第一工作单元，Phase 6 仍保持关闭：
 
-- 已加入独立的 `shadow_mode`、主动通知、采用和发布开关，默认全部关闭；没有改变当前运行态配置。
+- 已加入独立的 `shadow_mode`、主动通知、采用和发布开关，默认全部关闭；当前运行态仍未打开 Phase 6。
+- 已确认 Proposal 确认码有效期为 12 小时（720 分钟），每群每日主动通知上限为 12 条。
 - 已加入 `0002_phase6_proposals` 数据库迁移，覆盖 Proposal、通知投递、管理员动作和群范围四类持久化对象。
 - 已实现 Proposal 状态转移、版本 CAS、确认码哈希与过期、管理员动作幂等、通知去重和群范围写入的本地仓储。
 - 已将现有 `make_proposal()` 接入可选持久化入口 `persist_proposal()`；它只写入 `eligible_for_confirmation`，不会采用 Skill、创建 PR 或发布。
 - 已完成相关单元测试、配置测试、memory 测试和全量 pytest；当前尚未接入 QQ 命令、主动通知器或真实群验收。
 - 回滚基线已记录：Gateway 构建 `git-f7583e93e78a`，健康检查通过；`phase6.enabled=false`，未打开任何进化写路径。
 
-M0 的真实群标识、管理员标识、配额、通知时段和发布仓库仍待运行态确认；在这些值确认前不进入 M3，也不打开 M4 的 `phase6.enabled`。
+M0 的目标群、审批管理员、@要求、Proposal 有效期和每日通知上限已确认并写入运行态；真实 openid 不写入 Git。通知时段暂按全天处理（当前还未实现时间窗限制），发布仓库沿用当前 fork 的 `Trees-23/KdmCopilot:main`。在 M1 并发专项测试和 M3 QQ 命令接线完成前，不打开 M4 的 `phase6.enabled`。
 
 ## 1. 决策摘要
 
@@ -317,10 +318,10 @@ workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → �
 
 ### M0：配置与安全基线
 
-- [ ] 确认目标 QQ group openid、审批管理员 QQ user openid、是否要求 @ 才接收 `/evolve`。
-- [ ] 将聊天 `allowFrom` 与审批 `approvalAdminOpenids` 分离；评审 `allowFrom: ["*"]` 是否应收窄。
-- [ ] 明确群内通知时段、每天配额、Proposal 有效期、是否同时私聊管理员。
-- [ ] 确认 GitHub Draft PR 的目标仓库、默认分支、CI 状态检查与部署责任人。
+- [x] 确认目标 QQ group openid、审批管理员 QQ user openid、是否要求 @ 才接收 `/evolve`。
+- [x] 将聊天 `allowFrom` 与审批 `approvalAdminOpenids` 分离；评审 `allowFrom: ["*"]` 暂保持不变。
+- [x] 明确群内通知时段、每天配额、Proposal 有效期、是否同时私聊管理员；当前按全天、每天 12 条、720 分钟有效期、不额外私聊处理。
+- [x] 确认 GitHub Draft PR 的目标仓库、默认分支、CI 状态检查与部署责任人；沿用 `Trees-23/KdmCopilot:main`、现有 CI 和审批管理员负责确认。
 - [x] 记录当前 Gateway 构建标识、镜像、运行根目录和当前 Phase 6 关闭状态，作为回滚基线。
 
 完成条件：所有标识和策略通过运行态配置注入，Git 不含真实 openid、token 或 secret。

@@ -470,13 +470,13 @@ class Phase6EvolutionConfig(Base):
         serialization_alias="commandRequireMention",
     )
     proposal_ttl_minutes: int = Field(
-        default=15,
+        default=720,
         ge=1,
         validation_alias=AliasChoices("proposalTtlMinutes", "proposal_ttl_minutes"),
         serialization_alias="proposalTtlMinutes",
     )
     max_notifications_per_group_per_day: int = Field(
-        default=3,
+        default=12,
         ge=1,
         validation_alias=AliasChoices(
             "maxNotificationsPerGroupPerDay", "max_notifications_per_group_per_day"
