@@ -2469,20 +2469,20 @@ Phase 0～Phase 5 已完成并记录证据；Phase 6 尚未开始。
 | P4-T09 | [x] | 2026-09-26 | e7c2d8c6 | Phase 4 聚焦测试 | `skill_revisions.status=staging` | candidate 不改 current |
 | P4-T10 | [x] | 2026-09-26 | e7c2d8c6 | 角色矩阵与 fail-closed 测试 | `policy.py` | maintenance/evaluation 高风险工具拒绝 |
 | P4-T11 | [x] | 2026-09-26 | e7c2d8c6 | 5 聚焦 + 305 回归；ruff 通过 | 本节 DoD | Phase 4 完成 |
-| P5-T01 | [x] | 2026-09-26 | 待提交 | outcome 分类测试 | `derivation.py` | 保守归一化 |
-| P5-T02 | [x] | 2026-09-26 | 待提交 | Case candidate 测试 | `cases`、`wiki_pages` | staging candidate |
-| P5-T03 | [x] | 2026-09-26 | 待提交 | Skill revision 事实源边界测试 | `skill_revisions` | 不改 current |
-| P5-T04 | [x] | 2026-09-26 | 待提交 | EvalPack draft/schema 测试 | `eval_packs` | draft + hash |
-| P5-T05 | [x] | 2026-09-26 | 待提交 | 独立 reviewer 拒绝/封存测试 | `seal_eval_pack` | actor 分离 |
-| P5-T06 | [x] | 2026-09-26 | 待提交 | fixture 清理测试 | `replay_cases` | 临时目录自动清理 |
-| P5-T07 | [x] | 2026-09-26 | 待提交 | baseline run 测试 | `create_eval_run` | hash 封存 |
-| P5-T08 | [x] | 2026-09-26 | 待提交 | candidate/逐题 replay 测试 | `eval_case_results` | evidence 写入 |
-| P5-T09 | [x] | 2026-09-26 | 待提交 | judge/score 测试 | `record_case_result` | 独立 judge |
-| P5-T10 | [x] | 2026-09-26 | 待提交 | replay consistency 测试 | `replay_consistency` | 两次独立回放 |
-| P5-T11 | [x] | 2026-09-26 | 待提交 | holdout gate 测试 | `evaluate_gate` | 不自动发布 |
-| P5-T12 | [x] | 2026-09-26 | 待提交 | 成本/延迟/安全 gate | `evaluate_gate` | 15%/20% 阈值 |
-| P5-T13 | [x] | 2026-09-26 | 待提交 | staging 与确认边界 | `skill_propose`、gate | 需用户确认 |
-| P5-T14 | [x] | 2026-09-26 | 待提交 | 6 聚焦 + 310 回归；ruff 通过 | 本节 DoD | Phase 5 完成 |
+| P5-T01 | [x] | 2026-09-26 | f2ba98ee | outcome 分类测试 | `derivation.py` | 保守归一化 |
+| P5-T02 | [x] | 2026-09-26 | f2ba98ee | Case candidate 测试 | `cases`、`wiki_pages` | staging candidate |
+| P5-T03 | [x] | 2026-09-26 | f2ba98ee | Skill revision 事实源边界测试 | `skill_revisions` | 不改 current |
+| P5-T04 | [x] | 2026-09-26 | f2ba98ee | EvalPack draft/schema 测试 | `eval_packs` | draft + hash |
+| P5-T05 | [x] | 2026-09-26 | f2ba98ee | 独立 reviewer 拒绝/封存测试 | `seal_eval_pack` | actor 分离 |
+| P5-T06 | [x] | 2026-09-26 | f2ba98ee | fixture 清理测试 | `replay_cases` | 临时目录自动清理 |
+| P5-T07 | [x] | 2026-09-26 | f2ba98ee | baseline run 测试 | `create_eval_run` | hash 封存 |
+| P5-T08 | [x] | 2026-09-26 | f2ba98ee | candidate/逐题 replay 测试 | `eval_case_results` | evidence 写入 |
+| P5-T09 | [x] | 2026-09-26 | f2ba98ee | judge/score 测试 | `record_case_result` | 独立 judge |
+| P5-T10 | [x] | 2026-09-26 | f2ba98ee | replay consistency 测试 | `replay_consistency` | 两次独立回放 |
+| P5-T11 | [x] | 2026-09-26 | f2ba98ee | holdout gate 测试 | `evaluate_gate` | 不自动发布 |
+| P5-T12 | [x] | 2026-09-26 | f2ba98ee | 成本/延迟/安全 gate | `evaluate_gate` | 15%/20% 阈值 |
+| P5-T13 | [x] | 2026-09-26 | f2ba98ee | staging 与确认边界 | `skill_propose`、gate | 需用户确认 |
+| P5-T14 | [x] | 2026-09-26 | f2ba98ee | 6 聚焦 + 310 回归；ruff 通过 | 本节 DoD | Phase 5 完成 |
 | P6-T01 | [ ] |  |  |  |  |  |
 | P6-T02 | [ ] |  |  |  |  |  |
 | P6-T03 | [ ] |  |  |  |  |  |
