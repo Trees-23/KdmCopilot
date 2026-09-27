@@ -11,7 +11,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 from zoneinfo import ZoneInfo
 
 from nanobot.memory.db import connect_memory_db
@@ -20,6 +20,7 @@ from nanobot.memory.proposal_repository import (
     ProposalConflict,
     ProposalRepository,
 )
+from nanobot.memory.publish_gate import issue_publish_confirmation, publish_proposal
 from nanobot.memory.skill_adoption import adopt_workspace_proposal, rollback_workspace_proposal
 
 
@@ -27,6 +28,15 @@ from nanobot.memory.skill_adoption import adopt_workspace_proposal, rollback_wor
 class EvolutionCommandResult:
     content: str
     handled: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class PublishCallbacks:
+    """Explicit CI/merge/deploy hooks for a personal Overlay publish."""
+
+    ci_passed: Callable[[str], bool]
+    merge: Callable[[str, str], str]
+    deploy: Callable[[str], str]
 
 
 def _format_beijing_time(value: str | None) -> str:
@@ -46,9 +56,10 @@ def _format_beijing_time(value: str | None) -> str:
 class EvolutionCommandService:
     """Authorize and execute one textual ``/evolve`` command."""
 
-    def __init__(self, workspace: str, phase6_config: Any):
+    def __init__(self, workspace: str, phase6_config: Any, *, publish_callbacks: PublishCallbacks | None = None):
         self.workspace = str(workspace)
         self.config = phase6_config
+        self.publish_callbacks = publish_callbacks
 
     def _groups(self) -> set[str]:
         cfg = getattr(self.config, "evolution", self.config)
@@ -77,7 +88,7 @@ class EvolutionCommandService:
             raise PermissionError("请先 @机器人后再执行 /evolve 命令")
         actor = str(metadata.get("sender_openid") or metadata.get("sender_id") or "") or None
         if mutating and actor not in self._admins():
-            raise PermissionError("只有配置的审批管理员可以批准或拒绝 Proposal")
+            raise PermissionError("只有配置的审批管理员可以执行变更操作")
         return group, actor
 
     def _open(self) -> sqlite3.Connection:
@@ -92,13 +103,14 @@ class EvolutionCommandService:
     def handle(self, args: str, *, metadata: Mapping[str, Any]) -> EvolutionCommandResult:
         tokens = args.strip().split(maxsplit=3)
         action = tokens[0].lower() if tokens else "status"
-        if action not in {"status", "list", "review", "approve", "reject", "rollback"}:
+        if action not in {"status", "list", "review", "approve", "reject", "rollback", "publish"}:
             return EvolutionCommandResult(
                 "用法：/evolve status | list [pending|recent] | review <proposal-id> | "
-                "approve <proposal-id> <code> | reject <proposal-id> <reason> | rollback <proposal-id> <code>"
+                "approve <proposal-id> <code> | reject <proposal-id> <reason> | "
+                "rollback <proposal-id> <code> | publish <proposal-id> [code]"
             )
 
-        mutating = action in {"approve", "reject", "rollback"}
+        mutating = action in {"approve", "reject", "rollback", "publish"}
         try:
             group, actor = self._require_scope(metadata, mutating=mutating)
         except PermissionError as exc:
@@ -134,6 +146,47 @@ class EvolutionCommandService:
             record = repo.get(proposal_id)
             if record is None or record.workspace != self.workspace:
                 return EvolutionCommandResult("未找到该 Proposal，或它不属于当前工作区。")
+
+            if action == "publish":
+                evolution = getattr(self.config, "evolution", self.config)
+                if not bool(getattr(evolution, "publish_enabled", False)):
+                    return EvolutionCommandResult("发布能力当前关闭，未签发二次确认码。")
+                if record.target != "git_pr_proposal" or record.status not in {"pr_created", "published"}:
+                    return EvolutionCommandResult("发布拒绝：仅允许个人 Overlay 的 pr_created Proposal。")
+                if record.status == "published":
+                    return EvolutionCommandResult(f"Proposal {proposal_id} 已发布（幂等结果）。")
+                if len(tokens) < 3:
+                    challenge = issue_publish_confirmation(
+                        connection, proposal_id, actor=actor or "unknown",
+                        ttl_minutes=int(getattr(evolution, "proposal_ttl_minutes", 720)),
+                    )
+                    if challenge.status == "issued":
+                        expires = _format_beijing_time(challenge.expires_at)
+                        return EvolutionCommandResult(
+                            "群内二次发布确认已签发\n"
+                            f"Proposal：{proposal_id}\n"
+                            f"确认码：{challenge.code}\n"
+                            f"有效期：{expires}\n"
+                            f"请由同一管理员 @机器人执行：/evolve publish {proposal_id} <确认码>"
+                        )
+                    if challenge.status == "idempotent":
+                        return EvolutionCommandResult(
+                            f"该 Proposal 已签发过二次确认码（有效期：{_format_beijing_time(challenge.expires_at)}）。"
+                        )
+                    return EvolutionCommandResult(f"发布确认失败：{challenge.reason or challenge.status}")
+                if self.publish_callbacks is None:
+                    return EvolutionCommandResult("发布失败：个人 Gateway 发布回调尚未配置。")
+                callbacks = self.publish_callbacks
+                result = publish_proposal(
+                    connection, proposal_id, actor=actor or "unknown", code=tokens[2], config=self.config,
+                    ci_passed=bool(callbacks.ci_passed(proposal_id)), merge=callbacks.merge,
+                    deploy=callbacks.deploy,
+                )
+                if result.status == "published":
+                    return EvolutionCommandResult(
+                        f"Proposal {proposal_id} 已发布到个人 Gateway（状态：published）。"
+                    )
+                return EvolutionCommandResult(f"发布失败：{result.reason or result.status}")
 
             if action == "review":
                 expires = _format_beijing_time(record.confirmation_expires_at)
@@ -218,4 +271,4 @@ class EvolutionCommandService:
             connection.close()
 
 
-__all__ = ["EvolutionCommandResult", "EvolutionCommandService"]
+__all__ = ["EvolutionCommandResult", "EvolutionCommandService", "PublishCallbacks"]
