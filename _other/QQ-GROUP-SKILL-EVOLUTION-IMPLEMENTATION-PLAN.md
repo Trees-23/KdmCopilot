@@ -1,28 +1,28 @@
 # QQ 群内 Skill 进化、主动通知与人工发布实施方案
 
-> 文档状态：实施方案草案
+> 文档状态：分阶段实施中
 >
 > 更新时间：2026-09-27
 >
 > 范围：在已完成的五层记忆 Phase 0～6 之上，为当前 nanobot 的官方 QQ 群机器人增加“自动评审 → 主动推送 → 群内交互确认 → 受控升级/发布”的完整闭环。
 >
-> 本文不启用 Phase 6、不修改 QQ 配置、不创建 GitHub PR、不发布任何 Skill。它是后续功能分支的实施与验收依据。
+> 当前运行态已按阶段打开 M4/M5；采用、建 PR 和发布仍关闭。本文同步记录实施与验收状态，不代表自动采用或自动发布已授权。
 
 ## 当前实施状态
 
-截至 2026-09-26，M0 已完成，M1 已完成，M2 已完成离线编排第一工作单元；Phase 6 仍保持关闭：
+截至 2026-09-27，M0～M3 已完成，M4/M5 已按用户确认完成加速验收并开启对应运行态：
 
-- 已加入独立的 `shadow_mode`、主动通知、采用和发布开关，默认全部关闭；当前运行态仍未打开 Phase 6。
+- 已加入独立的 `shadow_mode`、主动通知、采用和发布开关；当前运行态为 `phase6.enabled=true`、通知开启、采用/发布关闭。
 - 已确认 Proposal 确认码有效期为 12 小时（720 分钟），每群每日主动通知上限为 12 条。
 - 已加入 `0002_phase6_proposals` 数据库迁移，覆盖 Proposal、通知投递、管理员动作和群范围四类持久化对象。
 - 已实现 Proposal 状态转移、版本 CAS、确认码哈希与过期、管理员动作幂等、通知去重和群范围写入的本地仓储。
 - 已将现有 `make_proposal()` 接入可选持久化入口 `persist_proposal()`；它只写入 `eligible_for_confirmation`，不会采用 Skill、创建 PR 或发布。
-- 已完成相关单元测试、配置测试、memory 测试和全量 pytest；M3 已开始接入确定性 QQ 命令，但主动通知器和真实群验收仍未完成。
+- 已完成相关单元测试、配置测试、memory 测试和全量 pytest；M3 命令、通知器和真实 QQ 验收已完成。
 - 已完成显式调用的离线编排器：workspace lease、Trace 低风险筛选、失败 Case、EvalPack、独立 fixture 回放、Gate 和 Proposal 持久化；Phase 6 关闭时无副作用。
 - 已完成持久化的显式调度状态、群通知配额、Delivery claim/retry/dead-letter 状态；尚未接入 QQ 投递器和 dead-letter 主动告警。
-- 回滚基线已记录：Gateway 构建 `git-f7583e93e78a`，健康检查通过；`phase6.enabled=false`，未打开任何进化写路径。最近一次重建因网络下载 `packaging==26.3` 超时失败，未替换长期 Gateway。
+- 当前 Gateway 构建 `git-1140027b2d39`，健康检查通过；M4/M5 只允许评审和主动通知，采用/发布路径仍关闭。
 
-M0 的目标群、审批管理员、@要求、Proposal 有效期和每日通知上限已确认并写入运行态；真实 openid 不写入 Git。通知时段暂按全天处理（当前还未实现时间窗限制），发布仓库沿用当前 fork 的 `Trees-23/KdmCopilot:main`。在 M3 QQ 命令接线完成前，不打开 M4 的 `phase6.enabled`。
+M0 的目标群、审批管理员、@要求、Proposal 有效期和每日通知上限已确认并写入运行态；真实 openid 不写入 Git。通知时段暂按全天处理（当前还未实现时间窗限制），发布仓库沿用当前 fork 的 `Trees-23/KdmCopilot:main`。M4/M5 已完成加速验收，后续仍不得越过 M6 的人工采用门禁。
 
 ## 1. 决策摘要
 
@@ -355,26 +355,26 @@ workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → �
 - [x] 完成主动通知投递的真实 QQ 验收；临时测试确认真实群已收到通知，测试后已关闭通知开关并清理测试 Proposal。
 - [x] 修复通知正文确认码有效期的展示：统一转换为北京时间（`YYYY年MM月DD日 HH:MM:SS（北京时间）`），避免直接显示 UTC ISO 时间。
 
-当前进度：M3 已完成通知器、命令与授权的本地协议单元测试，并接入 Gateway 的独立投递循环；真实 QQ 命令安全验收和一次性主动通知投递验收均已完成。主动通知测试发现并修复了 UTC ISO 时间直接展示的问题。M4 已开始影子观察；当前 `phase6.enabled=true`、`shadow_mode=true`，主动通知、采用和发布仍关闭。周期调度仍保持显式调用，因此 7 天观察完成前不能进入 M5。
+当前进度：M3 已完成通知器、命令与授权的本地协议单元测试，并接入 Gateway 的独立投递循环；真实 QQ 命令安全验收和主动通知投递验收均已完成。M4 已通过加速影子验收，M5 已通过加速通知验收；当前 `phase6.enabled=true`、`shadow_mode=false`、主动通知开启，采用和发布仍关闭。周期调度仍保持显式调用，未宣称自然日 7 天观察。
 
 ### M4：开启自进化开关——影子模式
 
 这是“打开 Phase 6”的独立实施阶段，不与代码完成或 QQ 接线混在一起。只有 M0～M3 全部通过后才能执行。
 
 - [x] 将 `phase6.enabled` 设为 `true`，同时保持 `shadow_mode=true`、`notifications_enabled=false`、`adoption_enabled=false`、`publish_enabled=false`（2026-09-27 已在长期 Gateway 生效）。
-- [ ] 运行至少 7 天或完成约定数量的真实周期，只允许生成内部评测证据和 Proposal，不允许 QQ 主动通知、文件写入、建 PR 或发布。
-- [ ] 核对候选数量、Gate 通过率、敏感任务过滤、回归暂停、kill switch 和资源增长。
-- [ ] 人工检查 Proposal 质量和误报原因，确认没有跨群数据进入候选。
+- [x] 按用户确认执行加速观察：在隔离临时工作区快进等价 168 小时、85 个周期；只生成内部证据，不允许 QQ 主动通知、Skill 文件写入、建 PR 或发布。
+- [x] 核对候选数量、敏感任务/写操作过滤、回归暂停、kill switch 和调度状态；85 个周期均完成，回归阈值触发后后续周期保持暂停。
+- [x] 人工检查加速测试结果：候选仅来自低风险只读重复任务，未产生跨群数据或生产 Proposal；该结果是加速验收，不等同自然日运行 7 天。
 
-完成条件：影子运行期间无越权写入、无跨群泄露、无未处理 dead-letter；管理员签字后才可进入 M5。失败则关闭 `phase6.enabled`，保留证据用于修复。
+完成条件：加速影子验收无越权写入、无跨群泄露、无未处理 dead-letter；已按用户确认进入 M5。若后续真实运行发现异常，应关闭 `phase6.enabled` 并保留证据用于修复。
 
 ### M5：开启 QQ 主动通知
 
-- [ ] 保持 `phase6.enabled=true`，开启 `notifications_enabled=true`，其他采用/发布开关继续关闭。
-- [ ] 只向 `notification_groups` 推送 `eligible_for_confirmation`，通知限流、去重、重试和过期均生效。
-- [ ] 验收群内 `/evolve review`、错误权限、错误码、重复通知和通知失败恢复。
+- [x] 保持 `phase6.enabled=true`，关闭 `shadow_mode`，开启 `notifications_enabled=true`，采用/发布开关继续关闭（2026-09-27 已在长期 Gateway 生效）。
+- [x] 加速验收只向 `notification_groups` 推送 `eligible_for_confirmation`；通知限流、去重、重试和过期已有聚焦测试覆盖。
+- [x] 真实 QQ 群完成一次 M5 主动通知投递，通知状态为 `sent`，正文确认有效期显示为北京时间；测试 Proposal 已精准清理。群命令、错误权限、错误码、重复通知和失败恢复已有真实/聚焦测试证据。
 
-完成条件：连续 7 天通知可追溯且无越权；群内只能看到 Proposal，不能因回复通知而自动升级。
+完成条件：本次按用户确认采用加速验收，已验证通知可追溯且不会自动升级；未宣称连续自然日 7 天运行。群内只能看到 Proposal，不能因回复通知而自动升级。
 
 ### M6：开启人工批准后的 workspace 采用
 
@@ -447,7 +447,7 @@ phase6.kill_switch                      # 立即禁止所有自动化写路径
 
 开关的实际启用顺序必须遵循 M4～M8：先只开 `phase6.enabled` 做影子评审，再开通知，再开人工批准后的 workspace 采用，再开 Draft PR，最后才允许二次确认后的发布。单独打开 `phase6.enabled` 不会授予 Agent 自己修改正式 Skill、合并 PR 或部署的权限。
 
-当前运行态固定为：`phase6.enabled=false`、`shadow_mode`/通知/采用/发布均不启用。本文只规定未来配置目标，不在本次文档提交中修改运行态配置。
+当前运行态为：`phase6.enabled=true`、`shadow_mode=false`、`notifications_enabled=true`、`adoption_enabled=false`、`publish_enabled=false`。采用、Draft PR 和发布仍需后续独立阶段及确认。
 
 `kill_switch` 不撤销已采用版本，但会停止新的扫描、通知、采用、PR 创建和发布。回滚必须由管理员显式命令完成，并使用现有 revision 证据。
 
