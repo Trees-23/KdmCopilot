@@ -378,12 +378,12 @@ workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → �
 
 ### M6：开启人工批准后的 workspace 采用
 
-- [ ] 开启 `adoption_enabled=true`，仅允许显式 workspace Skill 白名单。
-- [ ] 实现原子采用器、revision 对比、落盘 hash 校验和错误回滚。
-- [ ] 实现 `/evolve rollback`，只能恢复已知 revision，必须二次确认码。
-- [ ] 验证新 Skill 在下一条独立群消息中生效，当前执行 turn 不受中途替换影响。
+- [ ] 开启 `adoption_enabled=true`，仅允许显式 workspace Skill 白名单（当前运行态仍关闭，白名单为空）。
+- [x] 实现原子采用器、revision 对比、落盘 hash 校验和错误回滚；增加 `workspaceSkillAllowlist` 安全门禁。
+- [x] 实现 `/evolve rollback <proposal-id> <code>`，仅管理员可调用，并恢复已知 baseline revision。
+- [ ] 在长期 Gateway 的隔离测试 Skill 上验证新 Skill 在下一条独立群消息中生效，当前执行 turn 不受中途替换影响。
 
-完成条件：真实 Gateway 场景中可以对测试 Skill 采用、验证、回滚，且不改变长期 workspace 的无关文件。共享/代码 Skill 仍不可自动建 PR 或发布。
+当前进度：M6 的采用代码和本地原子/CAS/回滚测试已完成；尚未打开采用开关，也未修改长期 workspace Skill。完成条件仍需配置一个明确测试 Skill 白名单并完成长期 Gateway 隔离场景验收。共享/代码 Skill 仍不可自动建 PR 或发布。
 
 ### M7：开启共享 Skill Draft PR
 

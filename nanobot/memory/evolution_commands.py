@@ -20,6 +20,7 @@ from nanobot.memory.proposal_repository import (
     ProposalConflict,
     ProposalRepository,
 )
+from nanobot.memory.skill_adoption import adopt_workspace_proposal, rollback_workspace_proposal
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,13 +92,13 @@ class EvolutionCommandService:
     def handle(self, args: str, *, metadata: Mapping[str, Any]) -> EvolutionCommandResult:
         tokens = args.strip().split(maxsplit=3)
         action = tokens[0].lower() if tokens else "status"
-        if action not in {"status", "list", "review", "approve", "reject"}:
+        if action not in {"status", "list", "review", "approve", "reject", "rollback"}:
             return EvolutionCommandResult(
                 "用法：/evolve status | list [pending|recent] | review <proposal-id> | "
-                "approve <proposal-id> <code> | reject <proposal-id> <reason>"
+                "approve <proposal-id> <code> | reject <proposal-id> <reason> | rollback <proposal-id> <code>"
             )
 
-        mutating = action in {"approve", "reject"}
+        mutating = action in {"approve", "reject", "rollback"}
         try:
             group, actor = self._require_scope(metadata, mutating=mutating)
         except PermissionError as exc:
@@ -165,10 +166,38 @@ class EvolutionCommandService:
                 except (ProposalConflict, ValueError) as exc:
                     return EvolutionCommandResult(f"批准失败：{exc}")
                 adoption = bool(getattr(getattr(self.config, "evolution", self.config), "adoption_enabled", False))
+                adopted = None
+                if adoption and result.status == "approved":
+                    adopted = adopt_workspace_proposal(
+                        connection, self.workspace, proposal_id, actor=actor or "unknown", config=self.config
+                    )
+                if adopted is not None and adopted.status == "adopted":
+                    return EvolutionCommandResult(
+                        f"Proposal {proposal_id} 已批准并采用 Skill（状态：adopted）。"
+                    )
+                if adopted is not None and adopted.status not in {"disabled", "adopted"}:
+                    return EvolutionCommandResult(
+                        f"Proposal {proposal_id} 已批准，但采用失败：{adopted.reason or adopted.status}。"
+                    )
                 return EvolutionCommandResult(
                     f"Proposal {proposal_id} 已记录管理员批准（状态：{result.status}）。"
                     + ("采用流程已启用，将由受控后台继续处理。" if adoption else "当前采用开关关闭，未修改 Skill。")
                 )
+
+            if action == "rollback":
+                if len(tokens) < 3:
+                    return EvolutionCommandResult("用法：/evolve rollback <proposal-id> <code>")
+                result = rollback_workspace_proposal(
+                    connection,
+                    self.workspace,
+                    proposal_id,
+                    actor=actor or "unknown",
+                    code=tokens[2],
+                    config=self.config,
+                )
+                if result.status != "rolled_back":
+                    return EvolutionCommandResult(f"回滚失败：{result.reason or result.status}")
+                return EvolutionCommandResult(f"Proposal {proposal_id} 已回滚（状态：rolled_back）。")
 
             reason = tokens[2] if len(tokens) > 2 else "未提供原因"
             message_id = str(metadata.get("message_id") or "")
