@@ -430,6 +430,7 @@ workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → �
 
 - [x] 完成本地二次确认门禁：独立确认码、Proposal 状态/CAS、CI 通过条件、kill switch 双重拦截；合并和部署只能通过显式受控回调执行。
 - [x] 接通群内 `/evolve publish` 协议：只允许已配置 `approvalAdminOpenids` 的管理员在已配置通知群中对个人 Overlay 的 `pr_created` Proposal 发起二次确认；必须 @机器人，普通成员、错误群、错误码、过期码和公共仓库 PR 一律拒绝。协议已完成本地测试并部署到 Gateway，`publish_enabled` 仍保持关闭。
+- [x] 增加私有 Overlay 远端校验适配器：通过受控 `gh` 调用核对唯一 PR、仓库、`main` 基线、Proposal 分支、head SHA 和全部 CI 检查；真实 PR #1 已只读验收通过，未执行 ready、合并或部署。
 - [ ] `publish_enabled=true` 只在明确的发布窗口开启，并且同时检查 CI 成功、PR 状态、Overlay 分支、候选 hash、Proposal 未过期和当前 Gateway 基线。
 - [ ] 合并后只重建当前用户的长期 Gateway，记录构建标识、Overlay commit、PR、CI、部署和回滚证据；不得执行公共 `main` 合并。
 - [ ] 验证发布失败、构建错配、回滚和 kill switch 行为；任何失败都保留 PR、构建和审计证据，不静默重试。
