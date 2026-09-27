@@ -22,6 +22,7 @@
 - 已完成持久化的显式调度状态、群通知配额、Delivery claim/retry/dead-letter 状态；尚未接入 QQ 投递器和 dead-letter 主动告警。
 - 当前长期 Gateway 暂未在线：最近一次 M9 重建受到 WSL/Docker 构建中断影响，镜像关键文件损坏并已停止；在真实发布验收前必须重新构建并核对新的 build ref/health。运行配置仍保持采用/发布关闭。
 - 已完成原 M8 本地发布门禁（现归入新 M9 前置能力）：二次确认、CI 条件、CAS、kill switch 和受控回调均已测试；真实远端发布尚未开启。
+- M9 本地端到端模拟验收已完成：二次确认 → CI → 私有 Overlay 合并回调 → 当前 Gateway 部署回调；`pytest tests/memory -q` 当前为 103 passed。真实 Gateway 重建仍受代理 `172.22.208.1:7890` reset 阻断，未以损坏镜像作为运行版本。
 
 M0 的目标群、审批管理员、@要求、Proposal 有效期和每日通知上限已确认并写入运行态；真实 openid 不写入 Git。通知时段暂按全天处理（当前还未实现时间窗限制）。公共 `Trees-23/KdmCopilot:main` 只承载通用框架，不作为个人 Skill 进化的发布目标；个人 Skill 发布目标改为独立的私有 Overlay 仓库。M4/M5 已完成加速验收，后续仍不得越过人工门禁。
 
