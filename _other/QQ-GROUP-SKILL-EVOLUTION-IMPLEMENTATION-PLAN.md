@@ -4,7 +4,7 @@
 >
 > 更新时间：2026-09-27
 >
-> 范围：在已完成的五层记忆 Phase 0～6 之上，为当前 nanobot 的官方 QQ 群机器人增加“自动评审 → 主动推送 → 群内交互确认 → 受控升级/发布”的完整闭环。
+> 范围：在已完成的五层记忆 Phase 0～6 之上，为当前 nanobot 的官方 QQ 群机器人增加“自动评审 → 主动推送 → 群内交互确认 → 仅对个人部署生效的受控升级/发布”闭环。
 >
 > 当前运行态已按阶段打开 M4/M5；采用、建 PR 和发布仍关闭。本文同步记录实施与验收状态，不代表自动采用或自动发布已授权。
 
@@ -21,8 +21,9 @@
 - 已完成显式调用的离线编排器：workspace lease、Trace 低风险筛选、失败 Case、EvalPack、独立 fixture 回放、Gate 和 Proposal 持久化；Phase 6 关闭时无副作用。
 - 已完成持久化的显式调度状态、群通知配额、Delivery claim/retry/dead-letter 状态；尚未接入 QQ 投递器和 dead-letter 主动告警。
 - 当前 Gateway 构建 `git-7e92f4184417`，健康检查通过；长期运行态仍只允许评审和主动通知，采用/发布路径仍关闭。
+- 已完成原 M8 本地发布门禁（现归入新 M9 前置能力）：二次确认、CI 条件、CAS、kill switch 和受控回调均已测试；真实远端发布尚未开启。
 
-M0 的目标群、审批管理员、@要求、Proposal 有效期和每日通知上限已确认并写入运行态；真实 openid 不写入 Git。通知时段暂按全天处理（当前还未实现时间窗限制），发布仓库沿用当前 fork 的 `Trees-23/KdmCopilot:main`。M4/M5 已完成加速验收，后续仍不得越过 M6 的人工采用门禁。
+M0 的目标群、审批管理员、@要求、Proposal 有效期和每日通知上限已确认并写入运行态；真实 openid 不写入 Git。通知时段暂按全天处理（当前还未实现时间窗限制）。公共 `Trees-23/KdmCopilot:main` 只承载通用框架，不作为个人 Skill 进化的发布目标；个人 Skill 发布目标改为独立的私有 Overlay 仓库。M4/M5 已完成加速验收，后续仍不得越过人工门禁。
 
 ## 1. 决策摘要
 
@@ -41,12 +42,14 @@ M0 的目标群、审批管理员、@要求、Proposal 有效期和每日通知�
         ↓
 管理员群命令审阅、同意或拒绝
         ↓
-workspace Skill 原子采用 / 共享 Skill 创建 Draft PR
+workspace Skill 原子采用 / 私有 Overlay 创建 Draft PR
         ↓
-（仅代码或共享 Skill）管理员二次确认后合并与部署
+管理员二次确认后仅更新个人 Overlay 和个人 Gateway
 ```
 
 核心结论：自动评审可以自动化，正式采用和发布不可自动化。评测通过的唯一含义是 `eligible_for_confirmation`，不是自动切换当前 Skill，也不是自动创建、合并或发布 GitHub PR。
+
+隔离原则：公共主分支与个人进化分离。Draft PR 本身不会改变 `main`，但任何合并到公共 `main` 的个性化 Skill 都会影响所有下游用户，因此本方案禁止把个人 Skill 合并到公共 `Trees-23/KdmCopilot:main`。个人 Skill 只能进入个人/私有 Overlay 仓库，并只部署到当前用户的 Gateway。
 
 当前执行位置：M0～M3 已通过并记录验收证据；已于 2026-09-27 开始 M4 影子模式。M4 只打开 `phase6.enabled` 和 `shadow_mode`，主动通知、采用和发布仍关闭。
 
@@ -73,7 +76,7 @@ workspace Skill 原子采用 / 共享 Skill 创建 Draft PR
 2. 没有周期调度器把“Trace → 候选 → EvalPack → EvalRun → Proposal”串起来。
 3. 没有系统级 QQ 通知器、通知重试记录或目标群配置。
 4. 没有 `/evolve` 命令、管理员权限、一次性确认码和幂等确认机制。
-5. 没有 workspace Skill 原子采用器，也没有从已确认 Proposal 创建 GitHub Draft PR 的发布适配器。
+5. 没有把个人 Skill Overlay 接入远端仓库和个人 Gateway 部署；当前只有本地 Draft PR 适配器与本地发布门禁。
 6. 官方 QQ 当前配置使用 `allowFrom: ["*"]`。这只表示所有成员可向 Agent 发消息，绝不能当作升级审批权限。
 
 ### 2.3 已确认的部署事实
@@ -82,6 +85,7 @@ workspace Skill 原子采用 / 共享 Skill 创建 Draft PR
 - 当前启用的是官方 `qq` 通道，不是 NapCat；配置未显式设置 `phase6`，因此仍使用默认关闭状态。
 - 官方 QQ 通道源码有群收发路径，群消息路由依赖 QQ 的 `group_openid` 与出站元数据 `qq_chat_type=group`。
 - 当前配置文件不保存唯一目标群标识；上线前必须由管理员明确配置允许感知与允许通知的群。
+- 当前尚未创建个人 Skill Overlay 仓库；在真实 M7/M8 之前，必须先由用户创建私有仓库并确认默认分支、CI 与部署来源。
 
 ## 3. 目标范围与非目标
 
@@ -91,7 +95,7 @@ workspace Skill 原子采用 / 共享 Skill 创建 Draft PR
 2. 在评测通过后，向指定 QQ 群主动发送一条可审阅、带证据编号的 Proposal 通知。
 3. 允许指定 QQ 管理员在群内查询、审阅、批准、拒绝和回滚 Proposal。
 4. workspace Skill 经过一次批准后以原子方式写入规范 `SKILL.md`，下一轮 Agent 自动读取。
-5. builtin/shared/entrypoint/MCP Skill 经过批准后创建 Draft PR；合并与部署需要独立的第二次批准。
+5. builtin/shared/entrypoint/MCP Skill 经过批准后只向个人 Skill Overlay 创建 Draft PR；合并与部署需要独立的第二次批准，公共主分支永不作为个人 Skill 发布目标。
 6. 对通知、命令、授权判定、版本 CAS、采用、PR、发布和回滚生成结构化审计证据。
 
 ### 3.2 明确不做
@@ -101,6 +105,7 @@ workspace Skill 原子采用 / 共享 Skill 创建 Draft PR
 - 不因评测通过自动修改 `current_revision_id`、覆盖 `SKILL.md`、创建合并提交或部署 Gateway。
 - 不让普通群成员拥有审批或回滚权限。
 - 不将 QQ AppSecret、GitHub Token、群 openid、管理员 openid 写入 Git、审计正文或群通知。
+- 不把个人 Skill、个人配置或个人运行策略合并到公共 `Trees-23/KdmCopilot:main`。
 - 不在首版实现 QQ 内联按钮；后续可在已有文本状态机稳定后独立增加。
 
 ## 4. 目标架构
@@ -135,6 +140,22 @@ Trace / Case ──→ Phase6 Orchestrator ──→ Proposal Repository │
 ```
 
 所有自动化写入均在后台受控服务完成。普通 Agent、维护评测角色和 QQ 群成员都不直接拥有文件写入、Git 或网络发布权限。
+
+### 4.1 公共核心与个人 Overlay 隔离
+
+```text
+公共仓库 Trees-23/KdmCopilot:main
+  ├─ 通用 Agent、记忆、QQ、Proposal 和安全门禁代码
+  ├─ 默认关闭的通用能力
+  └─ 不接收个人 Skill、个人配置、个人群策略
+
+个人私有 Skill Overlay 仓库
+  ├─ 仅当前用户的 Skill candidate/revision
+  ├─ 个人 Draft PR、CI 和发布记录
+  └─ 只部署到当前用户的 nanobot-gateway
+```
+
+公共仓库可以继续正常发布稳定版本；个人 Overlay 的合并、回滚和部署不会改变公共 `main`。如果暂时没有私有仓库，必须使用受保护的长期个人分支并禁止将其作为公共发布源；长期方案仍优先使用独立私有仓库。
 
 ## 5. 群内感知模型
 
@@ -192,7 +213,7 @@ draft
 | `/evolve status` | 是 | 是 | 无 |
 | `/evolve list [pending\|recent]` | 是 | 是 | 无 |
 | `/evolve review <proposal-id>` | 是 | 是 | 无；只显示脱敏证据摘要 |
-| `/evolve approve <proposal-id> <code>` | 否 | 是 | workspace 进入采用或共享 Skill 创建 Draft PR |
+| `/evolve approve <proposal-id> <code>` | 否 | 是 | workspace 进入采用或个人 Overlay 创建 Draft PR |
 | `/evolve reject <proposal-id> <reason>` | 否 | 是 | 终止该 Proposal |
 | `/evolve publish <proposal-id> <code>` | 否 | 是 | 仅对已创建 PR 的共享/代码 Skill 触发发布流程 |
 | `/evolve rollback <skill> <revision> <code>` | 否 | 是 | 显式回滚到已有受信 revision |
@@ -290,12 +311,12 @@ tests/channels/qq/
 | Skill 来源 | `approve` 后的动作 | 是否需要重启 | `publish` |
 |---|---|---:|---|
 | workspace | 校验 hash/CAS 后原子写入 `<workspace>/skills/<name>/SKILL.md`，保留可回滚 revision | 否；下一次 Context 构建生效 | 不需要 |
-| builtin/shared | 创建独立分支、中文提交、Draft PR，并附证据链接 | 合并部署后需要 | 二次批准后才允许合并/部署 |
-| entrypoint/MCP | 创建 Draft PR 或对应包的受控发布提案 | 视部署方式而定 | 二次批准、CI 与发布检查 |
+| builtin/shared | 在个人 Overlay 创建独立分支、中文提交、Draft PR，并附证据链接 | 合并部署后需要 | 二次批准后才允许合并个人 Overlay |
+| entrypoint/MCP | 在个人 Overlay 创建 Draft PR 或对应包的受控发布提案 | 视部署方式而定 | 二次批准、CI 与个人 Gateway 发布检查 |
 
 workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → 记录 revision/CAS → 审计”的顺序。写入失败不得改变 `current_revision_id`。当前正在执行的 Agent turn 保持旧上下文；后续 turn 自动通过 `SkillsLoader` 读取新文件。
 
-共享 Skill 发布继续遵循仓库规则：在专用分支创建中文提交与 Draft PR，经过 CI 后等待 `publish` 的独立管理员确认；任何情况下不得自动合并 `main`。
+个人 Skill Overlay 发布继续遵循仓库规则：在 Overlay 专用分支创建中文提交与 Draft PR，经过 CI 后等待 `publish` 的独立管理员确认；任何情况下不得自动合并公共 `Trees-23/KdmCopilot:main`。合并后只重建当前用户的 Gateway。
 
 ## 10. 分阶段实施计划
 
@@ -312,9 +333,10 @@ workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → �
 | M4 | **开启自进化开关：影子模式** | **开启** | 关闭 | 关闭 | 关闭 | 真实运行自动评审，但不通知、不修改、不建 PR |
 | M5 | 开启主动通知 | 开启 | 开启 | 关闭 | 关闭 | 评测通过后主动推送，仍不能升级 |
 | M6 | 开启人工批准后的 workspace 采用 | 开启 | 开启 | 仅 workspace 白名单 | 关闭 | 你确认后才原子更新 Skill，可回滚 |
-| M7 | 开启共享 Skill Draft PR | 开启 | 开启 | 允许建 Draft PR | 关闭 | 你确认后建 PR，不能自动合并/部署 |
-| M8 | 开启受控发布 | 开启 | 开启 | 已批准 Proposal | **二次确认** | CI 通过且再次确认后才发布 |
-| M9 | 稳态运行与运营复盘 | 开启 | 开启 | 按白名单 | 按策略 | 监控、限流、暂停和定期复审 |
+| M7 | 个人 Overlay 仓库准备 | 开启 | 开启 | 关闭 | 关闭 | 创建隔离仓库、保护公共 main、确认 CI 与部署来源 |
+| M8 | 个人 Overlay Draft PR | 开启 | 开启 | 允许建 Draft PR | 关闭 | 只向个人 Overlay 建 PR，不能影响公共 main |
+| M9 | 个人 Overlay 受控发布 | 开启 | 开启 | 已批准 Proposal | **二次确认** | CI 通过且再次确认后只发布到个人 Gateway |
+| M10 | 稳态运行与运营复盘 | 开启 | 开启 | 按白名单 | 按策略 | 监控、限流、暂停和定期复审 |
 
 每个阶段都必须有独立验收记录。任何阶段失败都回退到上一阶段的开关状态；不能跳过 M4 直接打开通知、采用或发布。
 
@@ -323,7 +345,7 @@ workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → �
 - [x] 确认目标 QQ group openid、审批管理员 QQ user openid、是否要求 @ 才接收 `/evolve`。
 - [x] 将聊天 `allowFrom` 与审批 `approvalAdminOpenids` 分离；评审 `allowFrom: ["*"]` 暂保持不变。
 - [x] 明确群内通知时段、每天配额、Proposal 有效期、是否同时私聊管理员；当前按全天、每天 12 条、720 分钟有效期、不额外私聊处理。
-- [x] 确认 GitHub Draft PR 的目标仓库、默认分支、CI 状态检查与部署责任人；沿用 `Trees-23/KdmCopilot:main`、现有 CI 和审批管理员负责确认。
+- [ ] 创建并确认个人 Skill Overlay 私有仓库、默认分支、CI 状态检查与部署责任人；公共 `Trees-23/KdmCopilot:main` 明确排除为个人 Skill 发布目标。
 - [x] 记录当前 Gateway 构建标识、镜像、运行根目录和当前 Phase 6 关闭状态，作为回滚基线。
 
 完成条件：所有标识和策略通过运行态配置注入，Git 不含真实 openid、token 或 secret。
@@ -383,29 +405,37 @@ workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → �
 - [x] 实现 `/evolve rollback <proposal-id> <code>`，仅管理员可调用，并恢复已知 baseline revision。
 - [x] 在长期 Gateway 容器代码/运行库的隔离测试 Skill 上验证批准、下一次读取候选版本和回滚；测试文件、Proposal、Skill 记录均已清理。
 
-当前进度：M6 的采用代码、本地原子/CAS/回滚测试和一次性隔离 Gateway 验收已完成；长期运行态已恢复 `adoption_enabled=false`、白名单为空，未保留测试 Skill。M7 适配器已完成本地隔离验收，但运行态仍关闭采用/建 PR与发布开关。
+当前进度：M6 的采用代码、本地原子/CAS/回滚测试和一次性隔离 Gateway 验收已完成；长期运行态已恢复 `adoption_enabled=false`、白名单为空，未保留测试 Skill。原 M7/M8 的本地适配器和门禁已完成，但新规划的 M7 Overlay 准备、M8 真实 Overlay Draft PR、M9 个人 Gateway 发布仍未开启。
 
-### M7：开启共享 Skill Draft PR
+### M7：个人 Skill Overlay 仓库准备
 
-- [x] 实现已批准 Proposal 到专用分支、中文提交、Draft PR 的适配器（先生成本地待审分支与提交，不调用远端）。
-- [x] PR 正文自动附“改动内容、评测证据、验证结果、风险与注意事项”，仅包含脱敏后的 Proposal 元数据、数量和摘要，不泄露聊天内容。
-- [x] 本地临时 Git 仓库验收：重复执行幂等；`approve` 只创建专用分支和 Draft PR 内容，不合并、不部署、不切换当前 Skill 版本；开关关闭和 workspace Proposal 均被拒绝。
+- [ ] 用户创建独立私有 GitHub 仓库，例如 `Trees-23/KdmCopilot-skills-private`；仓库只保存个人 Skill Overlay，不保存 QQ 密钥、Token、完整聊天记录或长期运行数据库。
+- [ ] 用户保护 Overlay 的 `main` 分支，启用 CI 必须通过、禁止直接推送、禁止自动合并；公共 `Trees-23/KdmCopilot:main` 不作为个人 Skill 的 PR/发布目标。
+- [ ] 用户确认 Overlay 的默认分支、CI 检查、仓库可见性和部署责任人，并把仓库地址通过受控运行配置提供给 Gateway；Token 只能使用 GitHub CLI/环境密钥注入，不能粘贴到 QQ 或提交到 Git。
+- [ ] 实现 Overlay 文件布局、candidate hash、baseline revision 与个人 Gateway 工作区之间的映射；先做只读同步演练，不改变公共仓库和当前线上 Skill。
 
-完成条件：M7 已完成本地隔离验收。当前仍未创建真实 GitHub Draft PR，`publish_enabled=false`；进入 M8 前需要单独确认远端仓库接入、CI 检查与二次发布流程。
+完成条件：公共仓库与个人 Overlay 的边界、权限、CI、回滚来源和部署目标均可审计；未完成前不打开真实 Draft PR 或 `publish_enabled`。
 
-### M8：开启受控发布
+### M8：个人 Overlay Draft PR
 
-- [x] 完成二次确认门禁的本地实现：独立确认码、Proposal 状态/CAS、CI 通过条件、kill switch 双重拦截；合并和部署只能通过显式注入的受控回调执行。
-- [ ] 开启 `publish_enabled=true`，但只接受已批准、CI 成功且未过期的 Proposal。
-- [ ] 实现 `/evolve publish` 二次确认，串联 PR 状态、CI、合并和既有发布流程。
-- [ ] 合并后按仓库规则重建长期 Gateway，并记录构建标识与场景证据。
-- [ ] 验证发布失败、构建错配、回滚和 kill switch 行为。
+- [x] 完成本地 Draft PR 适配器：已批准 Proposal 生成专用分支、中文提交和脱敏正文；重复执行幂等，不切换公共仓库版本。
+- [ ] 将适配器的远端目标改为个人 Overlay，验证 Draft PR 的 base 永远是 Overlay 分支而不是公共 `Trees-23/KdmCopilot:main`。
+- [ ] 在个人 Overlay 的临时测试 Skill 上创建一次真实 Draft PR；验证公共仓库 `main`、公共镜像、长期 Gateway 和其他用户安装包均无变化。
+- [ ] 验证 PR 正文只包含 Proposal 元数据、评测摘要、hash 和风险说明，不包含聊天正文、成员身份、完整模型输出或凭据。
 
-当前进度：M8 仅完成本地安全门禁与回调编排测试，`publish_enabled=false`；未接入真实 GitHub 合并、部署或 QQ `/evolve publish`。进入真实发布验收前，需要单独确认远端仓库、CI 状态源和部署责任边界。
+完成条件：真实 Draft PR 只存在于个人 Overlay，未合并前不改变任何运行版本；失败则关闭 Draft PR 创建开关并保留审计证据。
 
-完成条件：没有第二次确认就不能合并/部署；任何失败都保留 PR、构建和审计证据，不静默重试发布。
+### M9：个人 Overlay 受控发布
 
-### M9：稳态运行与运营复盘
+- [x] 完成本地二次确认门禁：独立确认码、Proposal 状态/CAS、CI 通过条件、kill switch 双重拦截；合并和部署只能通过显式受控回调执行。
+- [ ] 接通 `/evolve publish`，只允许管理员对个人 Overlay 的 `pr_created` Proposal 发起二次确认；普通成员、错误群、错误码、过期码和公共仓库 PR 一律拒绝。
+- [ ] `publish_enabled=true` 只在明确的发布窗口开启，并且同时检查 CI 成功、PR 状态、Overlay 分支、候选 hash、Proposal 未过期和当前 Gateway 基线。
+- [ ] 合并后只重建当前用户的长期 Gateway，记录构建标识、Overlay commit、PR、CI、部署和回滚证据；不得执行公共 `main` 合并。
+- [ ] 验证发布失败、构建错配、回滚和 kill switch 行为；任何失败都保留 PR、构建和审计证据，不静默重试。
+
+完成条件：没有第二次确认就不能合并/部署；发布只影响当前用户 Gateway，公共仓库和其他用户版本保持不变。
+
+### M10：稳态运行与运营复盘
 
 - [ ] 每周输出候选数量、Gate 通过率、通知失败率、管理员拒绝率、采用/回滚率和误报原因。
 - [ ] 超过阈值自动暂停 Phase 6，并向管理员通知暂停原因。
@@ -448,7 +478,7 @@ phase6.evolution.publish_enabled       # 是否允许处理二次发布确认，
 phase6.kill_switch                      # 立即禁止所有自动化写路径
 ```
 
-开关的实际启用顺序必须遵循 M4～M8：先只开 `phase6.enabled` 做影子评审，再开通知，再开人工批准后的 workspace 采用，再开 Draft PR，最后才允许二次确认后的发布。单独打开 `phase6.enabled` 不会授予 Agent 自己修改正式 Skill、合并 PR 或部署的权限。
+开关的实际启用顺序必须遵循 M4～M9：先只开 `phase6.enabled` 做影子评审，再开通知，再开人工批准后的 workspace 采用，再准备个人 Overlay、创建个人 Draft PR，最后才允许二次确认后的个人 Gateway 发布。单独打开 `phase6.enabled` 不会授予 Agent 自己修改正式 Skill、合并公共 PR 或部署的权限。
 
 当前运行态为：`phase6.enabled=true`、`shadow_mode=false`、`notifications_enabled=true`、`adoption_enabled=false`、`publish_enabled=false`。采用、Draft PR 和发布仍需后续独立阶段及确认。
 
@@ -471,16 +501,42 @@ WebUI 的 `NanobotClient` 已有指数退避和 token 刷新重连；真实观�
 
 告警阈值建议：连续 3 个回归、任一越权成功、任一跨群数据暴露、连续 3 次通知 dead-letter，均立即暂停自动化并向管理员通知。
 
-## 13. 实施前待确认项
+## 13. 重新制定后的实施顺序与用户配合清单
 
-1. 目标 QQ 群是否同时允许普通对话，还是仅用于运维通知与 `/evolve`？
-2. 群内 `approve` 是否足够，还是对 `publish`/`rollback` 强制要求管理员 C2C 私聊二次确认？建议后者。
-3. 管理员数量、群 openid、管理员 openid 和通知时间窗是什么？
-4. workspace Skill 的哪些目录允许自动采用？默认建议仅 `runtime/workspace/skills/` 下的显式白名单。
-5. shared/builtin Skill 的 GitHub 仓库、CI 状态检查和部署责任人是什么？
-6. 影子运行期是否接受每天一份汇总通知，还是只在出现通过 Proposal 时通知？
+### 13.1 你需要先做的事情
 
-在这些项目确认前，可以完成 M1、M2 的纯本地实现与测试，但不能安全开启 M3 以后的群通知和采用权限。
+按下面顺序执行即可；这些步骤不会修改公共仓库，也不会打开发布开关：
+
+1. 在 GitHub 创建一个**私有**仓库，例如 `Trees-23/KdmCopilot-skills-private`。不要把它建在公共 `Trees-23/KdmCopilot` 的 `main` 上。
+2. 为这个私有仓库启用分支保护：禁止直接推送 `main`、Draft PR 必须通过 CI、禁止自动合并；保留你本人作为唯一发布审批人。
+3. 确认 Overlay 的目录约定，例如 `skills/<skill-name>/SKILL.md`，并确认它只服务于当前 Gateway。
+4. 在运行 Gateway 的环境中完成 GitHub 身份认证（建议 `gh auth login` 或部署密钥）；不要把 Token 发到 QQ、聊天窗口、配置示例或 Git 提交中。
+5. 把私有仓库地址、默认分支、CI 检查名称和部署目标告知我；可以只提供仓库名和分支名，凭据不需要发给我。
+6. 明确发布策略：默认只发布到当前 `nanobot-gateway`，不发布公共镜像，不合并公共 `main`。
+
+### 13.2 我会随后完成的事情
+
+1. 把 M8 Draft PR 目标从公共仓库改为你的私有 Overlay，并增加 base-repository/base-branch 强校验。
+2. 用临时测试 Skill 创建一条真实 Overlay Draft PR，确认公共仓库、公共 `main`、公共镜像和其他用户版本没有变化。
+3. 将 `/evolve publish` 接到二次确认门禁，仅接受 Overlay PR、CI 成功、Proposal 未过期且当前基线匹配的提案。
+4. 先在隔离发布窗口演练“合并 Overlay → 重建当前 Gateway → 健康检查 → 回滚”，记录 commit、镜像、构建标识和 Trace。
+5. 验收通过后，再由你决定是否长期打开 `publish_enabled`；默认仍保持关闭。
+
+### 13.3 在你配合前明确不做的事情
+
+- 不向 `Trees-23/KdmCopilot:main` 创建个人 Skill PR。
+- 不把个人聊天、群策略、私有配置或运行数据库提交到任何 Git 仓库。
+- 不打开 `publish_enabled`，不合并、不部署、不重建公共版本。
+- 不因为创建 Draft PR 就改变当前 Gateway 的 Skill；只有 M9 二次确认发布后才会更新你的 Gateway。
+
+### 13.4 仍需你确认的决策
+
+1. 私有 Overlay 仓库名称是否采用 `Trees-23/KdmCopilot-skills-private`？
+2. Overlay 是否只服务当前 Gateway，还是未来允许你的其他实例复用？
+3. `/evolve publish` 是否继续要求 QQ 群管理员二次确认，还是改为管理员 C2C 私聊确认？建议发布使用 C2C。
+4. CI 是否只做 Skill fixture/安全检查，还是还要包含 Gateway 构建检查？
+
+在这些项目确认前，可以继续完成本地适配器、Overlay 路由、CI 模拟和回滚测试，但不能安全创建真实远端 Draft PR 或发布。
 
 ## 14. 最终 Definition of Done
 
@@ -492,5 +548,5 @@ WebUI 的 `NanobotClient` 已有指数退避和 token 刷新重连；真实观�
 4. 群命令是确定性路由，管理员、群、确认码、Proposal 状态和基线版本均经过校验。
 5. 普通成员、错误群、重放请求、过期确认和版本冲突无法造成状态改变。
 6. workspace Skill 能原子采用、下一轮生效、可审计、可回滚，且通常不需要重启 Gateway。
-7. shared/代码 Skill 只创建 Draft PR；合并和部署需要独立 `publish` 确认与既有 CI/发布验收。
+7. 个人 Skill 只在私有 Overlay 创建 Draft PR；合并和部署需要独立 `publish` 确认与 CI 验收，公共 `Trees-23/KdmCopilot:main` 不发生个人 Skill 变更。
 8. 自动化暂停、失败恢复、通知 dead-letter、回滚和跨群隔离均有单元、集成和真实 Gateway 场景证据。
