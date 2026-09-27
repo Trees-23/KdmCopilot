@@ -296,6 +296,10 @@ class ProposalRepository:
             )
             self.connection.commit()
         except sqlite3.IntegrityError:
+            # An idempotent replay leaves SQLite inside the failed INSERT
+            # transaction.  Roll it back before reading the original action;
+            # otherwise the next CAS transition cannot start a transaction.
+            self.connection.rollback()
             row = self.connection.execute(
                 "SELECT action_id,proposal_id,action,result_status,result_json FROM proposal_actions WHERE idempotency_key=?",
                 (idempotency_key,),

@@ -395,10 +395,13 @@ workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → �
 
 ### M8：开启受控发布
 
+- [x] 完成二次确认门禁的本地实现：独立确认码、Proposal 状态/CAS、CI 通过条件、kill switch 双重拦截；合并和部署只能通过显式注入的受控回调执行。
 - [ ] 开启 `publish_enabled=true`，但只接受已批准、CI 成功且未过期的 Proposal。
 - [ ] 实现 `/evolve publish` 二次确认，串联 PR 状态、CI、合并和既有发布流程。
 - [ ] 合并后按仓库规则重建长期 Gateway，并记录构建标识与场景证据。
 - [ ] 验证发布失败、构建错配、回滚和 kill switch 行为。
+
+当前进度：M8 仅完成本地安全门禁与回调编排测试，`publish_enabled=false`；未接入真实 GitHub 合并、部署或 QQ `/evolve publish`。进入真实发布验收前，需要单独确认远端仓库、CI 状态源和部署责任边界。
 
 完成条件：没有第二次确认就不能合并/部署；任何失败都保留 PR、构建和审计证据，不静默重试发布。
 
