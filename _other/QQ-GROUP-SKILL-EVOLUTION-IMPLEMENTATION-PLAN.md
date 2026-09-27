@@ -6,11 +6,11 @@
 >
 > 范围：在已完成的五层记忆 Phase 0～6 之上，为当前 nanobot 的官方 QQ 群机器人增加“自动评审 → 主动推送 → 群内交互确认 → 仅对个人部署生效的受控升级/发布”闭环。
 >
-> 当前运行态已按阶段打开 M4/M5；采用、建 PR 和发布仍关闭。本文同步记录实施与验收状态，不代表自动采用或自动发布已授权。
+> 当前运行态已按阶段打开 M4/M5；长期运行态的采用和发布仍关闭。M7、M8 已完成，M9 的群内二次确认协议已实现，但真实合并、部署和回滚验收仍未开启。本文同步记录实施与验收状态，不代表自动采用或自动发布已授权。
 
 ## 当前实施状态
 
-截至 2026-09-27，M0～M3 已完成，M4/M5 已按用户确认完成加速验收并开启对应运行态：
+截至 2026-09-27，M0～M8 已完成（M9 已完成群内协议实现，真实发布链路未完成），M4/M5 已按用户确认完成加速验收并开启对应运行态：
 
 - 已加入独立的 `shadow_mode`、主动通知、采用和发布开关；当前运行态为 `phase6.enabled=true`、通知开启、采用/发布关闭。
 - 已确认 Proposal 确认码有效期为 12 小时（720 分钟），每群每日主动通知上限为 12 条。
@@ -20,7 +20,7 @@
 - 已完成相关单元测试、配置测试、memory 测试和全量 pytest；M3 命令、通知器和真实 QQ 验收已完成。
 - 已完成显式调用的离线编排器：workspace lease、Trace 低风险筛选、失败 Case、EvalPack、独立 fixture 回放、Gate 和 Proposal 持久化；Phase 6 关闭时无副作用。
 - 已完成持久化的显式调度状态、群通知配额、Delivery claim/retry/dead-letter 状态；尚未接入 QQ 投递器和 dead-letter 主动告警。
-- 当前 Gateway 构建 `git-a7f2a1ddb924`，健康检查通过；长期运行态仍只允许评审和主动通知，采用/发布路径仍关闭。
+- 当前 Gateway 构建 `git-1ad7e136ab3d`，健康检查通过；长期运行态仍只允许评审和主动通知，采用/发布路径仍关闭。
 - 已完成原 M8 本地发布门禁（现归入新 M9 前置能力）：二次确认、CI 条件、CAS、kill switch 和受控回调均已测试；真实远端发布尚未开启。
 
 M0 的目标群、审批管理员、@要求、Proposal 有效期和每日通知上限已确认并写入运行态；真实 openid 不写入 Git。通知时段暂按全天处理（当前还未实现时间窗限制）。公共 `Trees-23/KdmCopilot:main` 只承载通用框架，不作为个人 Skill 进化的发布目标；个人 Skill 发布目标改为独立的私有 Overlay 仓库。M4/M5 已完成加速验收，后续仍不得越过人工门禁。
@@ -429,7 +429,7 @@ workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → �
 ### M9：个人 Overlay 受控发布
 
 - [x] 完成本地二次确认门禁：独立确认码、Proposal 状态/CAS、CI 通过条件、kill switch 双重拦截；合并和部署只能通过显式受控回调执行。
-- [ ] 接通群内 `/evolve publish`，只允许已配置 `approvalAdminOpenids` 的管理员在已配置通知群中对个人 Overlay 的 `pr_created` Proposal 发起二次确认；必须 @机器人，普通成员、错误群、错误码、过期码和公共仓库 PR 一律拒绝。
+- [x] 接通群内 `/evolve publish` 协议：只允许已配置 `approvalAdminOpenids` 的管理员在已配置通知群中对个人 Overlay 的 `pr_created` Proposal 发起二次确认；必须 @机器人，普通成员、错误群、错误码、过期码和公共仓库 PR 一律拒绝。协议已完成本地测试并部署到 Gateway，`publish_enabled` 仍保持关闭。
 - [ ] `publish_enabled=true` 只在明确的发布窗口开启，并且同时检查 CI 成功、PR 状态、Overlay 分支、候选 hash、Proposal 未过期和当前 Gateway 基线。
 - [ ] 合并后只重建当前用户的长期 Gateway，记录构建标识、Overlay commit、PR、CI、部署和回滚证据；不得执行公共 `main` 合并。
 - [ ] 验证发布失败、构建错配、回滚和 kill switch 行为；任何失败都保留 PR、构建和审计证据，不静默重试。
