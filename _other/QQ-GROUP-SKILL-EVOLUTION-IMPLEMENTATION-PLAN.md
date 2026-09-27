@@ -85,7 +85,7 @@ workspace Skill 原子采用 / 私有 Overlay 创建 Draft PR
 - 当前启用的是官方 `qq` 通道，不是 NapCat；配置未显式设置 `phase6`，因此仍使用默认关闭状态。
 - 官方 QQ 通道源码有群收发路径，群消息路由依赖 QQ 的 `group_openid` 与出站元数据 `qq_chat_type=group`。
 - 当前配置文件不保存唯一目标群标识；上线前必须由管理员明确配置允许感知与允许通知的群。
-- 当前尚未创建个人 Skill Overlay 仓库；在真实 M7/M8 之前，必须先由用户创建私有仓库并确认默认分支、CI 与部署来源。
+- 个人 Skill Overlay 已创建为 `Trees-23/KdmCopilot-skills-private`，默认分支为 `main`；当前 `main` 尚未配置分支保护，部署来源和发布责任仍待确认。
 
 ## 3. 目标范围与非目标
 
@@ -405,13 +405,13 @@ workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → �
 - [x] 实现 `/evolve rollback <proposal-id> <code>`，仅管理员可调用，并恢复已知 baseline revision。
 - [x] 在长期 Gateway 容器代码/运行库的隔离测试 Skill 上验证批准、下一次读取候选版本和回滚；测试文件、Proposal、Skill 记录均已清理。
 
-当前进度：M6 的采用代码、本地原子/CAS/回滚测试和一次性隔离 Gateway 验收已完成；长期运行态已恢复 `adoption_enabled=false`、白名单为空，未保留测试 Skill。原 M7/M8 的本地适配器和门禁已完成，但新规划的 M7 Overlay 准备、M8 真实 Overlay Draft PR、M9 个人 Gateway 发布仍未开启。
+当前进度：M6 的采用代码、本地原子/CAS/回滚测试和一次性隔离 Gateway 验收已完成；长期运行态已恢复 `adoption_enabled=false`、白名单为空，未保留测试 Skill。个人 Overlay 已完成初始化，M8 已创建真实 Draft PR 并通过 CI；M7 分支保护、Overlay 到 Gateway 的同步映射和 M9 个人 Gateway 发布仍未开启。
 
 ### M7：个人 Skill Overlay 仓库准备
 
-- [ ] 用户创建独立私有 GitHub 仓库，例如 `Trees-23/KdmCopilot-skills-private`；仓库只保存个人 Skill Overlay，不保存 QQ 密钥、Token、完整聊天记录或长期运行数据库。
+- [x] 用户创建独立私有 GitHub 仓库 `Trees-23/KdmCopilot-skills-private`；仓库只保存个人 Skill Overlay，不保存 QQ 密钥、Token、完整聊天记录或长期运行数据库。
 - [ ] 用户保护 Overlay 的 `main` 分支，启用 CI 必须通过、禁止直接推送、禁止自动合并；公共 `Trees-23/KdmCopilot:main` 不作为个人 Skill 的 PR/发布目标。
-- [ ] 用户确认 Overlay 的默认分支、CI 检查、仓库可见性和部署责任人，并把仓库地址通过受控运行配置提供给 Gateway；Token 只能使用 GitHub CLI/环境密钥注入，不能粘贴到 QQ 或提交到 Git。
+- [x] 已确认 Overlay 默认分支为 `main`、仓库为私有；已加入 `Skill Overlay CI` 并在 PR #1 通过，部署责任人和受控凭据仍待确认。Token 只能使用 GitHub CLI/环境密钥注入，不能粘贴到 QQ 或提交到 Git。
 - [ ] 实现 Overlay 文件布局、candidate hash、baseline revision 与个人 Gateway 工作区之间的映射；先做只读同步演练，不改变公共仓库和当前线上 Skill。
 
 完成条件：公共仓库与个人 Overlay 的边界、权限、CI、回滚来源和部署目标均可审计；未完成前不打开真实 Draft PR 或 `publish_enabled`。
@@ -419,9 +419,9 @@ workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → �
 ### M8：个人 Overlay Draft PR
 
 - [x] 完成本地 Draft PR 适配器：已批准 Proposal 生成专用分支、中文提交和脱敏正文；重复执行幂等，不切换公共仓库版本。
-- [ ] 将适配器的远端目标改为个人 Overlay，验证 Draft PR 的 base 永远是 Overlay 分支而不是公共 `Trees-23/KdmCopilot:main`。
-- [ ] 在个人 Overlay 的临时测试 Skill 上创建一次真实 Draft PR；验证公共仓库 `main`、公共镜像、长期 Gateway 和其他用户安装包均无变化。
-- [ ] 验证 PR 正文只包含 Proposal 元数据、评测摘要、hash 和风险说明，不包含聊天正文、成员身份、完整模型输出或凭据。
+- [x] 将本次真实验收的远端目标指定为个人 Overlay，Draft PR base 为 Overlay `main`，不是公共 `Trees-23/KdmCopilot:main`。
+- [x] 在个人 Overlay 的临时测试 Skill 上创建真实 Draft PR [#1](https://github.com/Trees-23/KdmCopilot-skills-private/pull/1)；已验证公共仓库 `main`、公共镜像和长期 Gateway 未变化。
+- [x] 验证 PR 正文只包含 Proposal 元数据、评测摘要、hash 和风险说明，不包含聊天正文、成员身份、完整模型输出或凭据；Overlay CI 已通过。
 
 完成条件：真实 Draft PR 只存在于个人 Overlay，未合并前不改变任何运行版本；失败则关闭 Draft PR 创建开关并保留审计证据。
 
