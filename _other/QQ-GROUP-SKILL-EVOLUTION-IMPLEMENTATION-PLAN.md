@@ -405,7 +405,7 @@ workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → �
 - [x] 实现 `/evolve rollback <proposal-id> <code>`，仅管理员可调用，并恢复已知 baseline revision。
 - [x] 在长期 Gateway 容器代码/运行库的隔离测试 Skill 上验证批准、下一次读取候选版本和回滚；测试文件、Proposal、Skill 记录均已清理。
 
-当前进度：M6 的采用代码、本地原子/CAS/回滚测试和一次性隔离 Gateway 验收已完成；长期运行态已恢复 `adoption_enabled=false`、白名单为空，未保留测试 Skill。个人 Overlay 已完成初始化，M8 已创建真实 Draft PR 并通过 CI；M7 分支保护、Overlay 到 Gateway 的同步映射和 M9 个人 Gateway 发布仍未开启。
+当前进度：M6 的采用代码、本地原子/CAS/回滚测试和一次性隔离 Gateway 验收已完成；长期运行态已恢复 `adoption_enabled=false`、白名单为空，未保留测试 Skill。个人 Overlay 已完成初始化；M8 已提前完成技术预验收（真实 Draft PR 与 CI），但因 M7 尚未收口，M8 尚不能正式通过。M7 分支保护、Overlay 到 Gateway 的同步映射和 M9 个人 Gateway 发布仍未开启。
 
 ### M7：个人 Skill Overlay 仓库准备
 
@@ -423,7 +423,8 @@ workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → �
 - [x] 在个人 Overlay 的临时测试 Skill 上创建真实 Draft PR [#1](https://github.com/Trees-23/KdmCopilot-skills-private/pull/1)；已验证公共仓库 `main`、公共镜像和长期 Gateway 未变化。
 - [x] 验证 PR 正文只包含 Proposal 元数据、评测摘要、hash 和风险说明，不包含聊天正文、成员身份、完整模型输出或凭据；Overlay CI 已通过。
 
-完成条件：真实 Draft PR 只存在于个人 Overlay，未合并前不改变任何运行版本；失败则关闭 Draft PR 创建开关并保留审计证据。
+阶段状态：技术预验收完成，但正式阶段仍等待 M7 全部条件通过；真实 Draft PR 只存在于个人 Overlay，未合并前不改变任何运行版本。失败则关闭 Draft PR 创建开关并保留审计证据。
+完成条件：M7 收口后重新核对 base 仓库、分支保护、CI 和部署来源，确认无误才正式标记 M8 完成。
 
 ### M9：个人 Overlay 受控发布
 
