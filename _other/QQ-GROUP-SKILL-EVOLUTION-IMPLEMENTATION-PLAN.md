@@ -20,7 +20,7 @@
 - 已完成相关单元测试、配置测试、memory 测试和全量 pytest；M3 命令、通知器和真实 QQ 验收已完成。
 - 已完成显式调用的离线编排器：workspace lease、Trace 低风险筛选、失败 Case、EvalPack、独立 fixture 回放、Gate 和 Proposal 持久化；Phase 6 关闭时无副作用。
 - 已完成持久化的显式调度状态、群通知配额、Delivery claim/retry/dead-letter 状态；尚未接入 QQ 投递器和 dead-letter 主动告警。
-- 当前 Gateway 构建 `git-1140027b2d39`，健康检查通过；M4/M5 只允许评审和主动通知，采用/发布路径仍关闭。
+- 当前 Gateway 构建标识将在 M7 代码提交后重建确认；长期运行态仍只允许评审和主动通知，采用/发布路径仍关闭。
 
 M0 的目标群、审批管理员、@要求、Proposal 有效期和每日通知上限已确认并写入运行态；真实 openid 不写入 Git。通知时段暂按全天处理（当前还未实现时间窗限制），发布仓库沿用当前 fork 的 `Trees-23/KdmCopilot:main`。M4/M5 已完成加速验收，后续仍不得越过 M6 的人工采用门禁。
 
@@ -387,11 +387,11 @@ workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → �
 
 ### M7：开启共享 Skill Draft PR
 
-- [ ] 实现已批准 Proposal 到专用分支、中文提交、Draft PR 的适配器。
-- [ ] PR 正文自动附“改动内容、评测证据、验证结果、风险与注意事项”，不泄露聊天内容。
-- [ ] 验收 `approve` 只创建 Draft PR，不合并、不部署、不切换当前版本。
+- [x] 实现已批准 Proposal 到专用分支、中文提交、Draft PR 的适配器（先生成本地待审分支与提交，不调用远端）。
+- [x] PR 正文自动附“改动内容、评测证据、验证结果、风险与注意事项”，仅包含脱敏后的 Proposal 元数据、数量和摘要，不泄露聊天内容。
+- [x] 本地临时 Git 仓库验收：重复执行幂等；`approve` 只创建专用分支和 Draft PR 内容，不合并、不部署、不切换当前 Skill 版本；开关关闭和 workspace Proposal 均被拒绝。
 
-完成条件：从测试共享 Skill 创建 Draft PR；未执行 `publish` 前没有合并、部署或当前版本切换。
+完成条件：M7 已完成本地隔离验收。当前仍未创建真实 GitHub Draft PR，`publish_enabled=false`；进入 M8 前需要单独确认远端仓库接入、CI 检查与二次发布流程。
 
 ### M8：开启受控发布
 
