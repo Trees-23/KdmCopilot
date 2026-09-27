@@ -215,7 +215,7 @@ draft
 | `/evolve review <proposal-id>` | 是 | 是 | 无；只显示脱敏证据摘要 |
 | `/evolve approve <proposal-id> <code>` | 否 | 是 | workspace 进入采用或个人 Overlay 创建 Draft PR |
 | `/evolve reject <proposal-id> <reason>` | 否 | 是 | 终止该 Proposal |
-| `/evolve publish <proposal-id> <code>` | 否 | 是 | 仅对已创建 PR 的共享/代码 Skill 触发发布流程 |
+| `/evolve publish <proposal-id> <code>` | 否 | 是 | 仅对个人 Overlay 已创建 PR 的 Proposal 触发群内二次发布流程 |
 | `/evolve rollback <skill> <revision> <code>` | 否 | 是 | 显式回滚到已有受信 revision |
 
 命令由 `CommandRouter` 直接分派，不能进入模型推理流程。无权限、过期、跨群、状态冲突或错误确认码都返回确定性拒绝信息并写审计。
@@ -429,7 +429,7 @@ workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → �
 ### M9：个人 Overlay 受控发布
 
 - [x] 完成本地二次确认门禁：独立确认码、Proposal 状态/CAS、CI 通过条件、kill switch 双重拦截；合并和部署只能通过显式受控回调执行。
-- [ ] 接通 `/evolve publish`，只允许管理员对个人 Overlay 的 `pr_created` Proposal 发起二次确认；普通成员、错误群、错误码、过期码和公共仓库 PR 一律拒绝。
+- [ ] 接通群内 `/evolve publish`，只允许已配置 `approvalAdminOpenids` 的管理员在已配置通知群中对个人 Overlay 的 `pr_created` Proposal 发起二次确认；必须 @机器人，普通成员、错误群、错误码、过期码和公共仓库 PR 一律拒绝。
 - [ ] `publish_enabled=true` 只在明确的发布窗口开启，并且同时检查 CI 成功、PR 状态、Overlay 分支、候选 hash、Proposal 未过期和当前 Gateway 基线。
 - [ ] 合并后只重建当前用户的长期 Gateway，记录构建标识、Overlay commit、PR、CI、部署和回滚证据；不得执行公共 `main` 合并。
 - [ ] 验证发布失败、构建错配、回滚和 kill switch 行为；任何失败都保留 PR、构建和审计证据，不静默重试。
@@ -528,13 +528,14 @@ WebUI 的 `NanobotClient` 已有指数退避和 token 刷新重连；真实观�
 - 不向 `Trees-23/KdmCopilot:main` 创建个人 Skill PR。
 - 不把个人聊天、群策略、私有配置或运行数据库提交到任何 Git 仓库。
 - 不打开 `publish_enabled`，不合并、不部署、不重建公共版本。
+- 不把“群里有人看到确认码”当作授权；真正授权依据是发送者 openid、群白名单、@要求、Proposal 状态/CAS 和一次性确认码。
 - 不因为创建 Draft PR 就改变当前 Gateway 的 Skill；只有 M9 二次确认发布后才会更新你的 Gateway。
 
 ### 13.4 仍需你确认的决策
 
 1. 私有 Overlay 仓库名称是否采用 `Trees-23/KdmCopilot-skills-private`？
 2. Overlay 是否只服务当前 Gateway，还是未来允许你的其他实例复用？
-3. `/evolve publish` 是否继续要求 QQ 群管理员二次确认，还是改为管理员 C2C 私聊确认？建议发布使用 C2C。
+3. `/evolve publish` 二次确认固定在 QQ 群内完成：仅 `approvalAdminOpenids` 中的管理员有效，必须 @机器人并使用一次性确认码；不改为 C2C 私聊。
 4. CI 是否只做 Skill fixture/安全检查，还是还要包含 Gateway 构建检查？
 
 在这些项目确认前，可以继续完成本地适配器、Overlay 路由、CI 模拟和回滚测试，但不能安全创建真实远端 Draft PR 或发布。
