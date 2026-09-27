@@ -20,7 +20,7 @@
 - 已完成相关单元测试、配置测试、memory 测试和全量 pytest；M3 命令、通知器和真实 QQ 验收已完成。
 - 已完成显式调用的离线编排器：workspace lease、Trace 低风险筛选、失败 Case、EvalPack、独立 fixture 回放、Gate 和 Proposal 持久化；Phase 6 关闭时无副作用。
 - 已完成持久化的显式调度状态、群通知配额、Delivery claim/retry/dead-letter 状态；尚未接入 QQ 投递器和 dead-letter 主动告警。
-- 当前 Gateway 构建 `git-11697a33d965`，健康检查通过；长期运行态仍只允许评审和主动通知，采用/发布路径仍关闭。
+- 当前 Gateway 构建 `git-7e92f4184417`，健康检查通过；长期运行态仍只允许评审和主动通知，采用/发布路径仍关闭。
 
 M0 的目标群、审批管理员、@要求、Proposal 有效期和每日通知上限已确认并写入运行态；真实 openid 不写入 Git。通知时段暂按全天处理（当前还未实现时间窗限制），发布仓库沿用当前 fork 的 `Trees-23/KdmCopilot:main`。M4/M5 已完成加速验收，后续仍不得越过 M6 的人工采用门禁。
 
