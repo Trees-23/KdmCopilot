@@ -165,5 +165,14 @@ class GitHubOverlayRelease:
         )
         return expected_head_sha
 
+    def merge_branch(self, branch: str, expected_head_sha: str) -> str:
+        """Adapt the publish gate's ``(branch, commit)`` callback contract."""
+        if not branch.startswith("evolve/") or len(branch) <= len("evolve/"):
+            raise OverlayReleaseError("publish branch is not an evolution branch")
+        proposal_id = branch[len("evolve/") :]
+        if _proposal_branch(proposal_id) != branch:
+            raise OverlayReleaseError("publish branch is not canonical")
+        return self.merge(proposal_id, expected_head_sha)
+
 
 __all__ = ["GitHubOverlayRelease", "OverlayPullRequest", "OverlayReleaseError"]

@@ -61,3 +61,16 @@ def test_overlay_client_requires_all_checks_to_pass():
     assert client.ci_passed("prop-test") is False
     with pytest.raises(OverlayReleaseError, match="CI"):
         client.merge("prop-test", "abc")
+
+
+def test_overlay_client_adapts_publish_branch_contract():
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, json.dumps([_payload(draft=False)]), "")
+
+    client = GitHubOverlayRelease("Trees-23/KdmCopilot-skills-private", run=run)
+    assert client.merge_branch("evolve/prop-test", "abc") == "abc"
+    with pytest.raises(OverlayReleaseError, match="canonical"):
+        client.merge_branch("evolve/not the proposal", "abc")
