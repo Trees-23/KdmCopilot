@@ -20,9 +20,10 @@
 - 已完成相关单元测试、配置测试、memory 测试和全量 pytest；M3 命令、通知器和真实 QQ 验收已完成。
 - 已完成显式调用的离线编排器：workspace lease、Trace 低风险筛选、失败 Case、EvalPack、独立 fixture 回放、Gate 和 Proposal 持久化；Phase 6 关闭时无副作用。
 - 已完成持久化的显式调度状态、群通知配额、Delivery claim/retry/dead-letter 状态；尚未接入 QQ 投递器和 dead-letter 主动告警。
-- 当前长期 Gateway 暂未在线：最近一次 M9 重建受到 WSL/Docker 构建中断影响，镜像关键文件损坏并已停止；在真实发布验收前必须重新构建并核对新的 build ref/health。运行配置仍保持采用/发布关闭。
+- 长期 Gateway 已在代理恢复后完成受控重建：`git-d605b959d5e6`，镜像 `sha256:4360632b24730f1d89eeae8e1005133efcfd706ccee1f1b43ba38d3ef4a5debb`，健康检查返回 `status=ok`，容器挂载仍为仓库 `runtime/`；运行配置保持采用/发布关闭。重建期间曾两次遇到 Docker 拉取 `auth.docker.io` 超时，手动拉取基础镜像后重试成功，失败与恢复证据已保留在本次验收记录中。
 - 已完成原 M8 本地发布门禁（现归入新 M9 前置能力）：二次确认、CI 条件、CAS、kill switch 和受控回调均已测试；真实远端发布尚未开启。
-- M9 本地端到端模拟验收已完成：二次确认 → CI → 私有 Overlay 合并回调 → 当前 Gateway 部署回调；`pytest tests/memory -q` 当前为 103 passed。真实 Gateway 重建仍受代理 `172.22.208.1:7890` reset 阻断，未以损坏镜像作为运行版本。
+- M9 本地端到端模拟验收已完成：二次确认 → CI → 私有 Overlay 合并回调 → 当前 Gateway 部署回调；`pytest tests/memory -q` 当前为 103 passed。真实发布仍未执行。
+- 2026-09-27 已完成一次长期 Gateway 的真实只读 WebUI 场景验收：新会话 `#/chat/websocket%3Afe7fdbdc-5367-476a-bb64-ae140fdb5cf7`，Trace `01a0e491-472a-7713-80ee-19f404d9599d`，场景标识 `[M9-REAL-READONLY-20260927-201639Z]`。Agent 仅执行运行态/定时任务/工作区和配置读取，Trace 终态为成功（29 节点、2187 Event；含一次已恢复的读取失败警告），明确返回 `publish_enabled=false`、采用关闭、Overlay 白名单为空，且未创建/批准/发布 Proposal、未外发 QQ、未重启 Gateway。
 
 M0 的目标群、审批管理员、@要求、Proposal 有效期和每日通知上限已确认并写入运行态；真实 openid 不写入 Git。通知时段暂按全天处理（当前还未实现时间窗限制）。公共 `Trees-23/KdmCopilot:main` 只承载通用框架，不作为个人 Skill 进化的发布目标；个人 Skill 发布目标改为独立的私有 Overlay 仓库。M4/M5 已完成加速验收，后续仍不得越过人工门禁。
 
@@ -433,7 +434,7 @@ workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → �
 - [x] 接通群内 `/evolve publish` 协议：只允许已配置 `approvalAdminOpenids` 的管理员在已配置通知群中对个人 Overlay 的 `pr_created` Proposal 发起二次确认；必须 @机器人，普通成员、错误群、错误码、过期码和公共仓库 PR 一律拒绝。协议已完成本地测试并部署到 Gateway，`publish_enabled` 仍保持关闭。
 - [x] 增加私有 Overlay 远端校验适配器：通过受控 `gh` 调用核对唯一 PR、仓库、`main` 基线、Proposal 分支、head SHA 和全部 CI 检查；真实 PR #1 已只读验收通过，未执行 ready、合并或部署。
 - [x] 增加受控部署适配器：二次确认后才允许下载指定合并 SHA 的 Overlay tarball，只同步安全的 `skills/<name>/SKILL.md`，再调用固定 Gateway 重建脚本并要求返回 build reference；覆盖路径穿越、空 Overlay、构建无证据和失败恢复测试。该适配器尚未接入长期 Gateway，也未执行真实合并。
-- [ ] `publish_enabled=true` 只在明确的发布窗口开启，并且同时检查 CI 成功、PR 状态、Overlay 分支、候选 hash、Proposal 未过期和当前 Gateway 基线。
+- [ ] `publish_enabled=true` 只在明确的发布窗口开启，并且同时检查 CI 成功、PR 状态、Overlay 分支、候选 hash、Proposal 未过期和当前 Gateway 基线；当前真实 Gateway 只读验收已通过，但发布开关仍为 `false`。
 - [ ] 合并后只重建当前用户的长期 Gateway，记录构建标识、Overlay commit、PR、CI、部署和回滚证据；不得执行公共 `main` 合并。
 - [ ] 验证发布失败、构建错配、回滚和 kill switch 行为；任何失败都保留 PR、构建和审计证据，不静默重试。
 
@@ -493,6 +494,8 @@ phase6.kill_switch                      # 立即禁止所有自动化写路径
 2026-09-27 对长期 Gateway 做了真实 WebUI 观测：`docker compose restart nanobot-gateway` 会发送 SIGTERM，Gateway 依次停止 QQ、WebSocket 和 Agent，再重新初始化 MCP、QQ 与 WebSocket；这段时间 `8765` 没有可用连接，已有 TCP/WebSocket 连接必然断开。日志显示这是正常的容器生命周期行为，不是 Phase 6 或 Skill 采用导致的断连。
 
 WebUI 的 `NanobotClient` 已有指数退避和 token 刷新重连；真实观测中状态依次为“重连中→连接中→已连接”，约 9.8 秒恢复。直接使用 WebSocket 的 VSCode/脚本客户端如果没有同等重连逻辑，会表现为永久断开，需要客户端自行重连或刷新连接。重启后应等待健康检查通过，再继续发送消息；不要把短暂的重连窗口误判为数据丢失。
+
+2026-09-27 M9 重建证据：代理 `172.22.208.1:7890` 恢复后，宿主机可访问 Docker Registry；BuildKit 首次拉取基础镜像令牌仍超时，随后单独拉取 `node:24-bookworm-slim` 成功，重新执行 `scripts/rebuild_gateway_for_scenario.sh` 完成构建。最终 health 为 `http://127.0.0.1:18790/health`，构建引用为 `git-d605b959d5e6`，长期 Compose 服务为 `nanobot-gateway`，未启动临时 Gateway、未更换端口、未使用损坏旧镜像。
 
 ### 12.3 监控指标
 
