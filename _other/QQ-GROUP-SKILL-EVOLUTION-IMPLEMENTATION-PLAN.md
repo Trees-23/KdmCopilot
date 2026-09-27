@@ -48,7 +48,7 @@ workspace Skill 原子采用 / 共享 Skill 创建 Draft PR
 
 核心结论：自动评审可以自动化，正式采用和发布不可自动化。评测通过的唯一含义是 `eligible_for_confirmation`，不是自动切换当前 Skill，也不是自动创建、合并或发布 GitHub PR。
 
-当前执行位置：处于本方案的 M0 之前，Phase 6 仍关闭。M1～M3 可以先开发和验收；“打开自进化开关”本身是独立的 M4，不会随着代码合并或 QQ 接线自动发生。只有 M0～M3 通过并记录验收证据后，才允许把 `phase6.enabled` 切换为 `true`。
+当前执行位置：M0～M3 已通过并记录验收证据；已于 2026-09-27 开始 M4 影子模式。M4 只打开 `phase6.enabled` 和 `shadow_mode`，主动通知、采用和发布仍关闭。
 
 首版以 QQ 文本命令交互，不依赖内联按钮。当前 QQ 通道能发送 plain/markdown 文本，但尚未实现 `OutboundMessage.buttons` 的 QQ 渲染与交互回调；文本命令在 C2C 与群聊中都更稳定、可审计、可回放。
 
@@ -355,13 +355,13 @@ workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → �
 - [x] 完成主动通知投递的真实 QQ 验收；临时测试确认真实群已收到通知，测试后已关闭通知开关并清理测试 Proposal。
 - [x] 修复通知正文确认码有效期的展示：统一转换为北京时间（`YYYY年MM月DD日 HH:MM:SS（北京时间）`），避免直接显示 UTC ISO 时间。
 
-当前进度：M3 已完成通知器、命令与授权的本地协议单元测试，并接入 Gateway 的独立投递循环；真实 QQ 命令安全验收和一次性主动通知投递验收均已完成。主动通知测试发现并修复了 UTC ISO 时间直接展示的问题；当前 `phase6.enabled`、主动通知、采用和发布开关均保持关闭，M4 及以后尚未开始。
+当前进度：M3 已完成通知器、命令与授权的本地协议单元测试，并接入 Gateway 的独立投递循环；真实 QQ 命令安全验收和一次性主动通知投递验收均已完成。主动通知测试发现并修复了 UTC ISO 时间直接展示的问题。M4 已开始影子观察；当前 `phase6.enabled=true`、`shadow_mode=true`，主动通知、采用和发布仍关闭。周期调度仍保持显式调用，因此 7 天观察完成前不能进入 M5。
 
 ### M4：开启自进化开关——影子模式
 
 这是“打开 Phase 6”的独立实施阶段，不与代码完成或 QQ 接线混在一起。只有 M0～M3 全部通过后才能执行。
 
-- [ ] 将 `phase6.enabled` 设为 `true`，同时保持 `shadow_mode=true`、`notifications_enabled=false`、`adoption_enabled=false`、`publish_enabled=false`。
+- [x] 将 `phase6.enabled` 设为 `true`，同时保持 `shadow_mode=true`、`notifications_enabled=false`、`adoption_enabled=false`、`publish_enabled=false`（2026-09-27 已在长期 Gateway 生效）。
 - [ ] 运行至少 7 天或完成约定数量的真实周期，只允许生成内部评测证据和 Proposal，不允许 QQ 主动通知、文件写入、建 PR 或发布。
 - [ ] 核对候选数量、Gate 通过率、敏感任务过滤、回归暂停、kill switch 和资源增长。
 - [ ] 人工检查 Proposal 质量和误报原因，确认没有跨群数据进入候选。
