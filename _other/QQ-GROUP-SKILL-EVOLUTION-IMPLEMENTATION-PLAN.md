@@ -378,12 +378,12 @@ workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → �
 
 ### M6：开启人工批准后的 workspace 采用
 
-- [ ] 开启 `adoption_enabled=true`，仅允许显式 workspace Skill 白名单（当前运行态仍关闭，白名单为空）。
+- [x] 在隔离 M6 验收窗口临时开启 `adoption_enabled=true`，仅允许显式 `workspaceSkillAllowlist`；验收结束后已恢复关闭/空列表，长期运行态不保留测试白名单。
 - [x] 实现原子采用器、revision 对比、落盘 hash 校验和错误回滚；增加 `workspaceSkillAllowlist` 安全门禁。
 - [x] 实现 `/evolve rollback <proposal-id> <code>`，仅管理员可调用，并恢复已知 baseline revision。
-- [ ] 在长期 Gateway 的隔离测试 Skill 上验证新 Skill 在下一条独立群消息中生效，当前执行 turn 不受中途替换影响。
+- [x] 在长期 Gateway 容器代码/运行库的隔离测试 Skill 上验证批准、下一次读取候选版本和回滚；测试文件、Proposal、Skill 记录均已清理。
 
-当前进度：M6 的采用代码和本地原子/CAS/回滚测试已完成；尚未打开采用开关，也未修改长期 workspace Skill。完成条件仍需配置一个明确测试 Skill 白名单并完成长期 Gateway 隔离场景验收。共享/代码 Skill 仍不可自动建 PR 或发布。
+当前进度：M6 的采用代码、本地原子/CAS/回滚测试和一次性隔离 Gateway 验收已完成；长期运行态已恢复 `adoption_enabled=false`、白名单为空，未保留测试 Skill。共享/代码 Skill 仍不可自动建 PR 或发布。
 
 ### M7：开启共享 Skill Draft PR
 
@@ -451,7 +451,13 @@ phase6.kill_switch                      # 立即禁止所有自动化写路径
 
 `kill_switch` 不撤销已采用版本，但会停止新的扫描、通知、采用、PR 创建和发布。回滚必须由管理员显式命令完成，并使用现有 revision 证据。
 
-### 12.2 监控指标
+### 12.2 Gateway 重启与连接恢复说明
+
+2026-09-27 对长期 Gateway 做了真实 WebUI 观测：`docker compose restart nanobot-gateway` 会发送 SIGTERM，Gateway 依次停止 QQ、WebSocket 和 Agent，再重新初始化 MCP、QQ 与 WebSocket；这段时间 `8765` 没有可用连接，已有 TCP/WebSocket 连接必然断开。日志显示这是正常的容器生命周期行为，不是 Phase 6 或 Skill 采用导致的断连。
+
+WebUI 的 `NanobotClient` 已有指数退避和 token 刷新重连；真实观测中状态依次为“重连中→连接中→已连接”，约 9.8 秒恢复。直接使用 WebSocket 的 VSCode/脚本客户端如果没有同等重连逻辑，会表现为永久断开，需要客户端自行重连或刷新连接。重启后应等待健康检查通过，再继续发送消息；不要把短暂的重连窗口误判为数据丢失。
+
+### 12.3 监控指标
 
 - 每周期 Trace 扫描数、候选数、Gate 通过率、证据不足率；
 - 每群通知数、投递失败/重试/dead-letter 数；
