@@ -20,7 +20,7 @@
 - 已完成相关单元测试、配置测试、memory 测试和全量 pytest；M3 命令、通知器和真实 QQ 验收已完成。
 - 已完成显式调用的离线编排器：workspace lease、Trace 低风险筛选、失败 Case、EvalPack、独立 fixture 回放、Gate 和 Proposal 持久化；Phase 6 关闭时无副作用。
 - 已完成持久化的显式调度状态、群通知配额、Delivery claim/retry/dead-letter 状态；尚未接入 QQ 投递器和 dead-letter 主动告警。
-- 当前 Gateway 构建 `git-7e92f4184417`，健康检查通过；长期运行态仍只允许评审和主动通知，采用/发布路径仍关闭。
+- 当前 Gateway 构建 `git-a7f2a1ddb924`，健康检查通过；长期运行态仍只允许评审和主动通知，采用/发布路径仍关闭。
 - 已完成原 M8 本地发布门禁（现归入新 M9 前置能力）：二次确认、CI 条件、CAS、kill switch 和受控回调均已测试；真实远端发布尚未开启。
 
 M0 的目标群、审批管理员、@要求、Proposal 有效期和每日通知上限已确认并写入运行态；真实 openid 不写入 Git。通知时段暂按全天处理（当前还未实现时间窗限制）。公共 `Trees-23/KdmCopilot:main` 只承载通用框架，不作为个人 Skill 进化的发布目标；个人 Skill 发布目标改为独立的私有 Overlay 仓库。M4/M5 已完成加速验收，后续仍不得越过人工门禁。
@@ -405,16 +405,16 @@ workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → �
 - [x] 实现 `/evolve rollback <proposal-id> <code>`，仅管理员可调用，并恢复已知 baseline revision。
 - [x] 在长期 Gateway 容器代码/运行库的隔离测试 Skill 上验证批准、下一次读取候选版本和回滚；测试文件、Proposal、Skill 记录均已清理。
 
-当前进度：M6 的采用代码、本地原子/CAS/回滚测试和一次性隔离 Gateway 验收已完成；长期运行态已恢复 `adoption_enabled=false`、白名单为空，未保留测试 Skill。个人 Overlay 已完成初始化；M8 已提前完成技术预验收（真实 Draft PR 与 CI），但因 M7 尚未收口，M8 尚不能正式通过。M7 分支保护、Overlay 到 Gateway 的同步映射和 M9 个人 Gateway 发布仍未开启。
+当前进度：M6 的采用代码、本地原子/CAS/回滚测试和一次性隔离 Gateway 验收已完成；长期运行态已恢复 `adoption_enabled=false`、白名单为空，未保留测试 Skill。个人 Overlay 已完成初始化；M7 的规则集、只读映射和部署基线检查已完成。M8 真实 Draft PR 与 CI 已正式验收通过；M9 个人 Gateway 发布仍未开启。
 
 ### M7：个人 Skill Overlay 仓库准备
 
 - [x] 用户创建独立私有 GitHub 仓库 `Trees-23/KdmCopilot-skills-private`；仓库只保存个人 Skill Overlay，不保存 QQ 密钥、Token、完整聊天记录或长期运行数据库。
-- [ ] 用户保护 Overlay 的 `main` 分支，启用 CI 必须通过、禁止直接推送、禁止自动合并；公共 `Trees-23/KdmCopilot:main` 不作为个人 Skill 的 PR/发布目标。
+- [x] 用户保护 Overlay 的 `main` 分支，规则集“保护个人 Overlay main”已启用；要求 PR、`validate` CI、禁止删除和强制推送；公共 `Trees-23/KdmCopilot:main` 不作为个人 Skill 的 PR/发布目标。
 - [x] 已确认 Overlay 默认分支为 `main`、仓库为私有；已加入 `Skill Overlay CI` 并在 PR #1 通过，部署责任人和受控凭据仍待确认。Token 只能使用 GitHub CLI/环境密钥注入，不能粘贴到 QQ 或提交到 Git。
-- [ ] 实现 Overlay 文件布局、candidate hash、baseline revision 与个人 Gateway 工作区之间的映射；先做只读同步演练，不改变公共仓库和当前线上 Skill。
+- [x] 已实现 Overlay 文件布局、candidate hash、baseline revision 与个人 Gateway 工作区之间的只读映射检查；3 个聚焦测试通过，检查不会写入 Skill 或改变线上版本。
 
-完成条件：公共仓库与个人 Overlay 的边界、权限、CI、回滚来源和部署目标均可审计；未完成前不打开真实 Draft PR 或 `publish_enabled`。
+完成条件：公共仓库与个人 Overlay 的边界、权限、CI、回滚来源和部署目标均可审计；M7 已完成，`publish_enabled` 仍保持关闭。
 
 ### M8：个人 Overlay Draft PR
 
@@ -423,8 +423,8 @@ workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → �
 - [x] 在个人 Overlay 的临时测试 Skill 上创建真实 Draft PR [#1](https://github.com/Trees-23/KdmCopilot-skills-private/pull/1)；已验证公共仓库 `main`、公共镜像和长期 Gateway 未变化。
 - [x] 验证 PR 正文只包含 Proposal 元数据、评测摘要、hash 和风险说明，不包含聊天正文、成员身份、完整模型输出或凭据；Overlay CI 已通过。
 
-阶段状态：技术预验收完成，但正式阶段仍等待 M7 全部条件通过；真实 Draft PR 只存在于个人 Overlay，未合并前不改变任何运行版本。失败则关闭 Draft PR 创建开关并保留审计证据。
-完成条件：M7 收口后重新核对 base 仓库、分支保护、CI 和部署来源，确认无误才正式标记 M8 完成。
+阶段状态：M8 已正式完成；真实 Draft PR 只存在于个人 Overlay，CI `validate` 已通过，未合并前不改变任何运行版本。失败则关闭 Draft PR 创建开关并保留审计证据。
+完成条件：M8 已核对 base 仓库、分支保护、CI 和公共仓库隔离；真实合并与部署仍留给 M9 二次确认。
 
 ### M9：个人 Overlay 受控发布
 
