@@ -42,6 +42,30 @@ def _seed(tmp_path):
     return proposal.proposal_id
 
 
+def _seed_overlay(tmp_path):
+    connection = connect_memory_db(tmp_path)
+    apply_migrations(connection)
+    repo = ProposalRepository(connection)
+    repo.upsert_group_scope(
+        group_openid="group-1",
+        namespace="qq:group-1",
+        observation_enabled=True,
+        notification_enabled=True,
+        daily_notification_limit=12,
+    )
+    proposal = repo.create_proposal(
+        workspace=str(tmp_path),
+        skill_name="overlay-demo",
+        source_kind="builtin",
+        target="git_pr_proposal",
+        baseline_hash="base",
+        candidate_hash="candidate",
+        status="pr_created",
+    )
+    connection.close()
+    return proposal.proposal_id
+
+
 @pytest.mark.asyncio
 async def test_notifier_persists_payload_and_publishes_group_message(tmp_path):
     proposal_id = _seed(tmp_path)
@@ -77,6 +101,22 @@ def test_notifier_does_not_send_when_notifications_are_disabled(tmp_path):
     proposal_id = _seed(tmp_path)
     notifier = ProposalNotifier(str(tmp_path), _config(enabled=False), MessageBus())
     assert notifier.enqueue(proposal_id, group_openid="group-1").status == "disabled"
+
+
+@pytest.mark.asyncio
+async def test_overlay_notifier_uses_publish_command_after_ci(tmp_path):
+    proposal_id = _seed_overlay(tmp_path)
+    bus = MessageBus()
+    notifier = ProposalNotifier(str(tmp_path), _config(), bus)
+
+    queued = notifier.enqueue(proposal_id, group_openid="group-1")
+    assert queued.status == "queued"
+    assert "/evolve publish" in (queued.content or "")
+    assert "/evolve approve" not in (queued.content or "")
+    assert "Draft PR：已创建；CI：已通过" in (queued.content or "")
+    assert await notifier.deliver_once() == "sent"
+    message = await bus.consume_outbound()
+    assert "/evolve publish" in message.content
 
 
 def test_notification_content_formats_expiry_in_beijing_time():

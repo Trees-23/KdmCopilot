@@ -65,6 +65,18 @@ class ProposalNotifier:
 
     @staticmethod
     def _content(record: Any, code: str) -> str:
+        if getattr(record, "target", None) == "git_pr_proposal":
+            return (
+                "【Skill 发布候选】\n"
+                f"提案：{record.proposal_id}\n"
+                f"Skill：{record.skill_name}\n"
+                f"来源：{record.source_kind}\n"
+                f"自动评审：{record.gate_result}\n"
+                "Draft PR：已创建；CI：已通过\n\n"
+                f"查看：/evolve review {record.proposal_id}\n"
+                f"发布确认：/evolve publish {record.proposal_id}\n"
+                "说明：第一次命令签发一次性确认码；同一管理员再次携带确认码执行发布。"
+            )
         expires = _format_beijing_time(record.confirmation_expires_at)
         return (
             "【Skill 升级候选】\n"
@@ -113,6 +125,8 @@ class ProposalNotifier:
                 content = str(delivery["payload"] or "") if delivery is not None else ""
                 if not content:
                     return NotificationEnqueueResult("missing_payload")
+            elif record.status == "pr_created" and record.target == "git_pr_proposal":
+                content = self._content(record, "")
             else:
                 return NotificationEnqueueResult("not_eligible")
             assert content is not None
