@@ -494,6 +494,8 @@ workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → �
 
 完成条件：M10-A/M10-B 已接通，且连续 7 天无未处理 dead-letter、无越权命令成功、无自动发布、无跨群泄露，管理员认可通知频率和升级质量。目前 M10-A 已接通，M10-B-1/M10-B-2 已接通，M10-B-3 的运行态适配器和连续 7 天观察尚未完成。
 
+本轮 M10-B 代码验收记录：`tests/memory` 118 passed，涉及路径的 `ruff check` 和 `git diff --check` 通过；长期 Gateway 已重建为 `git-32c55a709cc5`，健康检查正常。只读真实场景使用新 WebUI 会话 `#/chat/websocket%3Aa010b6ca-7c61-4130-908d-d80bfcbf2d2c`，Trace `01a0e938-13ac-74f2-92a7-66a98cb408eb`（38 节点、终态成功）；未创建 Proposal、未执行 Git/网络写入、未发送通知。M10-B-3 仍必须由私有 Overlay checkout、Draft PR/CI 回写和 QQ outbox 适配器显式注入，未注入时系统只保留 Proposal，禁止伪造 PR/CI/通知成功。
+
 ## 11. 测试与验收矩阵
 
 | 场景 | 预期结果 | 必须证据 |
