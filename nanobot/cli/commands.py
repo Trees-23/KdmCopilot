@@ -1889,6 +1889,16 @@ def _run_gateway(
                 logger.info("Heartbeat: silenced by post-run evaluation")
             return response
 
+        # Phase 6 review is a protected system task.  It scans redacted Trace
+        # projections directly; it never asks the Agent to interpret a prompt
+        # or decide whether to write, notify, merge, or publish.
+        from nanobot.memory.phase6_trigger import PHASE6_REVIEW_JOB_ID, run_phase6_review_scan
+
+        if job.name == PHASE6_REVIEW_JOB_ID:
+            result = run_phase6_review_scan(config.workspace_path, config.phase6)
+            logger.info("Phase 6 scheduled review completed: {}", getattr(result, "status", result))
+            return str(getattr(result, "status", "completed"))
+
         if is_bound_cron_job(job):
             return await run_bound_cron_job(job, agent=agent, cron=cron)
 
@@ -2043,6 +2053,11 @@ def _run_gateway(
             ),
             payload=CronPayload(kind="system_event"),
         ))
+
+    from nanobot.memory.phase6_trigger import register_phase6_review_job
+
+    if register_phase6_review_job(cron, config.phase6):
+        console.print("[green]✓[/green] Phase 6 review: 每天 14:00（北京时间）")
 
     async def _open_browser_when_ready() -> None:
         """Wait for the gateway to bind, then point the user's browser at the webui."""
