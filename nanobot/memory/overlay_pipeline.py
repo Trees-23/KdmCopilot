@@ -8,6 +8,7 @@ repository-specific PR creation and QQ notification implementations.
 
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -37,10 +38,12 @@ class OverlayProposalPipeline:
         *,
         create_draft_pr: Callable[[str], Any],
         notify_publish_candidate: Callable[[str], Any] | None = None,
+        refresh_ci: Callable[[str], Any] | None = None,
     ) -> None:
         self.workspace = workspace
         self.create_draft_pr = create_draft_pr
         self.notify_publish_candidate = notify_publish_candidate
+        self.refresh_ci = refresh_ci
 
     @staticmethod
     def _enabled(config: Any) -> bool:
@@ -92,6 +95,52 @@ class OverlayProposalPipeline:
                 except (ProposalConflict, sqlite3.Error):
                     pass
             return OverlayHandoffResult("failed", proposal_id, str(exc)[:300])
+
+    def refresh_ci_and_notify(
+        self,
+        connection: sqlite3.Connection,
+        proposal_id: str,
+    ) -> OverlayHandoffResult:
+        """Poll remote CI and emit one idempotent publish-candidate notification.
+
+        This is intentionally a separate worker step from Draft PR creation:
+        an open PR is not a publish candidate until every required check passes.
+        The durable action record prevents repeated polling from sending the QQ
+        notification more than once.
+        """
+
+        if self.refresh_ci is None:
+            return OverlayHandoffResult("ci_not_configured", proposal_id)
+        try:
+            already_sent = connection.execute(
+                "SELECT 1 FROM proposal_actions WHERE proposal_id=? AND action=? LIMIT 1",
+                (proposal_id, "publish_candidate_notification"),
+            ).fetchone()
+            if already_sent:
+                return OverlayHandoffResult("notification_idempotent", proposal_id)
+            status = self.refresh_ci(proposal_id)
+            if not bool(getattr(status, "ci_passed", False)):
+                return OverlayHandoffResult("ci_pending", proposal_id, getattr(status, "reason", None))
+            if self.notify_publish_candidate is None:
+                return OverlayHandoffResult("ci_passed", proposal_id)
+            self.notify_publish_candidate(proposal_id)
+            record = ProposalRepository(connection).get(proposal_id)
+            if record is None:
+                return OverlayHandoffResult("not_found", proposal_id)
+            ProposalRepository(connection)._record_action(  # type: ignore[attr-defined]
+                proposal_id=proposal_id,
+                workspace=record.workspace,
+                action="publish_candidate_notification",
+                actor_openid="phase6-overlay-notifier",
+                group_openid=None,
+                idempotency_key=f"publish-candidate-notification:{proposal_id}",
+                request_digest="sha256:" + hashlib.sha256(proposal_id.encode()).hexdigest(),
+                result_status="sent",
+                result={"status": "ci_passed"},
+            )
+            return OverlayHandoffResult("publish_candidate_notified", proposal_id)
+        except (sqlite3.Error, OSError, RuntimeError) as exc:
+            return OverlayHandoffResult("notification_failed", proposal_id, str(exc)[:300])
 
 
 __all__ = ["OverlayHandoffResult", "OverlayProposalPipeline"]

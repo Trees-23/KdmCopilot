@@ -108,3 +108,40 @@ def test_overlay_handoff_stays_disabled_without_explicit_flag(tmp_path):
     assert called == []
     assert connection.execute("SELECT status FROM skill_proposals").fetchone()[0] == "eligible_for_confirmation"
     connection.close()
+
+
+def test_ci_refresh_notifies_once_only_after_all_checks_pass(tmp_path):
+    workspace, connection = _setup(tmp_path)
+    proposal = ProposalRepository(connection).create_proposal(
+        proposal_id="prop-ci-refresh",
+        workspace=str(workspace),
+        skill_id="skill-1",
+        skill_name="demo",
+        source_kind="builtin",
+        target="git_pr_proposal",
+        baseline_hash="sha256:base",
+        candidate_hash="sha256:candidate",
+        status="pr_created",
+    )
+    notifications: list[str] = []
+    statuses = iter((SimpleNamespace(ci_passed=False, reason="checks pending"), SimpleNamespace(ci_passed=True)))
+    pipeline = OverlayProposalPipeline(
+        str(workspace),
+        create_draft_pr=lambda _proposal_id: SimpleNamespace(status="idempotent"),
+        notify_publish_candidate=notifications.append,
+        refresh_ci=lambda _proposal_id: next(statuses),
+    )
+
+    pending = pipeline.refresh_ci_and_notify(connection, proposal.proposal_id)
+    sent = pipeline.refresh_ci_and_notify(connection, proposal.proposal_id)
+    replay = pipeline.refresh_ci_and_notify(connection, proposal.proposal_id)
+
+    assert pending.status == "ci_pending"
+    assert sent.status == "publish_candidate_notified"
+    assert replay.status == "notification_idempotent"
+    assert notifications == [proposal.proposal_id]
+    assert connection.execute(
+        "SELECT COUNT(*) FROM proposal_actions WHERE proposal_id=? AND action='publish_candidate_notification'",
+        (proposal.proposal_id,),
+    ).fetchone()[0] == 1
+    connection.close()
