@@ -511,12 +511,18 @@ phase6.evolution.notifications_enabled # 是否允许 QQ 主动通知
 phase6.evolution.adoption_enabled      # 是否允许 workspace Skill 原子采用
 phase6.evolution.draftPrEnabled        # 是否允许 Overlay 自动创建 Draft PR
 phase6.evolution.publish_enabled       # 是否允许处理二次发布确认，默认 false
+phase6.evolution.overlayRepository     # 私有 Overlay 仓库 owner/name；为空则不注入发布回调
+phase6.evolution.overlayBaseBranch     # Overlay 基线分支，默认 main
 phase6.kill_switch                      # 立即禁止所有自动化写路径
 ```
 
 开关的实际启用顺序必须遵循 M4～M9：先只开 `phase6.enabled` 做影子评审，再开通知，再开人工批准后的 workspace 采用，再准备个人 Overlay、创建个人 Draft PR，最后才允许二次确认后的个人 Gateway 发布。单独打开 `phase6.enabled` 不会授予 Agent 自己修改正式 Skill、合并公共 PR 或部署的权限。
 
 当前运行态为：`phase6.enabled=true`、`shadow_mode=false`、`notifications_enabled=true`、`adoption_enabled=false`、`draftPrEnabled=false`、`publish_enabled=false`。本地代码已具备自动 handoff，但真实 Draft PR 窗口需显式打开 `draftPrEnabled`；发布仍需独立二次确认。
+
+当 `overlayRepository` 已配置时，Gateway 会在启动时注入受控的 GitHub Overlay
+校验、合并和热加载回调；未配置时 `/evolve publish` 会安全地返回“发布回调尚未配置”，
+不会尝试 Git 或文件写入。GitHub 凭据只从受控环境映射给 `gh`，不进入 Proposal 或日志。
 
 `kill_switch` 不撤销已采用版本，但会停止新的扫描、通知、采用、PR 创建和发布。回滚必须由管理员显式命令完成，并使用现有 revision 证据。
 

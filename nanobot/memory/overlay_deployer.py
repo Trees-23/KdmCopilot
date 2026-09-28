@@ -69,7 +69,16 @@ class OverlayGatewayDeployer:
             check=False,
             capture_output=True,
             text=False,
-            env={**os.environ, "GH_PROMPT_DISABLED": "1"},
+            env={
+                **os.environ,
+                "GH_PROMPT_DISABLED": "1",
+                **(
+                    {"GH_TOKEN": os.environ["GITHUB_PERSONAL_ACCESS_TOKEN"]}
+                    if os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN")
+                    and not os.environ.get("GH_TOKEN")
+                    else {}
+                ),
+            },
         )
         if result.returncode != 0:
             detail = result.stderr or result.stdout or b"GitHub tarball request failed"

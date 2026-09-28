@@ -337,6 +337,7 @@ class AgentLoop:
         local_trigger_store: Any | None = None,
         audit_runtime: AuditRuntime | None = None,
         phase6_config: Any | None = None,
+        publish_callbacks: Any | None = None,
     ):
         from nanobot.config.schema import ToolsConfig, _resolve_tool_config_refs
 
@@ -352,7 +353,9 @@ class AgentLoop:
 
             phase6_config = Phase6Config()
         self.phase6_config = phase6_config
-        self.evolution_commands = EvolutionCommandService(workspace, phase6_config)
+        self.evolution_commands = EvolutionCommandService(
+            workspace, phase6_config, publish_callbacks=publish_callbacks
+        )
         self.restart_mode = restart_mode
         self._runtime_model_publisher = runtime_model_publisher
         self.workspace = workspace
@@ -575,6 +578,26 @@ class AgentLoop:
             "child_audit_root",
             str(get_audit_dir(config.audit.path)),
         )
+        if "publish_callbacks" not in extra:
+            evolution = config.phase6.evolution
+            repository = getattr(evolution, "overlay_repository", None)
+            if repository:
+                from nanobot.memory.overlay_deployer import (
+                    OverlayGatewayDeployer,
+                    build_publish_callbacks,
+                )
+                from nanobot.memory.overlay_release import GitHubOverlayRelease
+
+                release = GitHubOverlayRelease(
+                    repository,
+                    base_branch=str(getattr(evolution, "overlay_base_branch", "main")),
+                )
+                deployer = OverlayGatewayDeployer(
+                    repository,
+                    project_root=Path(__file__).resolve().parents[2],
+                    workspace=config.workspace_path,
+                )
+                extra["publish_callbacks"] = build_publish_callbacks(release, deployer)
         return cls(
             bus=bus,
             provider=provider,

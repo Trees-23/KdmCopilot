@@ -63,6 +63,10 @@ class GitHubOverlayRelease:
     def _gh(self, *args: str) -> str:
         env = os.environ.copy()
         env["GH_PROMPT_DISABLED"] = "1"
+        # Compose exposes the repository credential under the project-specific
+        # name; gh expects GH_TOKEN/GITHUB_TOKEN. Never include it in errors.
+        if env.get("GITHUB_PERSONAL_ACCESS_TOKEN") and not env.get("GH_TOKEN"):
+            env["GH_TOKEN"] = env["GITHUB_PERSONAL_ACCESS_TOKEN"]
         result = self._run(
             ["gh", *args], check=False, capture_output=True, text=True, env=env
         )

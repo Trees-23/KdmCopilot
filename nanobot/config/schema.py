@@ -459,6 +459,16 @@ class Phase6EvolutionConfig(Base):
         validation_alias=AliasChoices("publishEnabled", "publish_enabled"),
         serialization_alias="publishEnabled",
     )
+    overlay_repository: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("overlayRepository", "overlay_repository"),
+        serialization_alias="overlayRepository",
+    )
+    overlay_base_branch: str = Field(
+        default="main",
+        validation_alias=AliasChoices("overlayBaseBranch", "overlay_base_branch"),
+        serialization_alias="overlayBaseBranch",
+    )
     observation_groups: list[str] = Field(
         default_factory=list,
         validation_alias=AliasChoices("observationGroups", "observation_groups"),
