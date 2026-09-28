@@ -44,6 +44,10 @@ class Phase6RuntimeConfig:
     min_repeat_count: int = 2
     max_candidates_per_cycle: int = 20
     regression_pause_threshold: int = 3
+    dead_letter_pause_threshold: int = 3
+    notification_failure_rate_pause_threshold: float = 1.0
+    unauthorized_pause_threshold: int = 1
+    cross_group_leak_pause_threshold: int = 1
     max_memory_growth_ratio: float = 0.5
     retention_days: int = 18
     payload_retention_days: int = 7
@@ -68,6 +72,14 @@ class Phase6RuntimeConfig:
             raise ValueError("max_candidates_per_cycle must be positive")
         if self.regression_pause_threshold < 1:
             raise ValueError("regression_pause_threshold must be positive")
+        if self.dead_letter_pause_threshold < 1:
+            raise ValueError("dead_letter_pause_threshold must be positive")
+        if not 0 <= self.notification_failure_rate_pause_threshold <= 1:
+            raise ValueError("notification_failure_rate_pause_threshold must be between 0 and 1")
+        if self.unauthorized_pause_threshold < 1:
+            raise ValueError("unauthorized_pause_threshold must be positive")
+        if self.cross_group_leak_pause_threshold < 1:
+            raise ValueError("cross_group_leak_pause_threshold must be positive")
         if not 0 <= self.max_memory_growth_ratio:
             raise ValueError("max_memory_growth_ratio must not be negative")
         if self.payload_retention_days < 1 or self.retention_days < self.payload_retention_days:
@@ -372,6 +384,22 @@ def update_health(
     growth = float(metrics.get("memory_growth_ratio", 0.0))
     if growth > float(_config_value(config, "max_memory_growth_ratio", 0.5)):
         reasons.append("memory_capacity")
+    if int(metrics.get("dead_letter_count", 0)) >= int(
+        _config_value(config, "dead_letter_pause_threshold", 3)
+    ):
+        reasons.append("dead_letter_threshold")
+    if float(metrics.get("notification_failure_rate", 0.0)) >= float(
+        _config_value(config, "notification_failure_rate_pause_threshold", 1.0)
+    ) and int(metrics.get("notifications", 0)) > 0:
+        reasons.append("notification_failure_rate")
+    if int(metrics.get("unauthorized_attempts", 0)) >= int(
+        _config_value(config, "unauthorized_pause_threshold", 1)
+    ):
+        reasons.append("unauthorized_attempt")
+    if int(metrics.get("cross_group_leaks", 0)) >= int(
+        _config_value(config, "cross_group_leak_pause_threshold", 1)
+    ):
+        reasons.append("cross_group_leak")
     state = Phase6State(
         paused=bool(reasons) or previous.paused,
         pause_reason=",".join(reasons) if reasons else previous.pause_reason,
