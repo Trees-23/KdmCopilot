@@ -10,7 +10,7 @@
 
 ## 当前实施状态
 
-截至 2026-09-28，M0～M8 已完成，M9 已完成本地门禁、群内协议、自动 Overlay handoff 和私有仓库只读校验；真实合并/部署发布窗口仍未开启。M4/M5 已按用户确认完成加速验收并开启对应运行态：
+截至 2026-09-28，M0～M6 已完成；M7 的私有仓库保护已完成但 CI 基线 PR 尚待合并，M8 的自动 handoff 和远端适配器已完成但真实 CI 链路因基线缺失暂停。M9 已完成本地门禁、群内协议和私有仓库只读校验；真实合并/部署发布窗口仍未开启。M4/M5 已按用户确认完成加速验收并开启对应运行态：
 
 - 已加入独立的 `shadow_mode`、主动通知、采用和发布开关；当前运行态为 `phase6.enabled=true`、通知开启、采用/发布关闭。
 - 已确认 Proposal 确认码有效期为 12 小时（720 分钟），每群每日主动通知上限为 12 条。
@@ -23,6 +23,7 @@
 - 长期 Gateway 已在代理恢复后完成受控重建：`git-d605b959d5e6`，镜像 `sha256:4360632b24730f1d89eeae8e1005133efcfd706ccee1f1b43ba38d3ef4a5debb`，健康检查返回 `status=ok`，容器挂载仍为仓库 `runtime/`；运行配置保持采用/发布关闭。重建期间曾两次遇到 Docker 拉取 `auth.docker.io` 超时，手动拉取基础镜像后重试成功，失败与恢复证据已保留在本次验收记录中。
 - 已完成原 M8 本地发布门禁（现归入新 M9 前置能力）：二次确认、CI 条件、CAS、kill switch 和受控回调均已测试；真实远端发布尚未开启。
 - M9 本地端到端模拟验收已完成：二次确认 → CI → 私有 Overlay 合并回调 → 当前 Gateway 部署回调；自动 handoff 已覆盖 Gate → Proposal → 本地 Draft PR 适配器 → 发布候选通知。真实发布仍未执行。
+- 2026-09-28 M8 隔离实测创建临时 Overlay PR #2，确认 Gate → Proposal → Draft PR 成功，但因 CI 工作流不在 Overlay `main` 而无检查；PR #2 已关闭并清理。随后创建 CI 基线 PR #3，`validate` 已通过，等待管理员合并。
 - 2026-09-27 已完成一次长期 Gateway 的真实只读 WebUI 场景验收：新会话 `#/chat/websocket%3Afe7fdbdc-5367-476a-bb64-ae140fdb5cf7`，Trace `01a0e491-472a-7713-80ee-19f404d9599d`，场景标识 `[M9-REAL-READONLY-20260927-201639Z]`。Agent 仅执行运行态/定时任务/工作区和配置读取，Trace 终态为成功（29 节点、2187 Event；含一次已恢复的读取失败警告），明确返回 `publish_enabled=false`、采用关闭、Overlay 白名单为空，且未创建/批准/发布 Proposal、未外发 QQ、未重启 Gateway。
 
 M0 的目标群、审批管理员、@要求、Proposal 有效期和每日通知上限已确认并写入运行态；真实 openid 不写入 Git。通知时段暂按全天处理（当前还未实现时间窗限制）。公共 `Trees-23/KdmCopilot:main` 只承载通用框架，不作为个人 Skill 进化的发布目标；个人 Skill 发布目标改为独立的私有 Overlay 仓库。M4/M5 已完成加速验收，后续仍不得越过人工门禁。
@@ -55,7 +56,7 @@ workspace 原子采用/回滚                         CI 通过后 QQ 发布候�
 
 隔离原则：公共主分支与个人进化分离。Draft PR 本身不会改变 `main`，但任何合并到公共 `main` 的个性化 Skill 都会影响所有下游用户，因此本方案禁止把个人 Skill 合并到公共 `Trees-23/KdmCopilot:main`。个人 Skill 只能进入个人/私有 Overlay 仓库，并只部署到当前用户的 Gateway。
 
-当前执行位置：M0～M8 已通过并记录验收证据；M9 的本地发布门禁和自动 handoff 已完成，等待真实发布窗口验收。长期运行态保持 `publish_enabled=false`。
+当前执行位置：M0～M6 已通过并记录验收证据；M7 等待 CI 基线 PR #3 合并，M8 等待基线合并后重新验收真实自动 Draft PR；M9 的本地发布门禁和自动 handoff 已完成，等待真实发布窗口验收。长期运行态保持 `publish_enabled=false`。
 
 首版以 QQ 文本命令交互，不依赖内联按钮。当前 QQ 通道能发送 plain/markdown 文本，但尚未实现 `OutboundMessage.buttons` 的 QQ 渲染与交互回调；文本命令在 C2C 与群聊中都更稳定、可审计、可回放。
 
@@ -77,7 +78,7 @@ workspace 原子采用/回滚                         CI 通过后 QQ 发布候�
 ### 2.2 当前仍需接通或验收的部分
 
 1. 真实运行中的周期调度仍保持显式调用，避免在未完成观察前自行扩大扫描范围。
-2. 私有 Overlay 的远端适配器需要在隔离窗口完成一次真实 `gh pr create --draft`、CI 状态回写和失败恢复验收。
+2. 私有 Overlay 的 CI 基线 PR #3 需要先合并到 `main`；随后远端适配器才需要在隔离窗口完成一次真实 `gh pr create --draft`、CI 状态回写和失败恢复验收。
 3. `/evolve publish` 真实群内二次确认尚未在 `publish_enabled=true` 的窗口执行；长期开关必须保持关闭。
 4. 合并后当前 Gateway 重建、健康检查、回滚和构建/Trace 证据需要完成一次端到端演练。
 5. 官方 QQ 当前配置使用 `allowFrom: ["*"]`。这只表示所有成员可向 Agent 发消息，绝不能当作升级审批权限。
@@ -423,16 +424,17 @@ workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → �
 - [x] 实现 `/evolve rollback <proposal-id> <code>`，仅管理员可调用，并恢复已知 baseline revision。
 - [x] 在长期 Gateway 容器代码/运行库的隔离测试 Skill 上验证批准、下一次读取候选版本和回滚；测试文件、Proposal、Skill 记录均已清理。
 
-当前进度：M6 的采用代码、本地原子/CAS/回滚测试和一次性隔离 Gateway 验收已完成；长期运行态已恢复 `adoption_enabled=false`、白名单为空，未保留测试 Skill。个人 Overlay 已完成初始化；M7 的规则集、只读映射和部署基线检查已完成。M8 真实 Draft PR 与 CI 已正式验收通过；M9 个人 Gateway 发布仍未开启。
+当前进度：M6 的采用代码、本地原子/CAS/回滚测试和一次性隔离 Gateway 验收已完成；长期运行态已恢复 `adoption_enabled=false`、白名单为空，未保留测试 Skill。个人 Overlay 已完成初始化；M7 的仓库保护和只读映射已完成，但 CI 基线 PR #3 尚待合并。M8 自动 Draft PR 已实测成功，CI 后续通知等待基线合并后重新验收；M9 个人 Gateway 发布仍未开启。
 
 ### M7：个人 Skill Overlay 仓库准备
 
 - [x] 用户创建独立私有 GitHub 仓库 `Trees-23/KdmCopilot-skills-private`；仓库只保存个人 Skill Overlay，不保存 QQ 密钥、Token、完整聊天记录或长期运行数据库。
 - [x] 用户保护 Overlay 的 `main` 分支，规则集“保护个人 Overlay main”已启用；要求 PR、`validate` CI、禁止删除和强制推送；公共 `Trees-23/KdmCopilot:main` 不作为个人 Skill 的 PR/发布目标。
-- [x] 已确认 Overlay 默认分支为 `main`、仓库为私有；已加入 `Skill Overlay CI` 并在 PR #1 通过，部署责任人和受控凭据仍待确认。Token 只能使用 GitHub CLI/环境密钥注入，不能粘贴到 QQ 或提交到 Git。
+- [x] 已确认 Overlay 默认分支为 `main`、仓库为私有；旧 PR #1 的 `Skill Overlay CI` 已通过，但工作流尚未进入 `main`。
+- [ ] 将 CI 工作流基线合并到 Overlay `main`：PR #3 已创建为 Draft，`validate` 已通过，等待管理员合并。Token 只能使用 GitHub CLI/环境密钥注入，不能粘贴到 QQ 或提交到 Git。
 - [x] 已实现 Overlay 文件布局、candidate hash、baseline revision 与个人 Gateway 工作区之间的只读映射检查；3 个聚焦测试通过，检查不会写入 Skill 或改变线上版本。
 
-完成条件：公共仓库与个人 Overlay 的边界、权限、CI、回滚来源和部署目标均可审计；M7 已完成，`publish_enabled` 仍保持关闭。
+完成条件：公共仓库与个人 Overlay 的边界、权限、CI、回滚来源和部署目标均可审计；PR #3 合并并验证新 PR 能触发 `validate` 后，M7 才算完成。`publish_enabled` 仍保持关闭。
 
 ### M8：个人 Overlay Draft PR
 
@@ -442,10 +444,11 @@ workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → �
 - [ ] 在隔离窗口运行真实远端 `gh pr create --draft`，CI 通过后再发送“等待最终发布确认”通知；未通过 CI 不得发送发布确认提示。
 - [x] 将本次真实验收的远端目标指定为个人 Overlay，Draft PR base 为 Overlay `main`，不是公共 `Trees-23/KdmCopilot:main`。
 - [x] 在个人 Overlay 的临时测试 Skill 上创建真实 Draft PR [#1](https://github.com/Trees-23/KdmCopilot-skills-private/pull/1)；已验证公共仓库 `main`、公共镜像和长期 Gateway 未变化。
+- [x] 2026-09-28 通过真实临时 Proposal 创建并清理 Draft PR #2；验证自动 handoff 成功，发现 `main` 缺少 CI 工作流后关闭该 PR，未合并或部署。
 - [x] 验证 PR 正文只包含 Proposal 元数据、评测摘要、hash 和风险说明，不包含聊天正文、成员身份、完整模型输出或凭据；Overlay CI 已通过。
 
-阶段状态：M8 的 Overlay 隔离、Draft PR 适配器、自动 handoff 和本地远端校验代码已完成；真实远端自动建 PR、CI 回写和 CI 后通知仍需在隔离窗口验收。真实 Draft PR 只存在于个人 Overlay，未合并前不改变任何运行版本。失败则关闭 Draft PR 创建开关并保留审计证据。
-完成条件：M8 已核对 base 仓库、分支保护、CI 和公共仓库隔离；真实合并与部署仍留给 M9 二次确认。
+阶段状态：M8 的 Overlay 隔离、Draft PR 适配器、自动 handoff 和本地远端校验代码已完成；真实自动建 PR 已通过，CI 回写因 `main` 缺少工作流而暂停，待 PR #3 合并后重新验收 CI 后通知。真实 Draft PR 只存在于个人 Overlay，未合并前不改变任何运行版本。失败则关闭 Draft PR 创建开关并保留审计证据。
+完成条件：M8 已核对 base 仓库、分支保护和公共仓库隔离；CI 基线合并后还需验证新 Draft PR 能触发 `validate`，真实合并与部署仍留给 M9 二次确认。
 
 ### M9：个人 Overlay 受控发布
 
@@ -537,17 +540,18 @@ WebUI 的 `NanobotClient` 已有指数退避和 token 刷新重连；真实观�
 以下条件已经由用户完成，不再作为阻塞项：
 
 1. 私有仓库为 `Trees-23/KdmCopilot-skills-private`，默认分支为 `main`。
-2. Overlay `main` 已配置保护；公共 `Trees-23/KdmCopilot:main` 永远不是个人 Skill 发布目标。
+2. Overlay `main` 已配置保护；CI 基线 PR #3 已通过检查但尚未合并。公共 `Trees-23/KdmCopilot:main` 永远不是个人 Skill 发布目标。
 3. Overlay 只服务当前 `nanobot-gateway`；合并后只重建当前 Gateway，不发布公共镜像。
 4. GitHub 凭据只通过 `gh` 登录态或受控环境注入，不进入 QQ、日志、Proposal 正文或 Git 提交。
 
 ### 13.2 接下来按顺序推进
 
-1. 用临时测试 Skill 在私有 Overlay 创建一条新的 Draft PR，验证仓库、base、分支保护和 CI 状态回写。
-2. CI 通过后由后台向 QQ 群发送发布候选通知；通知只包含 Proposal、PR、CI 摘要和第二次确认命令。
-3. 你在群内执行 `/evolve publish <proposal-id>` 获取一次性确认码，再由同一管理员执行带确认码的第二条命令。
-4. 仅在这个隔离发布窗口临时打开 `publish_enabled`，演练“合并 Overlay → 重建当前 Gateway → 健康检查 → 回滚”。
-5. 验收完成后立即关闭发布开关并清理临时 Proposal/Skill；是否长期打开由你另行确认。
+1. 先确认并合并私有 Overlay CI 基线 PR #3。
+2. 用临时测试 Skill 在私有 Overlay 创建一条新的 Draft PR，验证仓库、base、分支保护和 CI 状态回写。
+3. CI 通过后由后台向 QQ 群发送发布候选通知；通知只包含 Proposal、PR、CI 摘要和第二次确认命令。
+4. 你在群内执行 `/evolve publish <proposal-id>` 获取一次性确认码，再由同一管理员执行带确认码的第二条命令。
+5. 仅在这个隔离发布窗口临时打开 `publish_enabled`，演练“合并 Overlay → 重建当前 Gateway → 健康检查 → 回滚”。
+6. 验收完成后立即关闭发布开关并清理临时 Proposal/Skill；是否长期打开由你另行确认。
 
 ### 13.3 在你配合前明确不做的事情
 
