@@ -69,6 +69,7 @@ class EvolutionCycleResult:
     proposal_ids: tuple[str, ...] = ()
     rejected_task_keys: tuple[str, ...] = ()
     deduplicated_task_keys: tuple[str, ...] = ()
+    overlay_handoff_statuses: tuple[str, ...] = ()
     reason: str | None = None
 
 
@@ -87,8 +88,15 @@ def run_fixture_review_cycle(
     reviewer: str = "phase6-eval-reviewer",
     actor: str = "phase6-orchestrator",
     owner: str | None = None,
+    overlay_pipeline: Any | None = None,
 ) -> EvolutionCycleResult:
-    """Run one bounded offline review cycle under a workspace lease."""
+    """Run one bounded review cycle under a workspace lease.
+
+    Workspace candidates stop at a human approval Proposal.  When an explicit
+    Overlay pipeline is supplied and ``draft_pr_enabled`` is on, Overlay
+    candidates continue automatically to private Draft PR creation; publishing
+    remains a separate QQ second-confirmation operation.
+    """
 
     if not config.enabled or config.kill_switch:
         return EvolutionCycleResult("disabled")
@@ -121,6 +129,7 @@ def run_fixture_review_cycle(
 
         eval_run_ids: list[str] = []
         proposal_ids: list[str] = []
+        overlay_handoffs: list[str] = []
         rejected: list[str] = []
         deduped: list[str] = []
         for spec in candidate_specs:
@@ -185,6 +194,9 @@ def run_fixture_review_cycle(
                     gate_snapshot={"holdout_passed": gate.holdout_passed, "security_clean": gate.security_clean},
                 )
                 proposal_ids.append(proposal.proposal_id)
+                if proposal.target == "git_pr_proposal" and overlay_pipeline is not None:
+                    handoff = overlay_pipeline.handoff(connection, proposal.proposal_id, config)
+                    overlay_handoffs.append(handoff.status)
             except Exception as exc:
                 if "UNIQUE constraint failed" in str(exc):
                     deduped.append(spec.task_key)
@@ -201,7 +213,7 @@ def run_fixture_review_cycle(
         )
         return EvolutionCycleResult(
             "completed", len(selected), tuple(staged_cases), tuple(eval_run_ids), tuple(proposal_ids),
-            tuple(rejected), tuple(deduped),
+            tuple(rejected), tuple(deduped), tuple(overlay_handoffs),
         )
     finally:
         release_lock(connection, lease)

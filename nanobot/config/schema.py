@@ -444,6 +444,11 @@ class Phase6EvolutionConfig(Base):
         validation_alias=AliasChoices("adoptionEnabled", "adoption_enabled"),
         serialization_alias="adoptionEnabled",
     )
+    draft_pr_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("draftPrEnabled", "draft_pr_enabled"),
+        serialization_alias="draftPrEnabled",
+    )
     workspace_skill_allowlist: list[str] = Field(
         default_factory=list,
         validation_alias=AliasChoices("workspaceSkillAllowlist", "workspace_skill_allowlist"),

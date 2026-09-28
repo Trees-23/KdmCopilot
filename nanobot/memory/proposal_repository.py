@@ -378,6 +378,61 @@ class ProposalRepository:
                                    idempotency_key=idempotency_key, request_digest=request_digest,
                                    result_status="approved", result={"status": "approved"}, now=now)
 
+    def approve_after_gate(
+        self,
+        proposal_id: str,
+        *,
+        workspace: str,
+        actor: str = "phase6-auto-gate",
+        reason: str = "automatic evaluation passed",
+        now: datetime | None = None,
+    ) -> ActionResult:
+        """Advance an Overlay Proposal after an automatic Gate has passed.
+
+        Overlay candidates use the final QQ publish confirmation as their only
+        human gate.  This system transition is therefore deliberately separate
+        from :meth:`approve`, which remains the administrator confirmation path
+        for workspace adoption.
+        """
+
+        current = self.get(proposal_id)
+        if current is None:
+            raise KeyError(proposal_id)
+        if current.status in {"approved", "creating_pr", "pr_created"}:
+            return self._record_action(
+                proposal_id=proposal_id,
+                workspace=workspace,
+                action="automatic_gate_approval",
+                actor_openid=actor,
+                group_openid=None,
+                idempotency_key=f"automatic-gate:{proposal_id}",
+                request_digest=_digest({"proposal_id": proposal_id, "reason": reason}),
+                result_status="idempotent",
+                result={"status": current.status},
+                now=now,
+            )
+        if current.status not in {"eligible_for_confirmation", "notified"}:
+            raise ProposalConflict("Proposal is not eligible for automatic Overlay PR creation")
+        self.transition(
+            proposal_id,
+            expected_status=current.status,
+            new_status="approved",
+            expected_epoch=current.version_epoch,
+            now=now,
+        )
+        return self._record_action(
+            proposal_id=proposal_id,
+            workspace=workspace,
+            action="automatic_gate_approval",
+            actor_openid=actor,
+            group_openid=None,
+            idempotency_key=f"automatic-gate:{proposal_id}",
+            request_digest=_digest({"proposal_id": proposal_id, "reason": reason}),
+            result_status="approved",
+            result={"status": "approved", "reason": reason},
+            now=now,
+        )
+
     def reject(
         self,
         proposal_id: str,

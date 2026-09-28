@@ -1,0 +1,110 @@
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+from nanobot.memory.continuous import Phase6RuntimeConfig
+from nanobot.memory.evolution_orchestrator import CandidateSpec, run_fixture_review_cycle
+from nanobot.memory.maintenance import open_maintenance_db
+from nanobot.memory.overlay_pipeline import OverlayProposalPipeline
+from nanobot.memory.proposal_repository import ProposalRepository
+
+
+def _setup(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    connection = open_maintenance_db(workspace)
+    connection.execute(
+        "INSERT INTO skills(skill_id,name,source_kind,created_at,updated_at) "
+        "VALUES('skill-1','demo','builtin','now','now')"
+    )
+    connection.execute(
+        "INSERT INTO skill_revisions(revision_id,skill_id,skill_version,content_hash,content,author_actor,created_at) "
+        "VALUES('base-1','skill-1','1','sha256:base','old','test','now')"
+    )
+    connection.execute(
+        "INSERT INTO skill_revisions(revision_id,skill_id,skill_version,content_hash,content,author_actor,created_at) "
+        "VALUES('candidate-1','skill-1','2','sha256:candidate','new','test','now')"
+    )
+    connection.commit()
+    return workspace, connection
+
+
+def _spec() -> CandidateSpec:
+    cases = tuple(
+        {"case_id": f"case-{index:02d}", "prompt": "fixture", "expected": "ok"}
+        for index in range(20)
+    )
+    return CandidateSpec(
+        task_key="overlay repeat",
+        skill_id="skill-1",
+        skill_name="demo",
+        source_kind="shared",
+        baseline_revision_id="base-1",
+        candidate_revision_id="candidate-1",
+        baseline_hash="sha256:base",
+        candidate_hash="sha256:candidate",
+        cases=cases,
+        fixture_hash="sha256:fixture",
+    )
+
+
+def test_gate_passed_overlay_handoff_creates_pr_and_notifies(tmp_path):
+    workspace, connection = _setup(tmp_path)
+    created: list[str] = []
+    notified: list[str] = []
+    repo = ProposalRepository(connection)
+
+    def create_draft(proposal_id: str):
+        created.append(proposal_id)
+        repo.transition(proposal_id, expected_status="approved", new_status="creating_pr")
+        repo.transition(proposal_id, expected_status="creating_pr", new_status="pr_created")
+        return SimpleNamespace(status="pr_created")
+
+    pipeline = OverlayProposalPipeline(
+        str(workspace),
+        create_draft_pr=create_draft,
+        notify_publish_candidate=notified.append,
+    )
+    config = Phase6RuntimeConfig(enabled=True, draft_pr_enabled=True, max_candidates_per_cycle=1)
+    result = run_fixture_review_cycle(
+        connection,
+        workspace,
+        config,
+        trace_records=[
+            {"trace_id": "trace-1", "summary": "overlay repeat", "outcome": "success"},
+            {"trace_id": "trace-2", "summary": "overlay repeat", "outcome": "success"},
+        ],
+        candidate_specs=[_spec()],
+        overlay_pipeline=pipeline,
+    )
+
+    assert result.overlay_handoff_statuses == ("pr_created",)
+    assert created == list(result.proposal_ids)
+    assert notified == list(result.proposal_ids)
+    assert connection.execute("SELECT status FROM skill_proposals").fetchone()[0] == "pr_created"
+    assert connection.execute(
+        "SELECT result_status FROM proposal_actions WHERE action='automatic_gate_approval'"
+    ).fetchone()[0] == "approved"
+    connection.close()
+
+
+def test_overlay_handoff_stays_disabled_without_explicit_flag(tmp_path):
+    workspace, connection = _setup(tmp_path)
+    called: list[str] = []
+    pipeline = OverlayProposalPipeline(str(workspace), create_draft_pr=called.append)
+    config = Phase6RuntimeConfig(enabled=True, draft_pr_enabled=False, max_candidates_per_cycle=1)
+    result = run_fixture_review_cycle(
+        connection,
+        workspace,
+        config,
+        trace_records=[
+            {"trace_id": "trace-1", "summary": "overlay repeat", "outcome": "success"},
+            {"trace_id": "trace-2", "summary": "overlay repeat", "outcome": "success"},
+        ],
+        candidate_specs=[_spec()],
+        overlay_pipeline=pipeline,
+    )
+    assert result.overlay_handoff_statuses == ("disabled",)
+    assert called == []
+    assert connection.execute("SELECT status FROM skill_proposals").fetchone()[0] == "eligible_for_confirmation"
+    connection.close()

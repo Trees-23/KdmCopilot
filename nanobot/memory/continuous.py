@@ -40,6 +40,7 @@ Phase6Disabled = Phase6DisabledError
 class Phase6RuntimeConfig:
     enabled: bool = False
     kill_switch: bool = False
+    draft_pr_enabled: bool = False
     min_repeat_count: int = 2
     max_candidates_per_cycle: int = 20
     regression_pause_threshold: int = 3
@@ -55,6 +56,9 @@ class Phase6RuntimeConfig:
             values = config
         else:
             values = {name: getattr(config, name) for name in cls.__dataclass_fields__ if hasattr(config, name)}
+            evolution = getattr(config, "evolution", None)
+            if evolution is not None and hasattr(evolution, "draft_pr_enabled"):
+                values["draft_pr_enabled"] = bool(evolution.draft_pr_enabled)
         return cls(**values)
 
     def __post_init__(self) -> None:

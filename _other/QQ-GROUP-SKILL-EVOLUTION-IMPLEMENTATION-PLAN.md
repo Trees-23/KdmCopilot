@@ -29,7 +29,7 @@ M0 的目标群、审批管理员、@要求、Proposal 有效期和每日通知�
 
 ## 1. 决策摘要
 
-目标闭环如下：
+目标闭环如下（Overlay 与 workspace 分成两条路径）：
 
 ```text
 群内任务与运行 Trace
@@ -127,21 +127,35 @@ Group Perception          EvolutionCommand          ProposalNotifier
 （过滤、脱敏、事件）       （管理员验证、CAS）        （outbox、重试、审计）
        │                         │                          ▲
        ▼                         ▼                          │
-Trace / Case ──→ Phase6 Orchestrator ──→ Proposal Repository │
-                       │                    │               │
-                       ▼                    ▼               │
-                EvalPack / EvalRun       审阅状态机 ─────────┘
-                       │                    │
-                       ▼                    ▼
-                 Gate / 独立回放      Adoption / PR Publisher
-                                         │
-                      ┌──────────────────┴──────────────────┐
-                      ▼                                     ▼
-             workspace SKILL.md                      Draft PR + CI
-             原子替换、下一轮生效                     二次确认后发布
+Trace / Case ──→ Phase6 Orchestrator ──→ 自动评审 Gate
+                                            │
+                                            ▼
+                                   Proposal Repository
+                                      │             │
+                         workspace 候选 │             │ Overlay 候选
+                                      ▼             ▼
+                         QQ 通知 + 管理员批准   自动创建私有 Draft PR
+                                      │             │
+                                      ▼             ▼
+                         原子采用/回滚       CI + QQ 发布候选通知
+                                                    │
+                                                    ▼
+                                             群内二次确认
+                                                    │
+                                                    ▼
+                                          私有 Overlay 合并与部署
 ```
 
-所有自动化写入均在后台受控服务完成。普通 Agent、维护评测角色和 QQ 群成员都不直接拥有文件写入、Git 或网络发布权限。
+所有自动化写入均在后台受控服务完成。普通 Agent、维护评测角色和 QQ 群成员都不直接拥有文件写入、Git 或网络发布权限。对个人 Overlay，自动评审通过后由受控后台创建 Proposal 和 Draft PR；管理员只在 CI 通过后的最终发布环节做二次确认，不需要手工创建 Proposal 或 PR。
+
+### 4.2 两条 Proposal 路径的职责边界
+
+| 路径 | 自动动作 | 管理员动作 | 最终效果 |
+|---|---|---|---|
+| workspace Skill | Gate 通过 → Proposal → 群通知 | `/evolve approve` 或 `/evolve reject` | 批准后原子采用，可回滚 |
+| 个人 Overlay Skill | Gate 通过 → Proposal → Draft PR → CI → 群通知 | `/evolve publish` 两次确认 | 合并私有 Overlay，只重建当前 Gateway |
+
+`/evolve approve` 不再是 Overlay 发布前置条件；Overlay 的人工门禁统一收敛到 CI 通过后的 `/evolve publish` 二次确认。`publish_enabled` 只控制最后的合并/部署，不影响候选评审和 Draft PR 生成。
 
 ### 4.1 公共核心与个人 Overlay 隔离
 
@@ -336,7 +350,7 @@ workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → �
 | M5 | 开启主动通知 | 开启 | 开启 | 关闭 | 关闭 | 评测通过后主动推送，仍不能升级 |
 | M6 | 开启人工批准后的 workspace 采用 | 开启 | 开启 | 仅 workspace 白名单 | 关闭 | 你确认后才原子更新 Skill，可回滚 |
 | M7 | 个人 Overlay 仓库准备 | 开启 | 开启 | 关闭 | 关闭 | 创建隔离仓库、保护公共 main、确认 CI 与部署来源 |
-| M8 | 个人 Overlay Draft PR | 开启 | 开启 | 允许建 Draft PR | 关闭 | 只向个人 Overlay 建 PR，不能影响公共 main |
+| M8 | 个人 Overlay Draft PR | 开启 | 开启 | 自动建 Draft PR | 关闭 | Gate 通过后自动生成 Proposal/Draft PR，不能影响公共 main |
 | M9 | 个人 Overlay 受控发布 | 开启 | 开启 | 已批准 Proposal | **二次确认** | CI 通过且再次确认后只发布到个人 Gateway |
 | M10 | 稳态运行与运营复盘 | 开启 | 开启 | 按白名单 | 按策略 | 监控、限流、暂停和定期复审 |
 
@@ -421,11 +435,13 @@ workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → �
 ### M8：个人 Overlay Draft PR
 
 - [x] 完成本地 Draft PR 适配器：已批准 Proposal 生成专用分支、中文提交和脱敏正文；重复执行幂等，不切换公共仓库版本。
+- [ ] 将 Gate 通过的 Overlay Proposal 自动推进到 Draft PR；不再要求管理员先执行 `/evolve approve`，workspace Proposal 仍保留人工批准路径。
+- [ ] 由受控后台把 Draft PR/CI 状态回写 Proposal，并向 QQ 群发送“等待最终发布确认”通知；普通 Agent 不直接调用 GitHub。
 - [x] 将本次真实验收的远端目标指定为个人 Overlay，Draft PR base 为 Overlay `main`，不是公共 `Trees-23/KdmCopilot:main`。
 - [x] 在个人 Overlay 的临时测试 Skill 上创建真实 Draft PR [#1](https://github.com/Trees-23/KdmCopilot-skills-private/pull/1)；已验证公共仓库 `main`、公共镜像和长期 Gateway 未变化。
 - [x] 验证 PR 正文只包含 Proposal 元数据、评测摘要、hash 和风险说明，不包含聊天正文、成员身份、完整模型输出或凭据；Overlay CI 已通过。
 
-阶段状态：M8 已正式完成；真实 Draft PR 只存在于个人 Overlay，CI `validate` 已通过，未合并前不改变任何运行版本。失败则关闭 Draft PR 创建开关并保留审计证据。
+阶段状态：M8 的 Overlay 隔离、Draft PR 适配器和真实 CI 已完成；“Gate 通过后自动创建 Draft PR、回写 Proposal、主动通知”仍是本轮需要补齐的自动衔接。真实 Draft PR 只存在于个人 Overlay，CI `validate` 已通过，未合并前不改变任何运行版本。失败则关闭 Draft PR 创建开关并保留审计证据。
 完成条件：M8 已核对 base 仓库、分支保护、CI 和公共仓库隔离；真实合并与部署仍留给 M9 二次确认。
 
 ### M9：个人 Overlay 受控发布
@@ -434,6 +450,7 @@ workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → �
 - [x] 接通群内 `/evolve publish` 协议：只允许已配置 `approvalAdminOpenids` 的管理员在已配置通知群中对个人 Overlay 的 `pr_created` Proposal 发起二次确认；必须 @机器人，普通成员、错误群、错误码、过期码和公共仓库 PR 一律拒绝。协议已完成本地测试并部署到 Gateway，`publish_enabled` 仍保持关闭。
 - [x] 增加私有 Overlay 远端校验适配器：通过受控 `gh` 调用核对唯一 PR、仓库、`main` 基线、Proposal 分支、head SHA 和全部 CI 检查；真实 PR #1 已只读验收通过，未执行 ready、合并或部署。
 - [x] 增加受控部署适配器：二次确认后才允许下载指定合并 SHA 的 Overlay tarball，只同步安全的 `skills/<name>/SKILL.md`，再调用固定 Gateway 重建脚本并要求返回 build reference；覆盖路径穿越、空 Overlay、构建无证据和失败恢复测试。该适配器尚未接入长期 Gateway，也未执行真实合并。
+- [ ] 接通“Gate → Overlay Proposal → Draft PR → CI → QQ 发布候选通知”的受控后台流水线；该流水线只在个人 Overlay 路径启用，不自动合并或部署。
 - [ ] `publish_enabled=true` 只在明确的发布窗口开启，并且同时检查 CI 成功、PR 状态、Overlay 分支、候选 hash、Proposal 未过期和当前 Gateway 基线；当前真实 Gateway 只读验收已通过，但发布开关仍为 `false`。
 - [ ] 合并后只重建当前用户的长期 Gateway，记录构建标识、Overlay commit、PR、CI、部署和回滚证据；不得执行公共 `main` 合并。
 - [ ] 验证发布失败、构建错配、回滚和 kill switch 行为；任何失败都保留 PR、构建和审计证据，不静默重试。
