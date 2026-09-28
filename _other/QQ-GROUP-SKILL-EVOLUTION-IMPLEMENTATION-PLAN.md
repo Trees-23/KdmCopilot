@@ -32,6 +32,7 @@
 - 2026-09-28 真实二次确认首次执行时发现 Fine-grained Token 对 GraphQL `statusCheckRollup` 返回 403；已改为按 PR head SHA 查询 GitHub Actions REST workflow runs，避免扩大权限范围。原 Proposal/确认码保持有效，待修复部署后继续。
 - 2026-09-28 M9 真实发布窗口已完成：私有 Overlay PR #5 CI 通过，QQ 群二次确认成功，PR 合并提交为 `dbcad656a5d43fb506936ba27758135e0130f39b`；当前 Gateway 未因发布重启，`SkillsLoader` 已读到临时 Skill，随后删除临时 Skill、记录 `rolled_back` 审计并关闭 `publishEnabled`。发布后为关闭开关而进行的一次配置重载不属于 Skill 发布重启。
 - 2026-09-28 M10 首批运营能力已接入：新增无载荷周报汇总（候选数、Gate 通过率、通知失败率、拒绝/批准、采用/回滚及误报原因），并将 dead-letter、通知失败率、越权尝试和跨群泄露统一接入自动暂停门禁；暂停原因通过注入式通知适配器发送，默认不改变长期开关。聚焦场景测试已通过，7 天连续稳态观察尚未完成。
+- 当前长期工作区最近 7 天只读快照：候选 1、Gate 通过率 100%、通知失败率 0%、dead-letter 0、采用/回滚 0/1；该快照仅作 M10 起始基线，不替代连续 7 天观察。
 - 2026-09-28 M8 隔离实测创建临时 Overlay PR #2，确认 Gate → Proposal → Draft PR 成功，但因 CI 工作流不在 Overlay `main` 而无检查；PR #2 已关闭并清理。随后 CI 基线 PR #3 已合并；新临时 PR #4 的 `validate` 成功，CI 回写和候选通知幂等均已验证，PR #4 已关闭并清理。最后使用长期 Gateway 向真实 QQ 测试群投递临时 `pr_created` Proposal，Delivery 为 `sent`，通知内容正确使用 `/evolve publish`，测试 Proposal/Delivery/审计已清理。
 - 2026-09-27 已完成一次长期 Gateway 的真实只读 WebUI 场景验收：新会话 `#/chat/websocket%3Afe7fdbdc-5367-476a-bb64-ae140fdb5cf7`，Trace `01a0e491-472a-7713-80ee-19f404d9599d`，场景标识 `[M9-REAL-READONLY-20260927-201639Z]`。Agent 仅执行运行态/定时任务/工作区和配置读取，Trace 终态为成功（29 节点、2187 Event；含一次已恢复的读取失败警告），明确返回 `publish_enabled=false`、采用关闭、Overlay 白名单为空，且未创建/批准/发布 Proposal、未外发 QQ、未重启 Gateway。
 
