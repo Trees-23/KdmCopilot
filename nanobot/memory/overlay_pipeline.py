@@ -23,7 +23,13 @@ class OverlayHandoffResult:
 
 
 class OverlayProposalPipeline:
-    """Perform the non-publishing Overlay handoff after automatic review."""
+    """Perform the non-publishing Overlay handoff after automatic review.
+
+    A repository adapter may return ``ci_passed=False`` while it waits for
+    GitHub checks.  In that case the Proposal remains ``pr_created`` and the
+    publish-candidate notification is deferred until the adapter's CI refresh
+    callback observes a passing result.
+    """
 
     def __init__(
         self,
@@ -70,7 +76,12 @@ class OverlayProposalPipeline:
                         reason=str(getattr(result, "reason", None) or result_status),
                     )
                 return OverlayHandoffResult("failed", proposal_id, getattr(result, "reason", None))
-            if self.notify_publish_candidate is not None:
+            # Local fixture adapters do not expose CI state and retain the
+            # historical immediate notification behavior.  A real remote
+            # adapter must explicitly report ``ci_passed=True`` so that the
+            # group is not asked to publish before CI completes.
+            ci_passed = getattr(result, "ci_passed", None)
+            if self.notify_publish_candidate is not None and (ci_passed is None or ci_passed):
                 self.notify_publish_candidate(proposal_id)
             return OverlayHandoffResult("pr_created", proposal_id)
         except (ProposalConflict, sqlite3.Error, OSError, RuntimeError) as exc:

@@ -45,10 +45,15 @@ def _evolution(config: Any) -> Any:
 
 
 def _enabled(config: Any) -> bool:
-    # M7 uses the same explicit human-approval gate as workspace adoption.  The
-    # publish gate is intentionally not consulted: creating a Draft PR is not
-    # publishing it.
-    return phase6_active(config) and bool(getattr(_evolution(config), "adoption_enabled", False))
+    # Overlay Draft PR creation is an automatic post-Gate handoff.  It must be
+    # independently enabled from workspace adoption and from final publishing.
+    # Keep ``adoption_enabled`` as a compatibility fallback for older callers
+    # that still use the local adapter directly.
+    evolution = _evolution(config)
+    return phase6_active(config) and bool(
+        getattr(evolution, "draft_pr_enabled", False)
+        or getattr(evolution, "adoption_enabled", False)
+    )
 
 
 def _safe_component(value: str, label: str) -> str:
