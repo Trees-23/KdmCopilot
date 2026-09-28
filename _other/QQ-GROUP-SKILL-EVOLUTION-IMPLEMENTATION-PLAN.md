@@ -15,7 +15,7 @@
 
 ## 当前实施状态
 
-截至 2026-09-28，M0～M8 已完成；M9 的真实私有 Overlay 发布窗口已完成临时验收并回滚，长期运行态已恢复 `publishEnabled=false`。M4/M5 已按用户确认完成加速验收并开启对应运行态：
+截至 2026-09-28，M0～M9 已完成；M10 已完成首批运营能力接入，正在进行连续 7 天稳态观察。M9 的真实私有 Overlay 发布窗口已完成临时验收并回滚，长期运行态已恢复 `publishEnabled=false`。M4/M5 已按用户确认完成加速验收并开启对应运行态：
 
 - 已加入独立的 `shadow_mode`、主动通知、采用和发布开关；当前运行态为 `phase6.enabled=true`、通知开启、采用/发布关闭。
 - 已确认 Proposal 确认码有效期为 12 小时（720 分钟），每群每日主动通知上限为 12 条。
@@ -31,6 +31,7 @@
 - 2026-09-28 已将私有 Overlay 的发布回调接入 `AgentLoop`：配置 `overlayRepository` 后，Gateway 启动时自动注入受控 GitHub 校验、合并和 Skill 热加载回调；镜像内已安装 `gh`，构建引用为 `git-6906f5c6be02`，健康检查通过。当前容器尚未配置 GitHub Token，因此发布窗口前仍需补充受控凭据。
 - 2026-09-28 真实二次确认首次执行时发现 Fine-grained Token 对 GraphQL `statusCheckRollup` 返回 403；已改为按 PR head SHA 查询 GitHub Actions REST workflow runs，避免扩大权限范围。原 Proposal/确认码保持有效，待修复部署后继续。
 - 2026-09-28 M9 真实发布窗口已完成：私有 Overlay PR #5 CI 通过，QQ 群二次确认成功，PR 合并提交为 `dbcad656a5d43fb506936ba27758135e0130f39b`；当前 Gateway 未因发布重启，`SkillsLoader` 已读到临时 Skill，随后删除临时 Skill、记录 `rolled_back` 审计并关闭 `publishEnabled`。发布后为关闭开关而进行的一次配置重载不属于 Skill 发布重启。
+- 2026-09-28 M10 首批运营能力已接入：新增无载荷周报汇总（候选数、Gate 通过率、通知失败率、拒绝/批准、采用/回滚及误报原因），并将 dead-letter、通知失败率、越权尝试和跨群泄露统一接入自动暂停门禁；暂停原因通过注入式通知适配器发送，默认不改变长期开关。聚焦场景测试已通过，7 天连续稳态观察尚未完成。
 - 2026-09-28 M8 隔离实测创建临时 Overlay PR #2，确认 Gate → Proposal → Draft PR 成功，但因 CI 工作流不在 Overlay `main` 而无检查；PR #2 已关闭并清理。随后 CI 基线 PR #3 已合并；新临时 PR #4 的 `validate` 成功，CI 回写和候选通知幂等均已验证，PR #4 已关闭并清理。最后使用长期 Gateway 向真实 QQ 测试群投递临时 `pr_created` Proposal，Delivery 为 `sent`，通知内容正确使用 `/evolve publish`，测试 Proposal/Delivery/审计已清理。
 - 2026-09-27 已完成一次长期 Gateway 的真实只读 WebUI 场景验收：新会话 `#/chat/websocket%3Afe7fdbdc-5367-476a-bb64-ae140fdb5cf7`，Trace `01a0e491-472a-7713-80ee-19f404d9599d`，场景标识 `[M9-REAL-READONLY-20260927-201639Z]`。Agent 仅执行运行态/定时任务/工作区和配置读取，Trace 终态为成功（29 节点、2187 Event；含一次已恢复的读取失败警告），明确返回 `publish_enabled=false`、采用关闭、Overlay 白名单为空，且未创建/批准/发布 Proposal、未外发 QQ、未重启 Gateway。
 
@@ -477,12 +478,12 @@ workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → �
 
 ### M10：稳态运行与运营复盘
 
-- [ ] 每周输出候选数量、Gate 通过率、通知失败率、管理员拒绝率、采用/回滚率和误报原因。
-- [ ] 超过阈值自动暂停 Phase 6，并向管理员通知暂停原因。
+- [x] 每周输出候选数量、Gate 通过率、通知失败率、管理员拒绝率、采用/回滚率和误报原因；周报只读取 Proposal/Delivery/Action 元数据，不读取模型原文或凭据。
+- [x] 超过阈值自动暂停 Phase 6，并通过注入式通知适配器向管理员发送暂停原因；暂停状态持久化且不会自动恢复。
 - [ ] 定期复审群白名单、Skill 白名单、管理员名单、配额和通知内容。
 - [ ] 保持 `kill_switch` 可在不重启 Gateway 的情况下阻止新的自动化写路径（配置热刷新能力需单独验收）。
 
-完成条件：连续 7 天无未处理 dead-letter、无越权命令成功、无自动发布、无跨群泄露，且管理员认可通知频率和升级质量。
+完成条件：连续 7 天无未处理 dead-letter、无越权命令成功、无自动发布、无跨群泄露，且管理员认可通知频率和升级质量。目前尚未满足连续 7 天观察条件。
 
 ## 11. 测试与验收矩阵
 
