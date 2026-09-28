@@ -27,7 +27,7 @@ def _tar(*names: tuple[str, bytes]) -> bytes:
     return output.getvalue()
 
 
-def test_deployer_syncs_overlay_and_runs_rebuild(tmp_path):
+def test_deployer_syncs_overlay_without_restarting_gateway(tmp_path):
     calls = []
     payload = _tar(("owner-repo/skills/demo/SKILL.md", b"# deployed\n"))
 
@@ -35,7 +35,7 @@ def test_deployer_syncs_overlay_and_runs_rebuild(tmp_path):
         calls.append((command, kwargs))
         if command[:2] == ["gh", "api"]:
             return subprocess.CompletedProcess(command, 0, payload, b"")
-        return subprocess.CompletedProcess(command, 0, "Build reference: git-test123\n", "")
+        raise AssertionError(f"hot deployment must not run a rebuild command: {command}")
 
     deployer = OverlayGatewayDeployer(
         "Trees-23/KdmCopilot-skills-private",
@@ -45,9 +45,10 @@ def test_deployer_syncs_overlay_and_runs_rebuild(tmp_path):
         run=run,
     )
     result = deployer.deploy(SHA)
-    assert result == f"git-test123 overlay={SHA} skills=1"
+    assert result == f"hot-reload overlay={SHA} skills=1"
     assert (tmp_path / "workspace/skills/demo/SKILL.md").read_text() == "# deployed\n"
     assert calls[0][0] == ["gh", "api", f"repos/Trees-23/KdmCopilot-skills-private/tarball/{SHA}"]
+    assert len(calls) == 1
 
 
 def test_deployer_rejects_path_traversal(tmp_path):
@@ -67,13 +68,13 @@ def test_deployer_rejects_path_traversal(tmp_path):
         deployer.deploy(SHA)
 
 
-def test_deployer_requires_build_evidence(tmp_path):
+def test_deployer_does_not_require_build_evidence(tmp_path):
     payload = _tar(("owner-repo/skills/demo/SKILL.md", b"# deployed\n"))
 
     def run(command, **kwargs):
         if command[:2] == ["gh", "api"]:
             return subprocess.CompletedProcess(command, 0, payload, b"")
-        return subprocess.CompletedProcess(command, 0, "Gateway started\n", "")
+        raise AssertionError(f"hot deployment must not run a rebuild command: {command}")
 
     deployer = OverlayGatewayDeployer(
         "Trees-23/KdmCopilot-skills-private",
@@ -82,8 +83,7 @@ def test_deployer_requires_build_evidence(tmp_path):
         rebuild_script=tmp_path / "rebuild.sh",
         run=run,
     )
-    with pytest.raises(OverlayReleaseError, match="build reference"):
-        deployer.deploy(SHA)
+    assert deployer.deploy(SHA) == f"hot-reload overlay={SHA} skills=1"
 
 
 def test_publish_gate_uses_overlay_merge_and_deploy_callbacks(tmp_path):

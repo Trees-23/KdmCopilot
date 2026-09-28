@@ -1,4 +1,4 @@
-"""Controlled deployment of a merged personal Skill Overlay.
+"""Controlled hot deployment of a merged personal Skill Overlay.
 
 This module is deliberately callback-oriented.  It never runs as part of a
 normal Agent turn: a caller must inject it into the M9 publish gate after the
@@ -32,7 +32,17 @@ class DeploymentResult:
 
 
 class OverlayGatewayDeployer:
-    """Sync only safe ``skills/*/SKILL.md`` files and rebuild one Gateway."""
+    """Sync only safe ``skills/*/SKILL.md`` files into the live workspace.
+
+    ``SkillsLoader`` reads workspace Skill files while building each new Agent
+    context.  Replacing the files atomically is therefore sufficient to make
+    an Overlay publish visible to the next turn; replacing the Gateway
+    container would unnecessarily disconnect WebUI and QQ clients.
+
+    ``project_root`` and ``rebuild_script`` remain accepted for compatibility
+    with the original M9 wiring, but are intentionally unused.  They can be
+    removed once all external release workers have migrated to hot loading.
+    """
 
     def __init__(
         self,
@@ -40,13 +50,15 @@ class OverlayGatewayDeployer:
         *,
         project_root: str | Path,
         workspace: str | Path,
-        rebuild_script: str | Path,
+        rebuild_script: str | Path | None = None,
         run: _RUN = subprocess.run,
     ) -> None:
         self.repository = repository
         self.project_root = Path(project_root).expanduser().resolve()
         self.workspace = Path(workspace).expanduser().resolve()
-        self.rebuild_script = Path(rebuild_script).expanduser().resolve()
+        self.rebuild_script = (
+            Path(rebuild_script).expanduser().resolve() if rebuild_script is not None else None
+        )
         self._run = run
 
     def _download_tarball(self, merge_ref: str) -> bytes:
@@ -116,22 +128,12 @@ class OverlayGatewayDeployer:
     def deploy(self, merge_ref: str) -> str:
         payload = self._download_tarball(merge_ref)
         count = self._sync_skills(payload)
-        result = self._run(
-            [str(self.rebuild_script)],
-            cwd=self.project_root,
-            check=False,
-            capture_output=True,
-            text=True,
-            env={**os.environ, "NANOBOT_OVERLAY_COMMIT": merge_ref},
-        )
-        if result.returncode != 0:
-            detail = result.stderr or result.stdout or "Gateway rebuild failed"
-            raise OverlayReleaseError(str(detail)[-500:])
-        output = result.stdout or ""
-        match = re.search(r"Build reference:\s*(\S+)", output)
-        if not match:
-            raise OverlayReleaseError("Gateway rebuild did not report a build reference")
-        return f"{match.group(1)} overlay={merge_ref} skills={count}"
+        # Do not restart or rebuild the Gateway here.  The workspace is a
+        # bind-mounted runtime directory, and SkillsLoader performs a fresh
+        # directory/file read for every new Context.  The writes above use a
+        # temporary file + fsync + atomic rename, so a running turn keeps its
+        # existing prompt while the next turn sees the published Skill.
+        return f"hot-reload overlay={merge_ref} skills={count}"
 
 
 def build_publish_callbacks(release: object, deployer: OverlayGatewayDeployer):

@@ -7,6 +7,11 @@
 > 范围：在已完成的五层记忆 Phase 0～6 之上，为当前 nanobot 的官方 QQ 群机器人增加“自动评审 → 主动推送 → 群内交互确认 → 仅对个人部署生效的受控升级/发布”闭环。
 >
 > 当前运行态已打开 M4/M5；长期运行态的 workspace 采用、Draft PR 自动衔接和发布仍由独立开关控制。个人 Overlay 只允许自动创建 Draft PR，最终合并/部署必须由 QQ 群内管理员执行第二次确认。本文同步记录实施与验收状态，不代表自动发布已授权。
+>
+> 2026-09-28 部署策略调整：个人 Overlay 发布改为运行时热加载。合并后的
+> `skills/*/SKILL.md` 通过原子写入同步到当前 Gateway 挂载的 workspace，下一轮
+> Agent Context 构建自动读取新版本；发布不再重建或重启 Gateway，也不会主动断开
+> WebUI/QQ 连接。
 
 ## 当前实施状态
 
@@ -80,7 +85,7 @@ workspace 原子采用/回滚                         CI 通过后 QQ 发布候�
 1. 真实运行中的周期调度仍保持显式调用，避免在未完成观察前自行扩大扫描范围。
 2. M8 的真实远端 Draft PR、CI 回写和真实 QQ 候选通知均已通过；临时 Proposal 已清理。
 3. `/evolve publish` 真实群内二次确认尚未在 `publish_enabled=true` 的窗口执行；长期开关必须保持关闭。
-4. 合并后当前 Gateway 重建、健康检查、回滚和构建/Trace 证据需要完成一次端到端演练。
+4. 合并后当前 Gateway 热加载、下一轮 Context 生效、回滚和 Trace 证据需要完成一次端到端演练。
 5. 官方 QQ 当前配置使用 `allowFrom: ["*"]`。这只表示所有成员可向 Agent 发消息，绝不能当作升级审批权限。
 
 ### 2.3 已确认的部署事实
@@ -155,7 +160,7 @@ Trace / Case ──→ Phase6 Orchestrator ──→ 自动评审 Gate
 | 路径 | 自动动作 | 管理员动作 | 最终效果 |
 |---|---|---|---|
 | workspace Skill | Gate 通过 → Proposal → 群通知 | `/evolve approve` 或 `/evolve reject` | 批准后原子采用，可回滚 |
-| 个人 Overlay Skill | Gate 通过 → Proposal → 自动 Draft PR → CI → 群通知 | `/evolve publish`：第一次签发确认码，第二次提交确认码 | 只合并私有 Overlay，只重建当前 Gateway |
+| 个人 Overlay Skill | Gate 通过 → Proposal → 自动 Draft PR → CI → 群通知 | `/evolve publish`：第一次签发确认码，第二次提交确认码 | 只合并私有 Overlay，热加载到当前 Gateway，不重建/重启 |
 
 `/evolve approve` 不再是 Overlay 发布前置条件；Overlay 的人工门禁统一收敛到 CI 通过后的 `/evolve publish` 二次确认。`publish_enabled` 只控制最后的合并/部署，不影响候选评审、Draft PR 生成或 CI 检查。普通 Agent 不直接调用 GitHub。
 
@@ -330,12 +335,12 @@ tests/channels/qq/
 | Skill 来源 | `approve` 后的动作 | 是否需要重启 | `publish` |
 |---|---|---:|---|
 | workspace | 校验 hash/CAS 后原子写入 `<workspace>/skills/<name>/SKILL.md`，保留可回滚 revision | 否；下一次 Context 构建生效 | 不需要 |
-| builtin/shared | Gate 通过后在个人 Overlay 创建独立分支、中文提交、Draft PR，并附证据链接 | 合并部署后需要 | CI 通过后由 `/evolve publish` 二次确认才允许合并个人 Overlay |
+| builtin/shared | Gate 通过后在个人 Overlay 创建独立分支、中文提交、Draft PR，并附证据链接 | 否；合并后热加载，下一轮 Context 生效 | CI 通过后由 `/evolve publish` 二次确认才允许合并个人 Overlay |
 | entrypoint/MCP | 在个人 Overlay 创建 Draft PR 或对应包的受控发布提案 | 视部署方式而定 | 二次批准、CI 与个人 Gateway 发布检查 |
 
 workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → 记录 revision/CAS → 审计”的顺序。写入失败不得改变 `current_revision_id`。当前正在执行的 Agent turn 保持旧上下文；后续 turn 自动通过 `SkillsLoader` 读取新文件。
 
-个人 Skill Overlay 发布继续遵循仓库规则：在 Overlay 专用分支创建中文提交与 Draft PR，经过 CI 后等待 `publish` 的独立管理员确认；任何情况下不得自动合并公共 `Trees-23/KdmCopilot:main`。合并后只重建当前用户的 Gateway。
+个人 Skill Overlay 发布继续遵循仓库规则：在 Overlay 专用分支创建中文提交与 Draft PR，经过 CI 后等待 `publish` 的独立管理员确认；任何情况下不得自动合并公共 `Trees-23/KdmCopilot:main`。合并后只把允许的 `skills/*/SKILL.md` 原子同步到当前用户 Gateway 的挂载 workspace，由下一轮 Context 热加载。
 
 ## 10. 分阶段实施计划
 
@@ -456,11 +461,11 @@ workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → �
 - [x] 完成本地二次确认门禁：独立确认码、Proposal 状态/CAS、CI 通过条件、kill switch 双重拦截；合并和部署只能通过显式受控回调执行。
 - [x] 接通群内 `/evolve publish` 协议：只允许已配置 `approvalAdminOpenids` 的管理员在已配置通知群中对个人 Overlay 的 `pr_created` Proposal 发起二次确认；必须 @机器人，普通成员、错误群、错误码、过期码和公共仓库 PR 一律拒绝。协议已完成本地测试并部署到 Gateway，`publish_enabled` 仍保持关闭。
 - [x] 增加私有 Overlay 远端校验适配器：通过受控 `gh` 调用核对唯一 PR、仓库、`main` 基线、Proposal 分支、head SHA 和全部 CI 检查；真实 PR #1 已只读验收通过，未执行 ready、合并或部署。
-- [x] 增加受控部署适配器：二次确认后才允许下载指定合并 SHA 的 Overlay tarball，只同步安全的 `skills/<name>/SKILL.md`，再调用固定 Gateway 重建脚本并要求返回 build reference；覆盖路径穿越、空 Overlay、构建无证据和失败恢复测试。该适配器尚未接入长期 Gateway，也未执行真实合并。
+- [x] 增加受控部署适配器：二次确认后才允许下载指定合并 SHA 的 Overlay tarball，只同步安全的 `skills/<name>/SKILL.md`，通过临时文件、fsync 和原子 rename 热加载到当前 Gateway workspace；不重建、不重启容器。覆盖路径穿越、空 Overlay 和同步失败测试。该适配器尚未接入长期 Gateway，也未执行真实合并。
 - [x] 接通“Gate → Overlay Proposal → Draft PR”受控后台流水线；CI 状态投影和 QQ 发布候选通知由独立 worker 继续处理，不自动合并或部署。
 - [ ] 在隔离窗口完成“Draft PR → CI 通过 → QQ 发布候选通知 → 群内二次确认”的真实链路验收。
 - [ ] `publish_enabled=true` 只在明确的发布窗口开启，并且同时检查 CI 成功、PR 状态、Overlay 分支、候选 hash、Proposal 未过期和当前 Gateway 基线；当前真实 Gateway 只读验收已通过，但发布开关仍为 `false`。
-- [ ] 合并后只重建当前用户的长期 Gateway，记录构建标识、Overlay commit、PR、CI、部署和回滚证据；不得执行公共 `main` 合并。
+- [ ] 合并后只热加载当前用户的长期 Gateway，记录 Overlay commit、PR、CI、热加载结果和回滚证据；不得执行公共 `main` 合并。
 - [ ] 验证发布失败、构建错配、回滚和 kill switch 行为；任何失败都保留 PR、构建和审计证据，不静默重试。
 
 完成条件：没有第二次确认就不能合并/部署；发布只影响当前用户 Gateway，公共仓库和其他用户版本保持不变。
@@ -515,7 +520,18 @@ phase6.kill_switch                      # 立即禁止所有自动化写路径
 
 `kill_switch` 不撤销已采用版本，但会停止新的扫描、通知、采用、PR 创建和发布。回滚必须由管理员显式命令完成，并使用现有 revision 证据。
 
-### 12.2 Gateway 重启与连接恢复说明
+### 12.2 Skill 热加载与连接稳定性
+
+个人 Overlay 发布不再调用 `scripts/rebuild_gateway_for_scenario.sh`，也不执行
+`docker compose restart`。发布适配器只下载已合并 commit 的安全路径
+`skills/*/SKILL.md`，逐个执行“临时文件 → fsync → 原子 rename”。当前正在执行的
+Agent turn 保持已经构建好的旧 Context；下一轮 turn 的 `SkillsLoader` 会重新扫描并
+读取新文件，因此无需重启 Gateway，WebUI、QQ 和已有 WebSocket 连接保持不变。
+
+如果未来修改的是 Python 代码、依赖、Docker 镜像或 Skill 加载器本身，仍然需要按
+代码部署流程重建 Gateway；“热加载”只覆盖个人 Overlay 的 Markdown Skill 内容。
+
+### 12.3 Gateway 重启与连接恢复说明
 
 2026-09-27 对长期 Gateway 做了真实 WebUI 观测：`docker compose restart nanobot-gateway` 会发送 SIGTERM，Gateway 依次停止 QQ、WebSocket 和 Agent，再重新初始化 MCP、QQ 与 WebSocket；这段时间 `8765` 没有可用连接，已有 TCP/WebSocket 连接必然断开。日志显示这是正常的容器生命周期行为，不是 Phase 6 或 Skill 采用导致的断连。
 
@@ -542,7 +558,7 @@ WebUI 的 `NanobotClient` 已有指数退避和 token 刷新重连；真实观�
 
 1. 私有仓库为 `Trees-23/KdmCopilot-skills-private`，默认分支为 `main`。
 2. Overlay `main` 已配置保护；CI 基线 PR #3 已合并并通过检查。公共 `Trees-23/KdmCopilot:main` 永远不是个人 Skill 发布目标。
-3. Overlay 只服务当前 `nanobot-gateway`；合并后只重建当前 Gateway，不发布公共镜像。
+3. Overlay 只服务当前 `nanobot-gateway`；合并后只热加载当前 Gateway，不发布公共镜像，也不重启容器。
 4. GitHub 凭据只通过 `gh` 登录态或受控环境注入，不进入 QQ、日志、Proposal 正文或 Git 提交。
 
 ### 13.2 接下来按顺序推进
@@ -550,7 +566,7 @@ WebUI 的 `NanobotClient` 已有指数退避和 token 刷新重连；真实观�
 1. 用临时测试 Skill 在私有 Overlay 创建一条新的 Draft PR，验证仓库、base、分支保护和 CI 状态回写。（已完成）
 2. 在真实 QQ 群内投递一次 CI 通过后的发布候选通知。（已完成）
 3. 你在群内执行 `/evolve publish <proposal-id>` 获取一次性确认码，再由同一管理员执行带确认码的第二条命令。
-4. 仅在这个隔离发布窗口临时打开 `publish_enabled`，演练“合并 Overlay → 重建当前 Gateway → 健康检查 → 回滚”。
+4. 仅在这个隔离发布窗口临时打开 `publish_enabled`，演练“合并 Overlay → 热加载当前 Gateway → 下一轮 Context 验证 → 回滚”。
 5. 验收完成后立即关闭发布开关并清理临时 Proposal/Skill；是否长期打开由你另行确认。
 
 ### 13.3 在你配合前明确不做的事情
@@ -575,5 +591,5 @@ WebUI 的 `NanobotClient` 已有指数退避和 token 刷新重连；真实观�
 4. 群命令是确定性路由，管理员、群、确认码、Proposal 状态和基线版本均经过校验。
 5. 普通成员、错误群、重放请求、过期确认和版本冲突无法造成状态改变。
 6. workspace Skill 能原子采用、下一轮生效、可审计、可回滚，且通常不需要重启 Gateway。
-7. 个人 Skill 只在私有 Overlay 创建 Draft PR；合并和部署需要独立 `publish` 确认与 CI 验收，公共 `Trees-23/KdmCopilot:main` 不发生个人 Skill 变更。
+7. 个人 Skill 只在私有 Overlay 创建 Draft PR；合并和部署需要独立 `publish` 确认与 CI 验收，发布后热加载当前 Gateway，公共 `Trees-23/KdmCopilot:main` 不发生个人 Skill 变更。
 8. 自动化暂停、失败恢复、通知 dead-letter、回滚和跨群隔离均有单元、集成和真实 Gateway 场景证据。
