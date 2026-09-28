@@ -429,7 +429,7 @@ workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → �
 - [x] 实现 `/evolve rollback <proposal-id> <code>`，仅管理员可调用，并恢复已知 baseline revision。
 - [x] 在长期 Gateway 容器代码/运行库的隔离测试 Skill 上验证批准、下一次读取候选版本和回滚；测试文件、Proposal、Skill 记录均已清理。
 
-当前进度：M6 的采用代码、本地原子/CAS/回滚测试和一次性隔离 Gateway 验收已完成；长期运行态已恢复 `adoption_enabled=false`、白名单为空，未保留测试 Skill。个人 Overlay 已完成初始化；M7 的仓库保护、CI 基线和只读映射已完成。M8 自动 Draft PR、CI 回写和通知幂等已实测成功，QQ 实际投递仍待独立窗口；M9 个人 Gateway 发布仍未开启。
+当前进度：M6 的采用代码、本地原子/CAS/回滚测试和一次性隔离 Gateway 验收已完成；长期运行态已恢复 `adoption_enabled=false`、白名单为空，未保留测试 Skill。个人 Overlay 已完成初始化；M7 的仓库保护、CI 基线和只读映射已完成。M8 自动 Draft PR、CI 回写、通知幂等和一次真实 QQ 候选通知已实测成功；M9 个人 Gateway 发布仍未开启。
 
 ### M7：个人 Skill Overlay 仓库准备
 
