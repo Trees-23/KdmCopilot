@@ -486,15 +486,17 @@ workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → �
 - [x] M10-A：注册受保护的 `phase6-evolution-review` 系统 Cron（`0 14 * * *`、`Asia/Shanghai`），调用生产评审编排器；错过执行时间不补跑。实现提交：`422a52c3`。
 - [x] M10-B-1：把脱敏 `trace_index` 扫描接入候选生成；默认最低重复次数固定为 3，仅允许成功且只读工具类别进入候选，敏感/写操作继续排除。
 - [x] M10-B-2：由 3 次重复 Trace 生成隔离 staging Skill revision、3-case EvalPack、只读确定性 Replay 和独立 Gate；Gate 通过后持久化 `git_pr_proposal`，当前 Skill 指针保持不变；重复每日扫描幂等去重。
-- [ ] M10-B-3：把私有 Overlay Draft PR 创建、CI 回写和 QQ 投递器作为 Gateway 运行态适配器注入受保护 Cron；未注入适配器时只保留 Proposal，不得伪造 PR/CI/通知成功。
+- [x] M10-B-3：把私有 Overlay Draft PR 创建、CI 回写和 QQ 投递器作为 Gateway 运行态适配器注入受保护 Cron；未注入适配器时只保留 Proposal，不得伪造 PR/CI/通知成功。
 - [x] 每周输出候选数量、Gate 通过率、通知失败率、管理员拒绝率、采用/回滚率和误报原因；周报只读取 Proposal/Delivery/Action 元数据，不读取模型原文或凭据。
 - [x] 超过阈值自动暂停 Phase 6，并通过注入式通知适配器向管理员发送暂停原因；暂停状态持久化且不会自动恢复。
 - [x] 提供定期复审检查：群白名单、管理员名单、Overlay 配置、配额和 kill switch 的不一致会形成明确 finding；Skill 白名单仍需按运营周期人工确认。
 - [x] AgentLoop 与 QQ ChannelManager 支持运行中替换 Phase 6 配置；刷新后下一轮命令/通知立即使用新配置，`kill_switch` 可在不重启 Gateway 的情况下阻止新的自动化写路径。
 
-完成条件：M10-A/M10-B 已接通，且连续 7 天无未处理 dead-letter、无越权命令成功、无自动发布、无跨群泄露，管理员认可通知频率和升级质量。目前 M10-A 已接通，M10-B-1/M10-B-2 已接通，M10-B-3 的运行态适配器和连续 7 天观察尚未完成。
+完成条件：M10-A/M10-B 已接通，且连续 7 天无未处理 dead-letter、无越权命令成功、无自动发布、无跨群泄露，管理员认可通知频率和升级质量。目前 M10-A、M10-B-1/M10-B-2/M10-B-3 均已接通；M10-C 连续 7 天观察仍在进行，不能提前宣称完成。
 
-本轮 M10-B 代码验收记录：`tests/memory` 118 passed，涉及路径的 `ruff check` 和 `git diff --check` 通过；长期 Gateway 已重建为 `git-32c55a709cc5`，健康检查正常。只读真实场景使用新 WebUI 会话 `#/chat/websocket%3Aa010b6ca-7c61-4130-908d-d80bfcbf2d2c`，Trace `01a0e938-13ac-74f2-92a7-66a98cb408eb`（38 节点、终态成功）；未创建 Proposal、未执行 Git/网络写入、未发送通知。M10-B-3 仍必须由私有 Overlay checkout、Draft PR/CI 回写和 QQ outbox 适配器显式注入，未注入时系统只保留 Proposal，禁止伪造 PR/CI/通知成功。
+本轮 M10-B 代码验收记录：`tests/memory` 120 passed，涉及路径的 `ruff check` 和 `git diff --check` 通过。长期 Gateway 已按提交 `908ffb63` 重建，构建标识为 `git-908ffb637b2e`，镜像 `sha256:5e80fbd4505f69e0a3d5424d27aacac6ff81215309d5375ce9fa85638ec3996f`，健康检查正常；容器仍挂载仓库 `runtime/`，服务为固定的 `nanobot-gateway`（8765/18790）。
+
+M10-B-3 真实隔离验收：运行态使用私有 Overlay `Trees-23/KdmCopilot-skills-private:main` 和独立 checkout，真实创建 Draft PR #6；`validate` CI 已通过并成功回写，QQ outbox 创建 1 条 `pr_created` Delivery，通知审计动作创建 1 条。PR 未合并、未发布，长期运行态仍保持 `adoptionEnabled=false`、`publishEnabled=false`、`killSwitch=false`。验收完成后已关闭 PR #6、删除远端演化分支，并将本轮临时目录移入系统回收站；未触碰公共 `Trees-23/KdmCopilot:main`。
 
 ## 11. 测试与验收矩阵
 
