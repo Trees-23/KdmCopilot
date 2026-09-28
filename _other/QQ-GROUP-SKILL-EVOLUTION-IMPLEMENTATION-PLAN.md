@@ -32,6 +32,7 @@
 - 2026-09-28 真实二次确认首次执行时发现 Fine-grained Token 对 GraphQL `statusCheckRollup` 返回 403；已改为按 PR head SHA 查询 GitHub Actions REST workflow runs，避免扩大权限范围。原 Proposal/确认码保持有效，待修复部署后继续。
 - 2026-09-28 M9 真实发布窗口已完成：私有 Overlay PR #5 CI 通过，QQ 群二次确认成功，PR 合并提交为 `dbcad656a5d43fb506936ba27758135e0130f39b`；当前 Gateway 未因发布重启，`SkillsLoader` 已读到临时 Skill，随后删除临时 Skill、记录 `rolled_back` 审计并关闭 `publishEnabled`。发布后为关闭开关而进行的一次配置重载不属于 Skill 发布重启。
 - 2026-09-28 M10 首批运营能力已接入：新增无载荷周报汇总（候选数、Gate 通过率、通知失败率、拒绝/批准、采用/回滚及误报原因），并将 dead-letter、通知失败率、越权尝试和跨群泄露统一接入自动暂停门禁；暂停原因通过注入式通知适配器发送，默认不改变长期开关。聚焦场景测试已通过，7 天连续稳态观察尚未完成。
+- 2026-09-28 已确认 M10 自动触发策略：复用 Gateway 内置 Cron 注册受保护的系统任务，每天北京时间 14:00 执行一次；最低重复次数为 3 次；错过执行时间不补跑；允许自动创建私有 Overlay Draft PR，CI 通过后只向 QQ 群通知，合并/发布仍需群内二次确认。
 - 当前长期工作区最近 7 天只读快照：候选 1、Gate 通过率 100%、通知失败率 0%、dead-letter 0、采用/回滚 0/1；该快照仅作 M10 起始基线，不替代连续 7 天观察。
 - 2026-09-28 M8 隔离实测创建临时 Overlay PR #2，确认 Gate → Proposal → Draft PR 成功，但因 CI 工作流不在 Overlay `main` 而无检查；PR #2 已关闭并清理。随后 CI 基线 PR #3 已合并；新临时 PR #4 的 `validate` 成功，CI 回写和候选通知幂等均已验证，PR #4 已关闭并清理。最后使用长期 Gateway 向真实 QQ 测试群投递临时 `pr_created` Proposal，Delivery 为 `sent`，通知内容正确使用 `/evolve publish`，测试 Proposal/Delivery/审计已清理。
 - 2026-09-27 已完成一次长期 Gateway 的真实只读 WebUI 场景验收：新会话 `#/chat/websocket%3Afe7fdbdc-5367-476a-bb64-ae140fdb5cf7`，Trace `01a0e491-472a-7713-80ee-19f404d9599d`，场景标识 `[M9-REAL-READONLY-20260927-201639Z]`。Agent 仅执行运行态/定时任务/工作区和配置读取，Trace 终态为成功（29 节点、2187 Event；含一次已恢复的读取失败警告），明确返回 `publish_enabled=false`、采用关闭、Overlay 白名单为空，且未创建/批准/发布 Proposal、未外发 QQ、未重启 Gateway。
@@ -331,9 +332,9 @@ tests/channels/qq/
 
 ### 8.3 调度方式
 
-实现一个 Gateway 生命周期管理的系统任务，例如每 2 小时扫描一次，单 workspace lease 串行执行。它直接调用受限 Python 编排器，而不是让普通 Agent Cron 通过自然语言决定是否评测、是否通知或是否发布。
+实现一个 Gateway 生命周期管理的系统任务，每天北京时间 14:00 扫描一次（Cron：`0 14 * * *`，时区 `Asia/Shanghai`），单 workspace lease 串行执行。它直接调用受限 Python 编排器，而不是让普通 Agent Cron 通过自然语言决定是否评测、是否通知或是否发布。Gateway 在错过执行时间后只等待下一次计划，不补跑。
 
-每周期上限：最多 20 个候选、每群每天最多 12 条通知、同一 Skill 同时至多 1 个待确认 Proposal。系统重启后从数据库恢复状态，投递失败使用有限指数退避；超过上限转为 `dead_letter` 并主动产生管理员告警，不静默丢失。
+每周期上限：最多 20 个候选、每群每天最多 12 条通知、同一 Skill 同时至多 1 个待确认 Proposal；同类低风险成功 Trace 至少累计 3 次才进入候选。系统重启后从数据库恢复状态，投递失败使用有限指数退避；超过上限转为 `dead_letter` 并主动产生管理员告警，不静默丢失。
 
 ## 9. 采用与发布行为
 
@@ -366,6 +367,9 @@ workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → �
 | M8 | 个人 Overlay Draft PR | 开启 | 开启 | 自动建 Draft PR | 关闭 | Gate 通过后自动生成 Proposal/Draft PR，不能影响公共 main |
 | M9 | 个人 Overlay 受控发布 | 开启 | 开启 | 已创建 Draft PR | **二次确认** | CI 通过且再次确认后只发布到个人 Gateway |
 | M10 | 稳态运行与运营复盘 | 开启 | 开启 | 按白名单 | 按策略 | 监控、限流、暂停和定期复审 |
+| M10-A | 自动触发器 | 开启 | 关闭/按现状 | 关闭 | 关闭 | 每天北京时间 14:00 由受保护 Cron 调用一次受限评审编排器，错过不补跑 |
+| M10-B | 自动候选与私有 Draft PR | 开启 | 开启 | 自动建私有 Draft PR | 关闭 | 3 次重复低风险成功后生成候选，Gate/CI 通过后 QQ 通知 |
+| M10-C | 稳态观察与运营复盘 | 开启 | 开启 | 按白名单 | 按策略 | 连续 7 天验证 dead-letter、越权、跨群隔离和通知质量 |
 
 每个阶段都必须有独立验收记录。任何阶段失败都回退到上一阶段的开关状态；不能跳过 M4 直接打开通知、采用或发布。
 
@@ -479,12 +483,14 @@ workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → �
 
 ### M10：稳态运行与运营复盘
 
+- [ ] M10-A：注册受保护的 `phase6-evolution-review` 系统 Cron（`0 14 * * *`、`Asia/Shanghai`），调用生产评审编排器；错过执行时间不补跑。
+- [ ] M10-B：把真实 `trace_index` 扫描接入候选生成，最低重复次数固定为 3；Gate 通过后自动创建私有 Overlay Draft PR，并由 QQ 投递器通知。
 - [x] 每周输出候选数量、Gate 通过率、通知失败率、管理员拒绝率、采用/回滚率和误报原因；周报只读取 Proposal/Delivery/Action 元数据，不读取模型原文或凭据。
 - [x] 超过阈值自动暂停 Phase 6，并通过注入式通知适配器向管理员发送暂停原因；暂停状态持久化且不会自动恢复。
 - [x] 提供定期复审检查：群白名单、管理员名单、Overlay 配置、配额和 kill switch 的不一致会形成明确 finding；Skill 白名单仍需按运营周期人工确认。
 - [x] AgentLoop 与 QQ ChannelManager 支持运行中替换 Phase 6 配置；刷新后下一轮命令/通知立即使用新配置，`kill_switch` 可在不重启 Gateway 的情况下阻止新的自动化写路径。
 
-完成条件：连续 7 天无未处理 dead-letter、无越权命令成功、无自动发布、无跨群泄露，且管理员认可通知频率和升级质量。目前尚未满足连续 7 天观察条件。
+完成条件：M10-A/M10-B 已接通，且连续 7 天无未处理 dead-letter、无越权命令成功、无自动发布、无跨群泄露，管理员认可通知频率和升级质量。目前自动触发器尚未接通，连续 7 天观察尚未开始。
 
 ## 11. 测试与验收矩阵
 
