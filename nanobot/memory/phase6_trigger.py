@@ -8,12 +8,15 @@ never turn a natural-language Agent Cron job into a write or publish path.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from nanobot.cron.types import CronJob, CronPayload, CronSchedule
 from nanobot.memory.continuous import (
+    EvidenceRecord,
     Phase6RuntimeConfig,
+    append_evidence,
     load_failed_trace_records,
     load_trace_records,
     run_cycle,
@@ -65,6 +68,7 @@ def run_phase6_review_scan(
     config: Any,
     *,
     overlay_pipeline: Any | None = None,
+    overlay_pipeline_factory: Any | None = None,
     notify_proposal: Any | None = None,
 ) -> Any:
     """Run the production Trace → Candidate → Gate → Proposal scan.
@@ -80,6 +84,23 @@ def run_phase6_review_scan(
     try:
         apply_migrations(connection)
         runtime = Phase6RuntimeConfig.from_config(config)
+        if overlay_pipeline_factory is not None:
+            try:
+                overlay_pipeline = overlay_pipeline_factory(connection, root, config)
+            except (OSError, RuntimeError, ValueError) as exc:
+                # Keep the Trace→Proposal path available, but fail closed at
+                # the remote handoff boundary when checkout/auth is invalid.
+                overlay_pipeline = None
+                append_evidence(
+                    root,
+                    EvidenceRecord(
+                        "overlay_adapter",
+                        datetime.now(UTC).isoformat(timespec="seconds"),
+                        status="skipped",
+                        reason=str(exc)[:300],
+                    ),
+                    runtime,
+                )
         cycle = run_cycle(
             connection,
             root,
@@ -105,6 +126,16 @@ def run_phase6_review_scan(
             failed_traces=(),
             overlay_pipeline=overlay_pipeline,
         )
+        if overlay_pipeline is not None:
+            # Draft PR creation and CI are separate phases. Poll existing
+            # Proposal rows once per scheduled run; the pipeline records an
+            # idempotent notification only after all checks pass.
+            for row in connection.execute(
+                "SELECT proposal_id FROM skill_proposals WHERE workspace=? AND target='git_pr_proposal' "
+                "AND status='pr_created' ORDER BY updated_at",
+                (str(root),),
+            ).fetchall():
+                overlay_pipeline.refresh_ci_and_notify(connection, str(row[0]))
         if notify_proposal is not None:
             for proposal_id in result.proposal_ids:
                 notify_proposal(proposal_id)

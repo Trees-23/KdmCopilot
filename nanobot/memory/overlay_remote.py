@@ -108,6 +108,13 @@ class GitHubOverlayClient:
         if remote.returncode != 0 or _normalize_repo(remote.stdout) != self.repository:
             raise RuntimeError("Overlay origin 与配置的私有仓库不一致")
 
+    def _restore_base_checkout(self) -> None:
+        """Leave the reusable checkout on the protected base branch."""
+
+        switched = self._git("switch", self.base_branch)
+        if switched.returncode != 0:
+            raise RuntimeError("Draft PR 已创建，但无法恢复 Overlay 基线分支")
+
     @staticmethod
     def _proposal_action(connection: sqlite3.Connection, proposal_id: str, action: str) -> Mapping[str, Any] | None:
         row = connection.execute(
@@ -174,6 +181,7 @@ class GitHubOverlayClient:
                           "commit": commit, "repository": self.repository, "base": self.base_branch,
                           "is_draft": True}
                 self._record(connection, proposal_id, "remote_draft_pr", "idempotent", result)
+                self._restore_base_checkout()
                 return RemoteDraftPRResult("idempotent", proposal_id, url=pr.get("url"), number=pr.get("number"),
                                            branch=branch, commit=commit, ci_passed=False)
 
@@ -193,6 +201,7 @@ class GitHubOverlayClient:
             result = {"url": url, "branch": branch, "commit": commit, "repository": self.repository,
                       "base": self.base_branch, "is_draft": True}
             self._record(connection, proposal_id, "remote_draft_pr", "created", result)
+            self._restore_base_checkout()
             return RemoteDraftPRResult("pr_created", proposal_id, url=url, branch=branch, commit=commit)
         except (OSError, RuntimeError, sqlite3.Error, ProposalConflict, ValueError) as exc:
             record = ProposalRepository(connection).get(proposal_id)

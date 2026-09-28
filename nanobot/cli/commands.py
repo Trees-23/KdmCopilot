@@ -1892,10 +1892,22 @@ def _run_gateway(
         # Phase 6 review is a protected system task.  It scans redacted Trace
         # projections directly; it never asks the Agent to interpret a prompt
         # or decide whether to write, notify, merge, or publish.
+        from nanobot.memory.phase6_runtime import build_overlay_pipeline
         from nanobot.memory.phase6_trigger import PHASE6_REVIEW_JOB_ID, run_phase6_review_scan
 
         if job.name == PHASE6_REVIEW_JOB_ID:
-            result = run_phase6_review_scan(config.workspace_path, config.phase6)
+            result = run_phase6_review_scan(
+                config.workspace_path,
+                config.phase6,
+                overlay_pipeline_factory=(
+                    lambda connection, workspace, phase6_config: build_overlay_pipeline(
+                        connection,
+                        workspace,
+                        phase6_config,
+                        notifier=channels.proposal_notifier,
+                    )
+                ),
+            )
             logger.info("Phase 6 scheduled review completed: {}", getattr(result, "status", result))
             return str(getattr(result, "status", "completed"))
 

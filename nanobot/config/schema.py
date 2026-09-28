@@ -469,6 +469,11 @@ class Phase6EvolutionConfig(Base):
         validation_alias=AliasChoices("overlayBaseBranch", "overlay_base_branch"),
         serialization_alias="overlayBaseBranch",
     )
+    overlay_checkout_path: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("overlayCheckoutPath", "overlay_checkout_path"),
+        serialization_alias="overlayCheckoutPath",
+    )
     observation_groups: list[str] = Field(
         default_factory=list,
         validation_alias=AliasChoices("observationGroups", "observation_groups"),

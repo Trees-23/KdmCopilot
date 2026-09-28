@@ -23,6 +23,12 @@ from nanobot.memory.evolution_orchestrator import CandidateSpec
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9._-]+")
 
 
+def _content_hash(content: str) -> str:
+    """Hash the exact Markdown bytes used by the PR/adoption boundaries."""
+
+    return "sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
 @dataclass(frozen=True, slots=True)
 class CandidateBuildResult:
     specs: tuple[CandidateSpec, ...]
@@ -68,9 +74,9 @@ def _replay(candidate_content: str):
 def _ensure_revisions(connection: Any, candidate: TraceCandidate, skill_name: str, content: str) -> tuple[str, str, str, str]:
     """Create or reuse an isolated baseline/candidate revision pair."""
 
-    content_hash = digest(content)
+    content_hash = _content_hash(content)
     baseline_content = ""
-    baseline_hash = digest(baseline_content)
+    baseline_hash = _content_hash(baseline_content)
     skill_id = f"skill:{skill_name}"
     baseline_id = f"phase6-baseline:{hashlib.sha256(skill_name.encode()).hexdigest()[:24]}"
     candidate_id = f"phase6-candidate:{content_hash[7:31]}"
@@ -141,7 +147,7 @@ def build_candidate_specs(
                 baseline_revision_id=baseline_id,
                 candidate_revision_id=candidate_id,
                 baseline_hash=baseline_hash,
-                candidate_hash=digest(content),
+                candidate_hash=_content_hash(content),
                 cases=cases,
                 fixture_hash=digest({"task_key": candidate.task_key, "trace_ids": candidate.trace_ids}),
                 model_id="phase6-deterministic-replay",
