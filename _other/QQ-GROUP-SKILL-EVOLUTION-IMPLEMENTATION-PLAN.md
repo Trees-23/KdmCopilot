@@ -29,6 +29,7 @@
 - 已完成原 M8 本地发布门禁（现归入新 M9 前置能力）：二次确认、CI 条件、CAS、kill switch 和受控回调均已测试；真实远端发布尚未开启。
 - M9 本地端到端模拟验收已完成：二次确认 → CI → 私有 Overlay 合并回调 → 当前 Gateway 部署回调；自动 handoff 已覆盖 Gate → Proposal → 本地 Draft PR 适配器 → 发布候选通知。真实发布仍未执行。
 - 2026-09-28 已将私有 Overlay 的发布回调接入 `AgentLoop`：配置 `overlayRepository` 后，Gateway 启动时自动注入受控 GitHub 校验、合并和 Skill 热加载回调；镜像内已安装 `gh`，构建引用为 `git-6906f5c6be02`，健康检查通过。当前容器尚未配置 GitHub Token，因此发布窗口前仍需补充受控凭据。
+- 2026-09-28 真实二次确认首次执行时发现 Fine-grained Token 对 GraphQL `statusCheckRollup` 返回 403；已改为按 PR head SHA 查询 GitHub Actions REST workflow runs，避免扩大权限范围。原 Proposal/确认码保持有效，待修复部署后继续。
 - 2026-09-28 M8 隔离实测创建临时 Overlay PR #2，确认 Gate → Proposal → Draft PR 成功，但因 CI 工作流不在 Overlay `main` 而无检查；PR #2 已关闭并清理。随后 CI 基线 PR #3 已合并；新临时 PR #4 的 `validate` 成功，CI 回写和候选通知幂等均已验证，PR #4 已关闭并清理。最后使用长期 Gateway 向真实 QQ 测试群投递临时 `pr_created` Proposal，Delivery 为 `sent`，通知内容正确使用 `/evolve publish`，测试 Proposal/Delivery/审计已清理。
 - 2026-09-27 已完成一次长期 Gateway 的真实只读 WebUI 场景验收：新会话 `#/chat/websocket%3Afe7fdbdc-5367-476a-bb64-ae140fdb5cf7`，Trace `01a0e491-472a-7713-80ee-19f404d9599d`，场景标识 `[M9-REAL-READONLY-20260927-201639Z]`。Agent 仅执行运行态/定时任务/工作区和配置读取，Trace 终态为成功（29 节点、2187 Event；含一次已恢复的读取失败警告），明确返回 `publish_enabled=false`、采用关闭、Overlay 白名单为空，且未创建/批准/发布 Proposal、未外发 QQ、未重启 Gateway。
 
@@ -464,6 +465,7 @@ workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → �
 - [x] 增加私有 Overlay 远端校验适配器：通过受控 `gh` 调用核对唯一 PR、仓库、`main` 基线、Proposal 分支、head SHA 和全部 CI 检查；真实 PR #1 已只读验收通过，未执行 ready、合并或部署。
 - [x] 增加受控部署适配器：二次确认后才允许下载指定合并 SHA 的 Overlay tarball，只同步安全的 `skills/<name>/SKILL.md`，通过临时文件、fsync 和原子 rename 热加载到当前 Gateway workspace；不重建、不重启容器。覆盖路径穿越、空 Overlay 和同步失败测试。该适配器尚未接入长期 Gateway，也未执行真实合并。
 - [x] 将 `overlayRepository`/`overlayBaseBranch` 接入运行配置；Gateway 启动时注入私有 Overlay 的 CI、合并和热加载回调，并在长期容器中验证回调对象已创建。发布仍受 `publishEnabled=false` 和 QQ 群二次确认约束。
+- [x] 兼容 Fine-grained Token 的 CI 查询：不再依赖 GraphQL `statusCheckRollup`，改用 Actions REST 按 head SHA 校验 workflow runs；覆盖真实 403 场景测试。
 - [x] 接通“Gate → Overlay Proposal → Draft PR”受控后台流水线；CI 状态投影和 QQ 发布候选通知由独立 worker 继续处理，不自动合并或部署。
 - [ ] 在隔离窗口完成“Draft PR → CI 通过 → QQ 发布候选通知 → 群内二次确认”的真实链路验收。
 - [ ] `publish_enabled=true` 只在明确的发布窗口开启，并且同时检查 CI 成功、PR 状态、Overlay 分支、候选 hash、Proposal 未过期和当前 Gateway 基线；当前真实 Gateway 只读验收已通过，但发布开关仍为 `false`。

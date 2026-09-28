@@ -74,3 +74,26 @@ def test_overlay_client_adapts_publish_branch_contract():
     assert client.merge_branch("evolve/prop-test", "abc") == "abc"
     with pytest.raises(OverlayReleaseError, match="canonical"):
         client.merge_branch("evolve/not the proposal", "abc")
+
+
+def test_overlay_client_uses_actions_runs_when_graphql_checks_are_unavailable():
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(command)
+        if command[1:3] == ["pr", "list"]:
+            payload = _payload()
+            payload.pop("statusCheckRollup")
+            return subprocess.CompletedProcess(command, 0, json.dumps([payload]), "")
+        if command[1:2] == ["api"]:
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                json.dumps({"workflow_runs": [{"status": "completed", "conclusion": "success"}]}),
+                "",
+            )
+        return subprocess.CompletedProcess(command, 0, "merged", "")
+
+    client = GitHubOverlayRelease("Trees-23/KdmCopilot-skills-private", run=run)
+    assert client.ci_passed("prop-test") is True
+    assert any(command[1:2] == ["api"] for command in calls)

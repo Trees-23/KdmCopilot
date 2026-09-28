@@ -114,7 +114,7 @@ class GitHubOverlayRelease:
             "--state",
             "all",
             "--json",
-            "number,url,state,isDraft,baseRefName,headRefName,headRefOid,statusCheckRollup",
+            "number,url,state,isDraft,baseRefName,headRefName,headRefOid",
         )
         try:
             rows = json.loads(output)
@@ -124,6 +124,40 @@ class GitHubOverlayRelease:
             raise OverlayReleaseError("expected exactly one Overlay PR for Proposal")
         pr = self._parse_pr(rows[0], default_repository=self.repository)
         self._assert_identity(pr, branch)
+        # Fine-grained tokens can create/read PRs while GitHub's GraphQL
+        # ``statusCheckRollup`` field still returns 403.  Read workflow runs
+        # through the Actions REST endpoint instead; it is covered by the
+        # repository-scoped Actions read permission and is tied to this exact
+        # head SHA.
+        if not pr.checks:
+            output = self._gh(
+                "api",
+                f"repos/{self.repository}/actions/runs?head_sha={pr.head_sha}",
+            )
+            try:
+                runs = json.loads(output).get("workflow_runs", [])
+            except (TypeError, json.JSONDecodeError) as exc:
+                raise OverlayReleaseError("GitHub Actions 返回的 CI JSON 无效") from exc
+            if not isinstance(runs, list):
+                raise OverlayReleaseError("GitHub Actions 返回的 CI 列表无效")
+            pr = OverlayPullRequest(
+                number=pr.number,
+                url=pr.url,
+                state=pr.state,
+                is_draft=pr.is_draft,
+                base_repository=pr.base_repository,
+                base_branch=pr.base_branch,
+                head_branch=pr.head_branch,
+                head_sha=pr.head_sha,
+                checks=tuple(
+                    {
+                        "status": str(run.get("status") or "").upper(),
+                        "conclusion": str(run.get("conclusion") or "").upper(),
+                    }
+                    for run in runs
+                    if isinstance(run, Mapping)
+                ),
+            )
         return pr
 
     def _assert_identity(self, pr: OverlayPullRequest, branch: str) -> None:
