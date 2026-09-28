@@ -378,7 +378,7 @@ workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → �
 - [x] 确认目标 QQ group openid、审批管理员 QQ user openid、是否要求 @ 才接收 `/evolve`。
 - [x] 将聊天 `allowFrom` 与审批 `approvalAdminOpenids` 分离；评审 `allowFrom: ["*"]` 暂保持不变。
 - [x] 明确群内通知时段、每天配额、Proposal 有效期、是否同时私聊管理员；当前按全天、每天 12 条、720 分钟有效期、不额外私聊处理。
-- [ ] 创建并确认个人 Skill Overlay 私有仓库、默认分支、CI 状态检查与部署责任人；公共 `Trees-23/KdmCopilot:main` 明确排除为个人 Skill 发布目标。
+- [x] 创建并确认个人 Skill Overlay 私有仓库、默认分支、CI 状态检查与部署责任人；公共 `Trees-23/KdmCopilot:main` 明确排除为个人 Skill 发布目标。已配置 `Trees-23/KdmCopilot-skills-private:main`，并完成 `validate` CI 与 Draft PR 隔离验收。
 - [x] 记录当前 Gateway 构建标识、镜像、运行根目录和当前 Phase 6 关闭状态，作为回滚基线。
 
 完成条件：所有标识和策略通过运行态配置注入，Git 不含真实 openid、token 或 secret。
