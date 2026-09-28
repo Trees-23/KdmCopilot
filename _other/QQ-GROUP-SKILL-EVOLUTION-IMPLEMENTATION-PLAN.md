@@ -483,14 +483,14 @@ workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → �
 
 ### M10：稳态运行与运营复盘
 
-- [ ] M10-A：注册受保护的 `phase6-evolution-review` 系统 Cron（`0 14 * * *`、`Asia/Shanghai`），调用生产评审编排器；错过执行时间不补跑。
+- [x] M10-A：注册受保护的 `phase6-evolution-review` 系统 Cron（`0 14 * * *`、`Asia/Shanghai`），调用生产评审编排器；错过执行时间不补跑。实现提交：`422a52c3`。
 - [ ] M10-B：把真实 `trace_index` 扫描接入候选生成，最低重复次数固定为 3；Gate 通过后自动创建私有 Overlay Draft PR，并由 QQ 投递器通知。
 - [x] 每周输出候选数量、Gate 通过率、通知失败率、管理员拒绝率、采用/回滚率和误报原因；周报只读取 Proposal/Delivery/Action 元数据，不读取模型原文或凭据。
 - [x] 超过阈值自动暂停 Phase 6，并通过注入式通知适配器向管理员发送暂停原因；暂停状态持久化且不会自动恢复。
 - [x] 提供定期复审检查：群白名单、管理员名单、Overlay 配置、配额和 kill switch 的不一致会形成明确 finding；Skill 白名单仍需按运营周期人工确认。
 - [x] AgentLoop 与 QQ ChannelManager 支持运行中替换 Phase 6 配置；刷新后下一轮命令/通知立即使用新配置，`kill_switch` 可在不重启 Gateway 的情况下阻止新的自动化写路径。
 
-完成条件：M10-A/M10-B 已接通，且连续 7 天无未处理 dead-letter、无越权命令成功、无自动发布、无跨群泄露，管理员认可通知频率和升级质量。目前自动触发器尚未接通，连续 7 天观察尚未开始。
+完成条件：M10-A/M10-B 已接通，且连续 7 天无未处理 dead-letter、无越权命令成功、无自动发布、无跨群泄露，管理员认可通知频率和升级质量。目前 M10-A 已接通，M10-B 尚未接通，连续 7 天观察尚未开始。
 
 ## 11. 测试与验收矩阵
 
