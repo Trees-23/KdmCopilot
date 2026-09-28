@@ -87,11 +87,19 @@ def _atomic_write(path: Path, content: str) -> None:
         os.fsync(handle.fileno())
         temporary = Path(handle.name)
     os.replace(temporary, path)
-    directory = os.open(path.parent, os.O_DIRECTORY)
-    try:
-        os.fsync(directory)
-    finally:
-        os.close(directory)
+    directory_flag = getattr(os, "O_DIRECTORY", None)
+    if directory_flag is not None:
+        try:
+            directory = os.open(path.parent, os.O_RDONLY | directory_flag)
+        except OSError:
+            # Windows does not expose directory file descriptors.  The file
+            # fsync and atomic replace above still provide the supported
+            # durability guarantee on that platform.
+            return
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
 
 
 def _hash(content: str) -> str:

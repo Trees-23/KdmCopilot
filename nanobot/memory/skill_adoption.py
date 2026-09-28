@@ -70,11 +70,19 @@ def _atomic_write(path: Path, content: str) -> tuple[bool, bytes | None, int | N
     if old_mode is not None:
         temporary.chmod(old_mode)
     os.replace(temporary, path)
-    directory = os.open(path.parent, os.O_DIRECTORY)
-    try:
-        os.fsync(directory)
-    finally:
-        os.close(directory)
+    directory_flag = getattr(os, "O_DIRECTORY", None)
+    if directory_flag is not None:
+        try:
+            directory = os.open(path.parent, os.O_RDONLY | directory_flag)
+        except OSError:
+            # Windows has no directory file descriptor to fsync.  The file
+            # fsync and atomic replace remain the portable durability steps.
+            directory = None
+        if directory is not None:
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
     return old_bytes is not None, old_bytes, old_mode
 
 

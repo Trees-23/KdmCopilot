@@ -637,10 +637,11 @@ class ChannelManager:
             self._dispatch_task.cancel()
             with suppress(asyncio.CancelledError):
                 await self._dispatch_task
-        if self._proposal_delivery_task:
-            self._proposal_delivery_task.cancel()
+        proposal_delivery_task = getattr(self, "_proposal_delivery_task", None)
+        if proposal_delivery_task:
+            proposal_delivery_task.cancel()
             with suppress(asyncio.CancelledError):
-                await self._proposal_delivery_task
+                await proposal_delivery_task
             self._proposal_delivery_task = None
 
         # Stop all channels
