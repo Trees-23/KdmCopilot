@@ -41,7 +41,7 @@ class Phase6RuntimeConfig:
     enabled: bool = False
     kill_switch: bool = False
     draft_pr_enabled: bool = False
-    min_repeat_count: int = 2
+    min_repeat_count: int = 3
     max_candidates_per_cycle: int = 20
     regression_pause_threshold: int = 3
     dead_letter_pause_threshold: int = 3
@@ -66,8 +66,8 @@ class Phase6RuntimeConfig:
         return cls(**values)
 
     def __post_init__(self) -> None:
-        if self.min_repeat_count < 2:
-            raise ValueError("min_repeat_count must be at least 2")
+        if self.min_repeat_count < 3:
+            raise ValueError("min_repeat_count must be at least 3")
         if self.max_candidates_per_cycle < 1:
             raise ValueError("max_candidates_per_cycle must be positive")
         if self.regression_pause_threshold < 1:
@@ -205,7 +205,7 @@ def select_low_risk_tasks(
         group = groups.setdefault(key, {"summary": summary, "trace_ids": [], "score": 0.0})
         group["trace_ids"].append(trace_id)
         group["score"] = max(group["score"], float(record.get("value_score") or 0.0))
-    minimum = int(_config_value(config, "min_repeat_count", 2))
+    minimum = int(_config_value(config, "min_repeat_count", 3))
     candidates = [
         TraceCandidate(key, tuple(sorted(set(value["trace_ids"]))), value["summary"],
                        len(set(value["trace_ids"])), value["score"])
@@ -221,10 +221,23 @@ def load_trace_records(connection: sqlite3.Connection) -> tuple[dict[str, Any], 
     rows = connection.execute(
         "SELECT trace_id,outcome,summary,event_count,tool_count FROM trace_index ORDER BY started_at"
     ).fetchall()
-    return tuple({
-        "trace_id": row[0], "outcome": row[1], "summary": row[2],
-        "event_count": row[3], "tool_count": row[4],
-    } for row in rows)
+    records: list[dict[str, Any]] = []
+    for row in rows:
+        record: dict[str, Any] = {
+            "trace_id": row[0], "outcome": row[1], "summary": row[2],
+            "event_count": row[3], "tool_count": row[4],
+        }
+        # Tool names are already part of the redacted summary projection. Do
+        # not read Audit payloads here; expose only this safe category metadata.
+        try:
+            parsed = json.loads(str(row[2] or ""))
+            tools = parsed.get("tool_names", []) if isinstance(parsed, Mapping) else []
+            if isinstance(tools, list):
+                record["tools"] = tuple(str(tool) for tool in tools if str(tool))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            pass
+        records.append(record)
+    return tuple(records)
 
 
 def load_failed_trace_records(connection: sqlite3.Connection) -> tuple[dict[str, Any], ...]:

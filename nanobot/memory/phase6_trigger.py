@@ -19,6 +19,7 @@ from nanobot.memory.continuous import (
     run_cycle,
 )
 from nanobot.memory.db import connect_memory_db
+from nanobot.memory.evolution_orchestrator import run_fixture_review_cycle
 from nanobot.memory.migrations.runner import apply_migrations
 
 PHASE6_REVIEW_JOB_ID = "phase6-evolution-review"
@@ -59,21 +60,55 @@ def register_phase6_review_job(cron: Any, config: Any, *, policy: Phase6TriggerP
     return True
 
 
-def run_phase6_review_scan(workspace: str | Path, config: Any) -> Any:
-    """Run one payload-free production scan under the existing lease/CAS rules."""
+def run_phase6_review_scan(
+    workspace: str | Path,
+    config: Any,
+    *,
+    overlay_pipeline: Any | None = None,
+    notify_proposal: Any | None = None,
+) -> Any:
+    """Run the production Trace → Candidate → Gate → Proposal scan.
+
+    Overlay and QQ delivery are optional adapters so the protected system Cron
+    can remain safe in installations that have not configured a private
+    checkout or a notification worker.  When supplied, the existing pipeline
+    performs Draft PR/CI and delivery idempotency checks.
+    """
 
     root = Path(workspace).expanduser().resolve()
     connection = connect_memory_db(root)
     try:
         apply_migrations(connection)
         runtime = Phase6RuntimeConfig.from_config(config)
-        return run_cycle(
+        cycle = run_cycle(
             connection,
             root,
             runtime,
             trace_records=load_trace_records(connection),
             failed_traces=load_failed_trace_records(connection),
         )
+        if cycle.status != "completed" or not cycle.selected_tasks:
+            return cycle
+        from nanobot.memory.phase6_candidates import build_candidate_specs
+
+        built = build_candidate_specs(
+            connection,
+            cycle.selected_tasks,
+            min_repeat_count=runtime.min_repeat_count,
+        )
+        result = run_fixture_review_cycle(
+            connection,
+            root,
+            runtime,
+            trace_records=load_trace_records(connection),
+            candidate_specs=built.specs,
+            failed_traces=(),
+            overlay_pipeline=overlay_pipeline,
+        )
+        if notify_proposal is not None:
+            for proposal_id in result.proposal_ids:
+                notify_proposal(proposal_id)
+        return result
     finally:
         connection.close()
 

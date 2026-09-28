@@ -73,6 +73,7 @@ def test_gate_passed_overlay_handoff_creates_pr_and_notifies(tmp_path):
         trace_records=[
             {"trace_id": "trace-1", "summary": "overlay repeat", "outcome": "success"},
             {"trace_id": "trace-2", "summary": "overlay repeat", "outcome": "success"},
+            {"trace_id": "trace-3", "summary": "overlay repeat", "outcome": "success"},
         ],
         candidate_specs=[_spec()],
         overlay_pipeline=pipeline,
@@ -100,6 +101,7 @@ def test_overlay_handoff_stays_disabled_without_explicit_flag(tmp_path):
         trace_records=[
             {"trace_id": "trace-1", "summary": "overlay repeat", "outcome": "success"},
             {"trace_id": "trace-2", "summary": "overlay repeat", "outcome": "success"},
+            {"trace_id": "trace-3", "summary": "overlay repeat", "outcome": "success"},
         ],
         candidate_specs=[_spec()],
         overlay_pipeline=pipeline,

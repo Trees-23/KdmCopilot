@@ -75,14 +75,15 @@ def test_low_risk_selector_requires_repetition_and_excludes_sensitive_or_write_t
     records = [
         {"trace_id": "t1", "summary": "List project status", "outcome": "succeeded", "tools": ["list_dir"]},
         {"trace_id": "t2", "summary": "  List   project status ", "outcome": "success", "tools": ["skill_read"]},
-        {"trace_id": "t3", "summary": "List project status", "outcome": "failed", "tools": ["list_dir"]},
-        {"trace_id": "t4", "summary": "read token: abc", "outcome": "success", "tools": ["read_file"]},
-        {"trace_id": "t5", "summary": "List project status", "outcome": "success", "tools": ["write_file"]},
+        {"trace_id": "t3", "summary": "List project status", "outcome": "success", "tools": ["read_file"]},
+        {"trace_id": "t4", "summary": "List project status", "outcome": "failed", "tools": ["list_dir"]},
+        {"trace_id": "t5", "summary": "read token: abc", "outcome": "success", "tools": ["read_file"]},
+        {"trace_id": "t6", "summary": "List project status", "outcome": "success", "tools": ["write_file"]},
     ]
     candidates = select_low_risk_tasks(records, _cfg())
     assert len(candidates) == 1
-    assert candidates[0].trace_ids == ("t1", "t2")
-    assert candidates[0].frequency == 2
+    assert candidates[0].trace_ids == ("t1", "t2", "t3")
+    assert candidates[0].frequency == 3
 
 
 def test_trace_index_loaders_remain_payload_free(tmp_path) -> None:
@@ -231,11 +232,12 @@ def test_cycle_is_bounded_and_failed_trace_case_is_staged(tmp_path) -> None:
         trace_records=[
             {"trace_id": "ok-1", "summary": "repeat task", "outcome": "success"},
             {"trace_id": "ok-2", "summary": "repeat task", "outcome": "success"},
+            {"trace_id": "ok-3", "summary": "repeat task", "outcome": "success"},
         ],
         failed_traces=[{"trace_id": "bad-1", "outcome": "failed", "summary": "rejected"}],
     )
     assert result.status == "completed"
-    assert result.selected_tasks[0].frequency == 2
+    assert result.selected_tasks[0].frequency == 3
     assert result.regression_case_ids == ("case:bad-1",)
     assert (workspace / ".nanobot" / "phase6" / "evidence.jsonl").exists()
     assert run_cycle(connection, workspace, _cfg(kill_switch=True), trace_records=[]) .status == "disabled"

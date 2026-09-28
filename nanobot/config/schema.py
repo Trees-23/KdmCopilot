@@ -516,7 +516,7 @@ class Phase6Config(Base):
     enabled: bool = False
     kill_switch: bool = False
     evolution: Phase6EvolutionConfig = Field(default_factory=Phase6EvolutionConfig)
-    min_repeat_count: int = Field(default=2, ge=2)
+    min_repeat_count: int = Field(default=3, ge=3)
     max_candidates_per_cycle: int = Field(default=20, ge=1)
     regression_pause_threshold: int = Field(default=3, ge=1)
     dead_letter_pause_threshold: int = Field(default=3, ge=1)

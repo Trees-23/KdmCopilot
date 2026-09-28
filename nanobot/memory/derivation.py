@@ -156,6 +156,10 @@ def _split_for(index: int, total: int) -> str:
     elif total >= 10:
         target = (max(1, total // 2), max(1, (total - total // 2) // 2), 0)
         target = (target[0], target[1], total - target[0] - target[1])
+    elif total >= 3:
+        # Three independent repeats are the minimum production evidence. Keep
+        # one train, one validation and one holdout case at that threshold.
+        target = (1, 1, total - 2)
     else:
         target = (total, 0, 0)
     if index < target[0]:
@@ -190,7 +194,7 @@ def build_eval_pack_draft(
                                "source_case_id": str(item.get("case_id") or key)})
     normalized.sort(key=lambda item: digest(item))
     total = len(normalized)
-    grade = "standard" if total >= 20 else "limited" if total >= 10 else "insufficient_evidence"
+    grade = "standard" if total >= 20 else "limited" if total >= 3 else "insufficient_evidence"
     eval_cases = tuple(EvalCase(item["case_key"], item["prompt"], item["expected"],
                                 _split_for(index, total), item["source_case_id"])
                        for index, item in enumerate(normalized))

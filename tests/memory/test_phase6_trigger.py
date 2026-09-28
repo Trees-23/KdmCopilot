@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 
 from nanobot.config.schema import Phase6Config
@@ -52,3 +53,57 @@ def test_production_scan_uses_trace_projection_and_records_cycle(tmp_path) -> No
     assert result.status == "completed"
     evidence = (workspace / ".nanobot" / "phase6" / "evidence.jsonl").read_text(encoding="utf-8")
     assert '"event": "cycle"' in evidence
+
+
+def _insert_readonly_traces(workspace, count: int) -> None:
+    connection = open_maintenance_db(workspace)
+    now = datetime.now(UTC).isoformat()
+    summary = json.dumps({"event_types": ["tool_call"], "tool_names": ["read_file"]})
+    for index in range(count):
+        connection.execute(
+            "INSERT INTO trace_index(trace_id,workspace,started_at,ended_at,outcome,summary,"
+            "event_count,tool_count,redaction_version,source_path,created_at,updated_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            (f"repeat-{index}", str(workspace), now, now, "success", summary, 1, 1,
+             "v1", "derived://trace", now, now),
+        )
+    connection.commit()
+    connection.close()
+
+
+def test_production_scan_generates_candidate_proposal_at_three_repeats(tmp_path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _insert_readonly_traces(workspace, 3)
+
+    result = run_phase6_review_scan(str(workspace), Phase6Config(enabled=True))
+
+    assert result.status == "completed"
+    assert len(result.proposal_ids) == 1
+    connection = open_maintenance_db(workspace)
+    proposal = connection.execute(
+        "SELECT source_kind,target,status FROM skill_proposals"
+    ).fetchone()
+    assert tuple(proposal) == ("shared", "git_pr_proposal", "eligible_for_confirmation")
+    assert connection.execute("SELECT gate_result FROM eval_runs").fetchone()[0] == "eligible_for_confirmation"
+    connection.close()
+
+    # The next daily run sees the same evidence and remains idempotent.
+    repeated = run_phase6_review_scan(str(workspace), Phase6Config(enabled=True))
+    assert repeated.status == "completed"
+    assert repeated.proposal_ids == ()
+    assert repeated.deduplicated_task_keys
+
+
+def test_production_scan_does_not_generate_before_three_repeats(tmp_path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _insert_readonly_traces(workspace, 2)
+
+    result = run_phase6_review_scan(str(workspace), Phase6Config(enabled=True))
+
+    assert result.status == "completed"
+    assert result.selected_tasks == ()
+    connection = open_maintenance_db(workspace)
+    assert connection.execute("SELECT count(*) FROM skill_proposals").fetchone()[0] == 0
+    connection.close()

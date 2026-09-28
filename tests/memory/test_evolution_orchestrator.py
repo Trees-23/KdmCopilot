@@ -66,6 +66,7 @@ def test_fixture_cycle_connects_trace_to_eval_gate_and_proposal(tmp_path):
         trace_records=[
             {"trace_id": "trace-1", "summary": "repeat fixture", "outcome": "success"},
             {"trace_id": "trace-2", "summary": "repeat fixture", "outcome": "success"},
+            {"trace_id": "trace-3", "summary": "repeat fixture", "outcome": "success"},
         ],
         failed_traces=[{"trace_id": "failed-1", "outcome": "failed", "summary": "fixture failure"}],
         candidate_specs=[_spec()],

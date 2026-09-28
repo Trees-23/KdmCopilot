@@ -58,6 +58,7 @@ class CandidateSpec:
     model_id: str = "fixture-model"
     tool_schema_digest: str = "sha256:fixture-tools"
     replay: ReplayFixture | None = None
+    case_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,6 +136,19 @@ def run_fixture_review_cycle(
         for spec in candidate_specs:
             if spec.task_key not in selected_keys:
                 continue
+            # A daily Cron can observe the same repeated Trace group again.
+            # Reuse the existing Proposal instead of attempting a duplicate
+            # EvalPack/Proposal insert and turning an idempotent scan into a
+            # failed job.
+            existing = connection.execute(
+                "SELECT proposal_id FROM skill_proposals "
+                "WHERE skill_name=? AND source_kind=? AND baseline_hash=? AND candidate_hash=? "
+                "AND status NOT IN ('rejected_by_admin','expired','failed','rolled_back') LIMIT 1",
+                (spec.skill_name, spec.source_kind, spec.baseline_hash, spec.candidate_hash),
+            ).fetchone()
+            if existing is not None:
+                deduped.append(spec.task_key)
+                continue
             eval_pack = build_eval_pack_draft(
                 connection,
                 skill_id=spec.skill_id,
@@ -175,7 +189,7 @@ def run_fixture_review_cycle(
             proposal = make_proposal(
                 source_kind=spec.source_kind,
                 trace_ids=tuple(item.trace_ids for item in selected if item.task_key == spec.task_key)[0],
-                case_ids=staged_cases or (f"case:{spec.task_key}",),
+                case_ids=spec.case_ids or tuple(staged_cases) or (f"case:{spec.task_key}",),
                 eval_run_ids=(run_id,),
                 config=config,
             )
