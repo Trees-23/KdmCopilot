@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+from nanobot.config.schema import Phase6Config, Phase6EvolutionConfig
 from nanobot.memory.continuous import Phase6RuntimeConfig, load_state
 from nanobot.memory.maintenance import open_maintenance_db
 from nanobot.memory.operations import (
     build_operational_report,
     pause_on_operational_breach,
     render_operational_report,
+    review_phase6_configuration,
 )
 
 
@@ -76,3 +78,25 @@ def test_operational_breach_pauses_and_notifies_without_writing_skill(tmp_path) 
     assert "dead_letter_threshold" in (state.pause_reason or "")
     assert notices and "自动暂停" in notices[0]
     assert load_state(workspace).paused is True
+
+
+def test_configuration_review_catches_dangerous_partial_enablement() -> None:
+    config = Phase6Config(
+        enabled=True,
+        kill_switch=True,
+        evolution=Phase6EvolutionConfig(
+            notifications_enabled=True,
+            adoption_enabled=True,
+            publish_enabled=True,
+            notification_groups=[],
+            approval_admin_openids=[],
+            overlay_repository="",
+        ),
+    )
+    findings = review_phase6_configuration(config)
+    assert findings == (
+        "notifications_enabled_without_group_whitelist",
+        "adoption_enabled_without_admin_allowlist",
+        "publish_enabled_without_overlay_repository",
+        "kill_switch_active",
+    )

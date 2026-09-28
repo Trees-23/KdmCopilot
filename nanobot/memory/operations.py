@@ -143,6 +143,32 @@ def render_operational_report(report: OperationalReport) -> str:
     )
 
 
+def review_phase6_configuration(config: Any) -> tuple[str, ...]:
+    """Return actionable configuration findings for the periodic review.
+
+    An empty tuple means the governance shape is internally consistent.  This
+    check intentionally does not validate secrets or probe remote services.
+    """
+
+    evolution = getattr(config, "evolution", config)
+    findings: list[str] = []
+    groups = tuple(str(value) for value in getattr(evolution, "notification_groups", ()) or () if str(value))
+    admins = tuple(str(value) for value in getattr(evolution, "approval_admin_openids", ()) or () if str(value))
+    if bool(getattr(evolution, "notifications_enabled", False)) and not groups:
+        findings.append("notifications_enabled_without_group_whitelist")
+    if bool(getattr(evolution, "adoption_enabled", False)) and not admins:
+        findings.append("adoption_enabled_without_admin_allowlist")
+    if bool(getattr(evolution, "publish_enabled", False)) and not str(
+        getattr(evolution, "overlay_repository", "") or ""
+    ).strip():
+        findings.append("publish_enabled_without_overlay_repository")
+    if int(getattr(evolution, "max_notifications_per_group_per_day", 1)) < 1:
+        findings.append("invalid_notification_quota")
+    if bool(getattr(config, "kill_switch", False)):
+        findings.append("kill_switch_active")
+    return tuple(findings)
+
+
 def pause_on_operational_breach(
     workspace: str,
     config: Any,
@@ -177,5 +203,6 @@ __all__ = [
     "OperationalReport",
     "build_operational_report",
     "pause_on_operational_breach",
+    "review_phase6_configuration",
     "render_operational_report",
 ]

@@ -129,8 +129,13 @@ class ChannelManager:
         self.proposal_notifier = ProposalNotifier(
             str(config.workspace_path), config.phase6, bus
         )
-
         self._init_channels()
+
+    def refresh_phase6_config(self, phase6_config: Any) -> None:
+        """Refresh Phase 6 policy used by QQ notifications without restart."""
+
+        self.config = self.config.model_copy(update={"phase6": phase6_config})
+        self.proposal_notifier.config = phase6_config
 
     def _channel_section(
         self,

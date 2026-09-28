@@ -380,6 +380,7 @@ class AgentLoop:
             provider_snapshot_loader=provider_snapshot_loader,
             preset_snapshot_loader=preset_snapshot_loader,
         )
+
         self.context_block_limit = context_block_limit
         self.max_tool_result_chars = (
             max_tool_result_chars
@@ -532,6 +533,16 @@ class AgentLoop:
         self._current_iteration: int = 0
         self.commands = CommandRouter()
         register_builtin_commands(self.commands)
+
+    def refresh_phase6_config(self, phase6_config: Any) -> None:
+        """Apply Phase 6 governance changes to future turns without restart.
+
+        Skill publication remains separately gated; replacing this in-memory
+        reference only changes the next command/cycle's policy evaluation.
+        """
+
+        self.phase6_config = phase6_config
+        self.evolution_commands.config = phase6_config
 
     @classmethod
     def from_config(
