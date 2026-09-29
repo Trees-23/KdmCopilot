@@ -95,10 +95,16 @@ class GitHubOverlayClient:
         self.run = run
 
     def _git(self, *args: str) -> subprocess.CompletedProcess[str]:
-        return self.run(["git", *args], cwd=self.repo_path, check=False, capture_output=True, text=True)
+        return self.run(
+            ["git", *args], cwd=self.repo_path, check=False, capture_output=True,
+            text=True, encoding="utf-8", errors="replace",
+        )
 
     def _gh(self, *args: str) -> subprocess.CompletedProcess[str]:
-        return self.run(["gh", *args], cwd=self.repo_path, check=False, capture_output=True, text=True)
+        return self.run(
+            ["gh", *args], cwd=self.repo_path, check=False, capture_output=True,
+            text=True, encoding="utf-8", errors="replace",
+        )
 
     def _verify_repository(self) -> None:
         root = self._git("rev-parse", "--show-toplevel")

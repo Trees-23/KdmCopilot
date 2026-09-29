@@ -72,7 +72,10 @@ def _branch_name(proposal_id: str) -> str:
 
 
 def _run_git(run: _RUN, repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return run(["git", *args], cwd=repo, check=False, capture_output=True, text=True)
+    return run(
+        ["git", *args], cwd=repo, check=False, capture_output=True,
+        text=True, encoding="utf-8", errors="replace",
+    )
 
 
 def _git_error(result: subprocess.CompletedProcess[str]) -> str:

@@ -68,7 +68,8 @@ class GitHubOverlayRelease:
         if env.get("GITHUB_PERSONAL_ACCESS_TOKEN") and not env.get("GH_TOKEN"):
             env["GH_TOKEN"] = env["GITHUB_PERSONAL_ACCESS_TOKEN"]
         result = self._run(
-            ["gh", *args], check=False, capture_output=True, text=True, env=env
+            ["gh", *args], check=False, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", env=env
         )
         if result.returncode != 0:
             detail = (result.stderr or result.stdout or "GitHub CLI failed").strip()

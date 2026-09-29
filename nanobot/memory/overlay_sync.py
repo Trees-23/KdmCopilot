@@ -45,7 +45,10 @@ def _safe_name(value: str) -> bool:
 
 
 def _run_git(run: _RUN, repository: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return run(["git", *args], cwd=repository, check=False, capture_output=True, text=True)
+    return run(
+        ["git", *args], cwd=repository, check=False, capture_output=True,
+        text=True, encoding="utf-8", errors="replace",
+    )
 
 
 def inspect_overlay(

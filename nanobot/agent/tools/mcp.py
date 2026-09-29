@@ -69,7 +69,15 @@ class _OwnedMCPConnection:
     async def aclose(self) -> None:
         self._close_requested.set()
         try:
-            await asyncio.shield(self._owner)
+            # A transport may be stuck in SDK cleanup while its peer is
+            # disappearing.  Never let that block Gateway shutdown forever;
+            # cancellation is safe here because the owner task exclusively
+            # owns the AsyncExitStack and no caller can reuse it afterwards.
+            await asyncio.wait_for(asyncio.shield(self._owner), timeout=5.0)
+        except asyncio.TimeoutError:
+            self._owner.cancel()
+            with suppress(BaseException):
+                await asyncio.wait_for(asyncio.shield(self._owner), timeout=1.0)
         except asyncio.CancelledError:
             if not self._owner.cancelled():
                 raise
