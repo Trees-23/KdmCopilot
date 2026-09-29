@@ -490,6 +490,19 @@ class MCPToolWrapper(_MCPWrapperBase):
                 logger.warning(
                     "MCP tool '{}' timed out after {}s", self._name, self._tool_timeout
                 )
+                # Streamable HTTP servers can leave a request pending after
+                # expiring an idle session instead of returning a structured
+                # "session terminated" error. Treat the first timeout as a
+                # reconnect hint so a stale transport cannot strand callers.
+                if not refreshed_session and self._reconnect is not None:
+                    refreshed_tool = await self._reconnect(
+                        self._server_name, self._name, self
+                    )
+                    refreshed_session_obj = getattr(refreshed_tool, "_session", None)
+                    if refreshed_session_obj is not None:
+                        self._session = refreshed_session_obj
+                        refreshed_session = True
+                        continue
                 return ToolResult.error(
                     f"(MCP tool call timed out after {self._tool_timeout}s)"
                 )
