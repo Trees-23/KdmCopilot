@@ -1896,9 +1896,12 @@ def _run_gateway(
         from nanobot.memory.phase6_trigger import PHASE6_REVIEW_JOB_ID, run_phase6_review_scan
 
         if job.name == PHASE6_REVIEW_JOB_ID:
+            from nanobot.config.paths import get_audit_dir
+
             result = run_phase6_review_scan(
                 config.workspace_path,
                 config.phase6,
+                audit_root=get_audit_dir(config.audit.path),
                 overlay_pipeline_factory=(
                     lambda connection, workspace, phase6_config: build_overlay_pipeline(
                         connection,

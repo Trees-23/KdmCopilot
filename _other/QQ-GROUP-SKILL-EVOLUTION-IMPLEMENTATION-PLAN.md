@@ -487,6 +487,7 @@ workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → �
 - [x] M10-B-1：把脱敏 `trace_index` 扫描接入候选生成；默认最低重复次数固定为 3，仅允许成功且只读工具类别进入候选，敏感/写操作继续排除。
 - [x] M10-B-2：由 3 次重复 Trace 生成隔离 staging Skill revision、3-case EvalPack、只读确定性 Replay 和独立 Gate；Gate 通过后持久化 `git_pr_proposal`，当前 Skill 指针保持不变；重复每日扫描幂等去重。
 - [x] M10-B-3：把私有 Overlay Draft PR 创建、CI 回写和 QQ 投递器作为 Gateway 运行态适配器注入受保护 Cron；未注入适配器时只保留 Proposal，不得伪造 PR/CI/通知成功。
+- [x] M10-B-4：修复定时评审只读取空 `trace_index` 的问题；每次生产 Cron 扫描前先从提交后的 Audit 根目录增量索引 Trace，再执行低风险候选选择。2026-09-29 核对到此前已有 135 条 Audit Trace 未进入索引，已补齐索引入口和聚焦测试。
 - [x] 每周输出候选数量、Gate 通过率、通知失败率、管理员拒绝率、采用/回滚率和误报原因；周报只读取 Proposal/Delivery/Action 元数据，不读取模型原文或凭据。
 - [x] 超过阈值自动暂停 Phase 6，并通过注入式通知适配器向管理员发送暂停原因；暂停状态持久化且不会自动恢复。
 - [x] 提供定期复审检查：群白名单、管理员名单、Overlay 配置、配额和 kill switch 的不一致会形成明确 finding；Skill 白名单仍需按运营周期人工确认。

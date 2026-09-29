@@ -24,6 +24,7 @@ from nanobot.memory.continuous import (
 from nanobot.memory.db import connect_memory_db
 from nanobot.memory.evolution_orchestrator import run_fixture_review_cycle
 from nanobot.memory.migrations.runner import apply_migrations
+from nanobot.memory.trace_indexer import index_audit_root
 
 PHASE6_REVIEW_JOB_ID = "phase6-evolution-review"
 
@@ -67,6 +68,7 @@ def run_phase6_review_scan(
     workspace: str | Path,
     config: Any,
     *,
+    audit_root: str | Path | None = None,
     overlay_pipeline: Any | None = None,
     overlay_pipeline_factory: Any | None = None,
     notify_proposal: Any | None = None,
@@ -84,6 +86,11 @@ def run_phase6_review_scan(
     try:
         apply_migrations(connection)
         runtime = Phase6RuntimeConfig.from_config(config)
+        # The audit log is the source of truth for Trace data.  Refresh the
+        # derived index before selecting candidates; otherwise the daily job
+        # can run successfully while seeing an empty trace_index forever.
+        if audit_root is not None:
+            index_audit_root(Path(audit_root), root, connection=connection)
         if overlay_pipeline_factory is not None:
             try:
                 overlay_pipeline = overlay_pipeline_factory(connection, root, config)

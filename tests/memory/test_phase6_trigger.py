@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 
+import nanobot.memory.phase6_trigger as phase6_trigger
 from nanobot.config.schema import Phase6Config
 from nanobot.cron.types import CronSchedule
 from nanobot.memory.maintenance import open_maintenance_db
@@ -53,6 +54,29 @@ def test_production_scan_uses_trace_projection_and_records_cycle(tmp_path) -> No
     assert result.status == "completed"
     evidence = (workspace / ".nanobot" / "phase6" / "evidence.jsonl").read_text(encoding="utf-8")
     assert '"event": "cycle"' in evidence
+
+
+def test_production_scan_refreshes_trace_index_before_selection(tmp_path, monkeypatch) -> None:
+    workspace = tmp_path / "workspace"
+    audit_root = tmp_path / "audit"
+    workspace.mkdir()
+    audit_root.mkdir()
+    calls: list[tuple[str, str]] = []
+
+    def fake_index(audit_path, workspace_path, *, connection):
+        calls.append((str(audit_path), str(workspace_path)))
+        return 0
+
+    monkeypatch.setattr(phase6_trigger, "index_audit_root", fake_index)
+
+    result = run_phase6_review_scan(
+        workspace,
+        Phase6Config(enabled=True),
+        audit_root=audit_root,
+    )
+
+    assert result.status == "completed"
+    assert calls == [(str(audit_root), str(workspace.resolve()))]
 
 
 def _insert_readonly_traces(workspace, count: int) -> None:
