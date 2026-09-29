@@ -109,6 +109,8 @@ workspace 原子采用/回滚                         CI 通过后 QQ 发布候�
 - `runtime/workspace/skills/`：当前 Agent 的**生效 Skill 目录**。`SkillsLoader` 每次构建新 Context 时从这里读取 `SKILL.md`，因此只有这里的文件会影响当前 Agent。
 - `runtime/skill-evolution-overlay/`：个人私有仓库 `Trees-23/KdmCopilot-skills-private` 的**候选 Overlay 工作副本**。它只用于生成 Draft PR、等待 CI、合并后作为发布来源；不会被 `SkillsLoader` 自动扫描。
 
+群内可用只读命令查看候选区：`/evolve overlay` 列出候选 Skill 及其“未发布/已同步/内容不一致”状态；`/evolve overlay <skill-name>` 仅允许审批管理员查看候选 `SKILL.md` 正文。普通 `/evolve list` 和 `/evolve review <proposal-id>` 继续查看 Proposal 元数据；这些查询不会把候选 Skill 注入正常 Agent Context。
+
 因此，Overlay 中存在某个 `skills/<name>/SKILL.md`，只代表它存在于候选仓库，不代表已经部署。只有群内管理员完成二次确认发布后，系统才会把指定合并版本中的安全 Skill 文件原子同步到 `runtime/workspace/skills/`；回滚后，生效目录恢复为上一版本。旧审计记录中可能仍出现 `phase6-overlay` 这一历史 actor 名称，但新的运行目录、默认路径和审计 actor 统一使用 `skill-evolution-overlay`。
 
 ## 3. 目标范围与非目标

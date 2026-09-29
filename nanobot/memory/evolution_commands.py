@@ -11,11 +11,13 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, Callable, Mapping
 from zoneinfo import ZoneInfo
 
 from nanobot.memory.db import connect_memory_db
 from nanobot.memory.migrations.runner import apply_migrations
+from nanobot.memory.overlay_sync import OverlayInspection, inspect_overlay
 from nanobot.memory.proposal_repository import (
     ProposalConflict,
     ProposalRepository,
@@ -96,6 +98,53 @@ class EvolutionCommandService:
         apply_migrations(connection)
         return connection
 
+    def _overlay_path(self) -> Path:
+        evolution = getattr(self.config, "evolution", self.config)
+        configured = getattr(evolution, "overlay_checkout_path", None)
+        if configured:
+            return Path(str(configured)).expanduser().resolve()
+        return Path(self.workspace).expanduser().resolve().parent / "skill-evolution-overlay"
+
+    @staticmethod
+    def _overlay_status(status: str) -> str:
+        return {
+            "in_sync": "已同步到生效目录",
+            "missing_in_workspace": "未发布（生效目录没有）",
+            "drifted": "内容不一致（未确认）",
+        }.get(status, status)
+
+    def _overlay_command(self, tokens: list[str], *, actor: str | None) -> EvolutionCommandResult:
+        inspection: OverlayInspection = inspect_overlay(
+            self._overlay_path(), self.workspace, expected_branch="main"
+        )
+        if inspection.status in {"invalid", "branch_mismatch"}:
+            return EvolutionCommandResult(f"Overlay 读取失败：{inspection.reason or inspection.status}")
+        if not inspection.skills:
+            return EvolutionCommandResult("候选 Overlay 当前没有可读取的 Skill。")
+        if len(tokens) == 1:
+            lines = ["候选 Skill（仅 Overlay，不代表已发布）："]
+            for skill in inspection.skills:
+                lines.append(f"- {skill.skill_name}：{self._overlay_status(skill.status)}")
+            lines.append("查看内容：/evolve overlay <skill-name>（仅审批管理员）")
+            return EvolutionCommandResult("\n".join(lines))
+
+        if actor not in self._admins():
+            return EvolutionCommandResult("拒绝：查看候选 Skill 正文仅允许审批管理员。")
+        name = tokens[1]
+        selected = next((item for item in inspection.skills if item.skill_name == name), None)
+        if selected is None:
+            return EvolutionCommandResult(f"未找到候选 Skill：{name}")
+        content = Path(selected.overlay_path).read_text(encoding="utf-8")
+        limit = 4000
+        if len(content) > limit:
+            content = content[:limit] + "\n…（正文过长，已截断）"
+        return EvolutionCommandResult(
+            f"候选 Skill：{selected.skill_name}\n"
+            f"状态：{self._overlay_status(selected.status)}\n"
+            "说明：这是私有 Overlay 中的候选版本，尚未自动加载到 Agent。\n\n"
+            f"--- SKILL.md ---\n{content}"
+        )
+
     @staticmethod
     def _record_line(record: Any) -> str:
         return f"- {record.proposal_id} | {record.skill_name} | {record.status} | Gate: {record.gate_result}"
@@ -103,9 +152,9 @@ class EvolutionCommandService:
     def handle(self, args: str, *, metadata: Mapping[str, Any]) -> EvolutionCommandResult:
         tokens = args.strip().split(maxsplit=3)
         action = tokens[0].lower() if tokens else "status"
-        if action not in {"status", "list", "review", "approve", "reject", "rollback", "publish"}:
+        if action not in {"status", "list", "overlay", "review", "approve", "reject", "rollback", "publish"}:
             return EvolutionCommandResult(
-                "用法：/evolve status | list [pending|recent] | review <proposal-id> | "
+                "用法：/evolve status | list [pending|recent] | overlay [skill-name] | review <proposal-id> | "
                 "approve <proposal-id> <code> | reject <proposal-id> <reason> | "
                 "rollback <proposal-id> <code> | publish <proposal-id> [code]"
             )
@@ -130,6 +179,9 @@ class EvolutionCommandService:
                     f"- 发布能力：{'开启' if bool(getattr(evolution, 'publish_enabled', False)) else '关闭'}\n"
                     "- 当前群：已通过群范围校验"
                 )
+
+            if action == "overlay":
+                return self._overlay_command(tokens, actor=actor)
 
             if action == "list":
                 mode = tokens[1].lower() if len(tokens) > 1 else "pending"

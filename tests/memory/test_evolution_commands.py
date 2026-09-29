@@ -8,6 +8,7 @@ from nanobot.memory.evolution_commands import (
     _format_beijing_time,
 )
 from nanobot.memory.migrations.runner import apply_migrations
+from nanobot.memory.overlay_sync import OverlayInspection, OverlaySkill
 from nanobot.memory.proposal_repository import ProposalRepository
 
 
@@ -143,6 +144,31 @@ def test_evolve_rejects_wrong_group_and_missing_mention(tmp_path):
         f"review {proposal_id}", metadata=_metadata(mention=False)
     )
     assert "@机器人" in missing_mention.content
+
+
+def test_overlay_command_lists_unpublished_candidates_and_admin_can_read_content(tmp_path, monkeypatch):
+    candidate = tmp_path / "overlay" / "skills" / "demo-candidate" / "SKILL.md"
+    candidate.parent.mkdir(parents=True)
+    candidate.write_text("# Demo candidate\n\n未发布内容。\n", encoding="utf-8")
+    inspection = OverlayInspection(
+        "drifted",
+        str(candidate.parents[2]),
+        "main",
+        (OverlaySkill("demo-candidate", str(candidate), "sha256:a", str(tmp_path / "skills/demo-candidate/SKILL.md"), None, "missing_in_workspace"),),
+    )
+    monkeypatch.setattr("nanobot.memory.evolution_commands.inspect_overlay", lambda *args, **kwargs: inspection)
+    config = _config()
+    config.evolution.overlay_checkout_path = str(candidate.parents[2])
+    service = EvolutionCommandService(str(tmp_path), config)
+
+    listed = service.handle("overlay", metadata=_metadata(sender="member-1"))
+    assert "demo-candidate" in listed.content
+    assert "未发布" in listed.content
+
+    denied = service.handle("overlay demo-candidate", metadata=_metadata(sender="member-1"))
+    assert denied.content.startswith("拒绝：")
+    detail = service.handle("overlay demo-candidate", metadata=_metadata(sender="admin-1"))
+    assert "未发布内容" in detail.content
 
 
 def test_evolve_reject_is_idempotent_for_replayed_message(tmp_path):
