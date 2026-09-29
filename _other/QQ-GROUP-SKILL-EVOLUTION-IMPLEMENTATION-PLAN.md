@@ -111,6 +111,8 @@ workspace 原子采用/回滚                         CI 通过后 QQ 发布候�
 
 群内可用只读命令查看候选区：`/evolve overlay` 列出候选 Skill 及其“未发布/已同步/内容不一致”状态；`/evolve overlay <skill-name>` 仅允许审批管理员查看候选 `SKILL.md` 正文。普通 `/evolve list` 和 `/evolve review <proposal-id>` 继续查看 Proposal 元数据；这些查询不会把候选 Skill 注入正常 Agent Context。
 
+为降低记忆命令成本，`/evolve menu`（以及 `help`、`commands`、`enum` 别名）会返回中文操作菜单；Proposal 列表使用中文状态、独立的北京时间创建日期和 Skill 名称，不再把日期编码进展示文本。QQ 群内 @机器人后，也可直接使用“看看候选 Skill”“看看待确认的沉淀 Skill”“看看当前有哪些 Skill”等只读中文表达；这些表达不会触发批准、发布、回滚或任何写入动作。
+
 因此，Overlay 中存在某个 `skills/<name>/SKILL.md`，只代表它存在于候选仓库，不代表已经部署。只有群内管理员完成二次确认发布后，系统才会把指定合并版本中的安全 Skill 文件原子同步到 `runtime/workspace/skills/`；回滚后，生效目录恢复为上一版本。旧审计记录中可能仍出现 `phase6-overlay` 这一历史 actor 名称，但新的运行目录、默认路径和审计 actor 统一使用 `skill-evolution-overlay`。
 
 ## 3. 目标范围与非目标

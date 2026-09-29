@@ -2049,7 +2049,21 @@ class AgentLoop:
             is_user_turn=is_user_turn,
             turn_scopes=ctx.turn_scopes,
         )
-        result = await self.commands.dispatch(cmd_ctx)
+        result = None
+        if not raw.startswith("/"):
+            natural = self.evolution_commands.handle_natural_query(
+                raw,
+                metadata={**dict(ctx.msg.metadata or {}), "chat_id": ctx.msg.chat_id, "sender_id": ctx.msg.sender_id},
+            )
+            if natural is not None:
+                result = OutboundMessage(
+                    channel=ctx.route.channel,
+                    chat_id=ctx.route.chat_id,
+                    content=natural.content,
+                    metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
+                )
+        if result is None:
+            result = await self.commands.dispatch(cmd_ctx)
         if result is not None:
             ctx.outbound = result
             # Shortcut commands skip BUILD and SAVE, so we must persist the

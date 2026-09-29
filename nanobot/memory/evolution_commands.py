@@ -147,14 +147,90 @@ class EvolutionCommandService:
 
     @staticmethod
     def _record_line(record: Any) -> str:
-        return f"- {record.proposal_id} | {record.skill_name} | {record.status} | Gate: {record.gate_result}"
+        statuses = {
+            "eligible_for_confirmation": "待确认",
+            "notified": "已通知待确认",
+            "approved": "已批准",
+            "pr_created": "已创建 Draft PR",
+            "published": "已发布",
+            "adopted": "已采用",
+            "rolled_back": "已回滚",
+            "rejected_by_admin": "已拒绝",
+            "expired": "已过期",
+            "failed": "失败",
+        }
+        gate = "通过" if record.gate_result == "passed" else "未通过"
+        date = _format_beijing_time(record.created_at) if record.created_at else "未知"
+        return (
+            f"- Skill：{record.skill_name}\n"
+            f"  日期：{date}\n"
+            f"  状态：{statuses.get(record.status, record.status)}\n"
+            f"  自动评审：{gate}\n"
+            f"  查看：/evolve review {record.skill_name}"
+        )
+
+    @staticmethod
+    def _menu() -> str:
+        return (
+            "自进化查询菜单\n\n"
+            "/evolve status\n查看模块开关状态\n\n"
+            "/evolve list pending\n查看待确认的沉淀 Skill\n\n"
+            "/evolve list recent\n查看最近的 Proposal\n\n"
+            "/evolve overlay\n查看私有 Overlay 中的候选 Skill\n\n"
+            "/evolve overlay <Skill 名称>\n查看候选 Skill 正文（仅审批管理员）\n\n"
+            "/evolve review <Skill 名称或 Proposal 编号>\n查看详细评审信息\n\n"
+            "/evolve menu\n再次显示本菜单\n\n"
+            "也可以直接用中文问：\n"
+            "“看看候选 Skill”\n"
+            "“看看现在有哪些待确认的沉淀 Skill”\n"
+            "“看看当前有哪些 Skill”"
+        )
+
+    def _active_skill_list(self) -> EvolutionCommandResult:
+        from nanobot.agent.skills import SkillsLoader
+
+        entries = SkillsLoader(Path(self.workspace)).list_skills(filter_unavailable=False)
+        if not entries:
+            return EvolutionCommandResult("当前没有可用 Skill。")
+        lines = [f"当前可用 Skill（共 {len(entries)} 个）："]
+        for entry in entries:
+            source = "工作区" if entry["source"] == "workspace" else "内置"
+            lines.append(f"- {entry['name']}（{source}）")
+        return EvolutionCommandResult("\n".join(lines))
+
+    def handle_natural_query(self, text: str, *, metadata: Mapping[str, Any]) -> EvolutionCommandResult | None:
+        """Handle safe, read-only Chinese queries without routing them to mutation commands."""
+        value = text.strip().lower()
+        if not value or value.startswith("/"):
+            return None
+        query_words = ("看看", "查看", "查询", "列出", "有哪些", "显示", "告诉我", "想知道")
+        if not any(word in value for word in query_words):
+            return None
+        has_skill_context = any(word in value for word in ("skill", "技能", "沉淀", "候选", "未发布", "overlay"))
+        if not has_skill_context and "自进化" not in value:
+            return None
+        if str(metadata.get("qq_chat_type") or "") != "group":
+            return None
+        group = str(metadata.get("group_openid") or metadata.get("chat_id") or "")
+        if group not in self._groups() or metadata.get("qq_mentioned_bot") is False:
+            return None
+        if "自进化" in value and not has_skill_context:
+            return self.handle("status", metadata=metadata)
+        if any(word in value for word in ("待确认", "待审核", "待批准", "沉淀")):
+            return self.handle("list pending", metadata=metadata)
+        if any(word in value for word in ("候选", "未发布", "overlay")):
+            return self.handle("overlay", metadata=metadata)
+        if any(word in value for word in ("当前", "至今", "全部", "所有", "有哪些")):
+            self._require_scope(metadata)
+            return self._active_skill_list()
+        return None
 
     def handle(self, args: str, *, metadata: Mapping[str, Any]) -> EvolutionCommandResult:
         tokens = args.strip().split(maxsplit=3)
         action = tokens[0].lower() if tokens else "status"
-        if action not in {"status", "list", "overlay", "review", "approve", "reject", "rollback", "publish"}:
+        if action not in {"status", "list", "menu", "help", "commands", "enum", "overlay", "review", "approve", "reject", "rollback", "publish"}:
             return EvolutionCommandResult(
-                "用法：/evolve status | list [pending|recent] | overlay [skill-name] | review <proposal-id> | "
+                "用法：/evolve menu | status | list [pending|recent] | overlay [skill-name] | review <proposal-id> | "
                 "approve <proposal-id> <code> | reject <proposal-id> <reason> | "
                 "rollback <proposal-id> <code> | publish <proposal-id> [code]"
             )
@@ -168,6 +244,8 @@ class EvolutionCommandService:
         connection = self._open()
         try:
             repo = ProposalRepository(connection)
+            if action in {"menu", "help", "commands", "enum"}:
+                return EvolutionCommandResult(self._menu())
             if action == "status":
                 evolution = getattr(self.config, "evolution", self.config)
                 enabled = bool(getattr(self.config, "enabled", False))
@@ -189,12 +267,19 @@ class EvolutionCommandService:
                 records = repo.list_proposals(workspace=self.workspace, statuses=statuses, limit=20)
                 if not records:
                     return EvolutionCommandResult("没有可显示的 Proposal。")
-                title = "待确认 Proposal" if statuses else "最近 Proposal"
+                title = "待确认沉淀 Skill" if statuses else "最近沉淀记录"
                 return EvolutionCommandResult(title + "：\n" + "\n".join(self._record_line(r) for r in records))
 
             if len(tokens) < 2:
                 return EvolutionCommandResult("缺少 proposal-id。")
             proposal_id = tokens[1]
+            if action == "review" and repo.get(proposal_id) is None:
+                matches = [item for item in repo.list_proposals(workspace=self.workspace, limit=100)
+                           if item.skill_name == proposal_id]
+                if len(matches) == 1:
+                    proposal_id = matches[0].proposal_id
+                elif len(matches) > 1:
+                    return EvolutionCommandResult("该 Skill 有多个 Proposal，请使用具体 Proposal 编号。")
             record = repo.get(proposal_id)
             if record is None or record.workspace != self.workspace:
                 return EvolutionCommandResult("未找到该 Proposal，或它不属于当前工作区。")
@@ -242,14 +327,36 @@ class EvolutionCommandService:
 
             if action == "review":
                 expires = _format_beijing_time(record.confirmation_expires_at)
+                status = {
+                    "eligible_for_confirmation": "待确认",
+                    "notified": "已通知待确认",
+                    "approved": "已批准",
+                    "pr_created": "已创建 Draft PR",
+                    "published": "已发布",
+                    "adopted": "已采用",
+                    "rolled_back": "已回滚",
+                    "rejected_by_admin": "已拒绝",
+                    "expired": "已过期",
+                    "failed": "失败",
+                }.get(record.status, record.status)
+                source = {
+                    "workspace": "当前工作区",
+                    "builtin": "内置 Skill",
+                    "shared": "共享 Skill",
+                    "entrypoint": "入口插件",
+                    "mcp": "MCP Skill",
+                }.get(record.source_kind, record.source_kind)
+                target = "工作区采用" if record.target == "workspace_adopt_proposal" else "私有 Overlay Draft PR"
+                gate = "通过" if record.gate_result == "passed" else "未通过"
                 return EvolutionCommandResult(
                     "Proposal 审阅：\n"
-                    f"ID：{record.proposal_id}\n"
+                    f"Proposal 编号：{record.proposal_id}\n"
                     f"Skill：{record.skill_name}\n"
-                    f"来源：{record.source_kind}\n"
-                    f"目标：{record.target}\n"
-                    f"状态：{record.status}\n"
-                    f"Gate：{record.gate_result}\n"
+                    f"创建日期：{_format_beijing_time(record.created_at)}\n"
+                    f"来源：{source}\n"
+                    f"目标：{target}\n"
+                    f"状态：{status}\n"
+                    f"自动评审：{gate}\n"
                     f"确认码有效期：{expires}\n"
                     "证据正文已脱敏；不会在群内展示确认码哈希或完整模型输出。"
                 )

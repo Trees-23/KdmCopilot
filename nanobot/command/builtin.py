@@ -176,7 +176,7 @@ BUILTIN_COMMAND_SPECS: tuple[BuiltinCommandSpec, ...] = (
         "Review Skill evolution",
         "Inspect and approve controlled Skill evolution Proposals.",
         "shield-check",
-        "[status|list|overlay|review|approve|reject]",
+        "[menu|status|list|overlay|review|approve|reject]",
         accepts_args=True,
     ),
 )

@@ -118,6 +118,8 @@ def test_evolve_commands_are_deterministic_and_admin_gated(tmp_path):
     review = service.handle(f"review {proposal_id}", metadata=_metadata())
     assert proposal_id in review.content
     assert "确认码哈希" in review.content
+    assert "状态：已通知待确认" in review.content
+    assert "创建日期：" in review.content
 
     denied = service.handle(
         f"approve {proposal_id} {code}",
@@ -169,6 +171,22 @@ def test_overlay_command_lists_unpublished_candidates_and_admin_can_read_content
     assert denied.content.startswith("拒绝：")
     detail = service.handle("overlay demo-candidate", metadata=_metadata(sender="admin-1"))
     assert "未发布内容" in detail.content
+
+
+def test_evolve_menu_and_natural_read_only_queries(tmp_path):
+    service = EvolutionCommandService(str(tmp_path), _config())
+    menu = service.handle("menu", metadata=_metadata())
+    assert "自进化查询菜单" in menu.content
+    assert "/evolve overlay" in menu.content
+
+    pending = service.handle_natural_query(
+        "我想看看现在有哪些待确认的沉淀 Skill", metadata=_metadata()
+    )
+    assert pending is not None
+    assert "没有可显示的 Proposal" in pending.content
+
+    unrelated = service.handle_natural_query("帮我设计一个 Skill", metadata=_metadata())
+    assert unrelated is None
 
 
 def test_evolve_reject_is_idempotent_for_replayed_message(tmp_path):

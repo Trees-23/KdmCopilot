@@ -76,6 +76,7 @@ class ProposalRecord:
     version_epoch: int
     gate_result: str
     confirmation_expires_at: str | None
+    created_at: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,7 +156,7 @@ class ProposalRepository:
     def get(self, proposal_id: str) -> ProposalRecord | None:
         row = self.connection.execute(
             "SELECT proposal_id,workspace,skill_name,source_kind,target,status,baseline_revision_id,"
-            "candidate_revision_id,baseline_hash,candidate_hash,version_epoch,gate_result,confirmation_expires_at "
+            "candidate_revision_id,baseline_hash,candidate_hash,version_epoch,gate_result,confirmation_expires_at,created_at "
             "FROM skill_proposals WHERE proposal_id=?", (proposal_id,)
         ).fetchone()
         if row is None:
@@ -184,7 +185,7 @@ class ProposalRepository:
         sql = (
             "SELECT proposal_id,workspace,skill_name,source_kind,target,status,"
             "baseline_revision_id,candidate_revision_id,baseline_hash,candidate_hash,"
-            "version_epoch,gate_result,confirmation_expires_at FROM skill_proposals "
+            "version_epoch,gate_result,confirmation_expires_at,created_at FROM skill_proposals "
             "WHERE workspace=?"
         )
         params: list[Any] = [workspace]
