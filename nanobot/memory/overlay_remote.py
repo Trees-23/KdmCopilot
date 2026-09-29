@@ -83,7 +83,7 @@ class GitHubOverlayClient:
         *,
         repository: str,
         base_branch: str = "main",
-        actor: str = "phase6-overlay",
+        actor: str = "skill-evolution-overlay",
         run: _RUN = subprocess.run,
     ) -> None:
         self.repo_path = Path(repo_path).expanduser().resolve()

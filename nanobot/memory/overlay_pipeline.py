@@ -131,7 +131,7 @@ class OverlayProposalPipeline:
                 proposal_id=proposal_id,
                 workspace=record.workspace,
                 action="publish_candidate_notification",
-                actor_openid="phase6-overlay-notifier",
+                actor_openid="skill-evolution-overlay-notifier",
                 group_openid=None,
                 idempotency_key=f"publish-candidate-notification:{proposal_id}",
                 request_digest="sha256:" + hashlib.sha256(proposal_id.encode()).hexdigest(),

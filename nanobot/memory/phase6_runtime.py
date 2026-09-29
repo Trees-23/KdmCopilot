@@ -102,13 +102,13 @@ def build_overlay_pipeline(
         return None
     branch = str(getattr(evolution, "overlay_base_branch", "main") or "main")
     configured_path = getattr(evolution, "overlay_checkout_path", None)
-    checkout = configured_path or (Path(workspace).resolve().parent / "phase6-overlay")
+    checkout = configured_path or (Path(workspace).resolve().parent / "skill-evolution-overlay")
     checkout = ensure_overlay_checkout(repository, checkout, base_branch=branch)
     client = GitHubOverlayClient(
         checkout,
         repository=repository,
         base_branch=branch,
-        actor="phase6-overlay",
+        actor="skill-evolution-overlay",
     )
     groups = tuple(str(item) for item in (getattr(evolution, "notification_groups", ()) or ()) if str(item))
 
