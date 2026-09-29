@@ -115,10 +115,12 @@ async def test_audit_reader_adapter_indexes_only_committed_prefix(tmp_path) -> N
     audit_root, process_id = await _committed_audit_root(tmp_path)
     result = AuditReader(audit_root).read_process(process_id)
     event_path = next((audit_root / "events").rglob("*.jsonl"))
-    event_path.write_text(
-        event_path.read_text(encoding="utf-8") + event_path.read_text(encoding="utf-8"),
-        encoding="utf-8",
-    )
+    # Append bytes instead of round-tripping through text mode.  Windows
+    # translates ``\n`` to ``\r\n`` in text writes, which changes the byte
+    # offsets recorded by the catalog and falsely makes the committed prefix
+    # look partial.
+    event_bytes = event_path.read_bytes()
+    event_path.write_bytes(event_bytes + event_bytes)
 
     traces = list(iter_audit_traces(audit_root))
 

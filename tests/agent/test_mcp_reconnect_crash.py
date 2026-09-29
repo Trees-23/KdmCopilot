@@ -208,7 +208,20 @@ async def test_mcp_reconnect_during_shutdown_does_not_crash(
     assert isinstance(tool, MCPToolWrapper)
 
     await asyncio.create_task(tool.execute(name="first"))
-    await asyncio.sleep(_IDLE_TIMEOUT_SECONDS + _IDLE_EXPIRY_GRACE_SECONDS)
+
+    # Make the stale-session signal deterministic.  The companion test above
+    # covers a real idle timeout; this test is specifically about shutdown
+    # racing with an in-flight reconnect.  Depending on runner load, the
+    # FastMCP idle reaper can take much longer than its configured timeout,
+    # which used to make this race test hang before reconnect was entered.
+    stale_session = tool._session
+
+    async def fail_once(*args, **kwargs):
+        monkeypatch.setattr(stale_session, "call_tool", stale_session_call)
+        raise RuntimeError("Session terminated")
+
+    stale_session_call = stale_session.call_tool
+    monkeypatch.setattr(stale_session, "call_tool", fail_once)
 
     reconnect_started = asyncio.Event()
     finish_reconnect = asyncio.Event()
