@@ -96,7 +96,10 @@ def search_trace_summaries(
         "index_status='indexed'",
         "(trace_expire_at IS NULL OR julianday(trace_expire_at) > julianday(?))",
     ]
-    params: list[Any] = [str(Path(workspace).resolve()), (now or datetime.now(UTC)).isoformat()]
+    resolved_workspace = str(Path(workspace).resolve())
+    raw_workspace = str(workspace)
+    clauses[0] = "(workspace=? OR workspace=?)"
+    params: list[Any] = [resolved_workspace, raw_workspace, (now or datetime.now(UTC)).isoformat()]
     if session_key is not None:
         clauses.append("session_key=?")
         params.append(session_key)

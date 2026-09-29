@@ -73,11 +73,11 @@ class _OwnedMCPConnection:
             # disappearing.  Never let that block Gateway shutdown forever;
             # cancellation is safe here because the owner task exclusively
             # owns the AsyncExitStack and no caller can reuse it afterwards.
-            await asyncio.wait_for(asyncio.shield(self._owner), timeout=5.0)
+            await asyncio.wait_for(asyncio.shield(self._owner), timeout=2.0)
         except asyncio.TimeoutError:
             self._owner.cancel()
             with suppress(BaseException):
-                await asyncio.wait_for(asyncio.shield(self._owner), timeout=1.0)
+                await asyncio.wait_for(asyncio.shield(self._owner), timeout=0.5)
         except asyncio.CancelledError:
             if not self._owner.cancelled():
                 raise
