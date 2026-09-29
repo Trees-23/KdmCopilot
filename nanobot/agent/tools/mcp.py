@@ -521,6 +521,15 @@ class MCPToolWrapper(_MCPWrapperBase):
                 # Re-raise only if our task was externally cancelled (e.g. /stop).
                 if task_is_cancelling():
                     raise
+                if not refreshed_session and self._reconnect is not None:
+                    refreshed_tool = await self._reconnect(
+                        self._server_name, self._name, self
+                    )
+                    refreshed_session_obj = getattr(refreshed_tool, "_session", None)
+                    if refreshed_session_obj is not None:
+                        self._session = refreshed_session_obj
+                        refreshed_session = True
+                        continue
                 logger.warning("MCP tool '{}' was cancelled by server/SDK", self._name)
                 return ToolResult.error("(MCP tool call was cancelled)")
             except Exception as exc:
