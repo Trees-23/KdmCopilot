@@ -22,7 +22,10 @@ def _config(*, enabled: bool = True, adoption: bool = True):
 
 
 def _git(path, *args: str):
-    return subprocess.run(["git", *args], cwd=path, check=False, capture_output=True, text=True)
+    return subprocess.run(
+        ["git", *args], cwd=path, check=False, capture_output=True,
+        text=True, encoding="utf-8", errors="replace",
+    )
 
 
 def _setup(tmp_path):

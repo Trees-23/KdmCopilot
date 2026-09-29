@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from pathlib import Path
 
@@ -28,7 +29,8 @@ def _db() -> sqlite3.Connection:
 def test_workspace_path_is_local_and_connection_pragmas_are_per_connection(tmp_path: Path) -> None:
     database = resolve_memory_db_path(tmp_path)
     assert database == tmp_path.resolve() / ".nanobot" / "memory.sqlite3"
-    assert database.parent.stat().st_mode & 0o777 == 0o700
+    if os.name == "posix":
+        assert database.parent.stat().st_mode & 0o777 == 0o700
     first = connect_memory_db(tmp_path)
     second = connect_memory_db(tmp_path)
     try:

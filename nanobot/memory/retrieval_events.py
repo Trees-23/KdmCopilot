@@ -91,7 +91,11 @@ def search_trace_summaries(
 
     if not 1 <= limit <= 100:
         raise ValueError("limit must be between 1 and 100")
-    clauses = ["workspace=?", "index_status='indexed'", "(trace_expire_at IS NULL OR trace_expire_at > ?)"]
+    clauses = [
+        "workspace=?",
+        "index_status='indexed'",
+        "(trace_expire_at IS NULL OR julianday(trace_expire_at) > julianday(?))",
+    ]
     params: list[Any] = [str(Path(workspace).resolve()), (now or datetime.now(UTC)).isoformat()]
     if session_key is not None:
         clauses.append("session_key=?")
