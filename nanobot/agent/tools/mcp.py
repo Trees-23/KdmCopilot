@@ -481,12 +481,22 @@ class MCPToolWrapper(_MCPWrapperBase):
         retried_transient = False
         refreshed_session = False
         while True:
+            call_task = asyncio.create_task(
+                self._session.call_tool(self._original_name, arguments=kwargs)
+            )
             try:
                 result = await asyncio.wait_for(
-                    self._session.call_tool(self._original_name, arguments=kwargs),
+                    asyncio.shield(call_task),
                     timeout=self._tool_timeout,
                 )
             except asyncio.TimeoutError:
+                # Some MCP SDK transports do not finish cancellation when the
+                # peer has already expired the session. Cancel the request in
+                # the background, but do not wait indefinitely for its cleanup
+                # before starting the reconnect path.
+                call_task.cancel()
+                with suppress(BaseException):
+                    await asyncio.wait_for(asyncio.shield(call_task), timeout=0.5)
                 logger.warning(
                     "MCP tool '{}' timed out after {}s", self._name, self._tool_timeout
                 )
