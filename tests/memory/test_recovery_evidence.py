@@ -66,6 +66,19 @@ def test_recovery_does_not_link_an_unrelated_or_unverified_turn(tmp_path) -> Non
     assert insufficient is not None
     assert insufficient.status == "insufficient_recovery_evidence"
 
+    unsafe = record_failed_episode(
+        connection,
+        workspace=workspace,
+        trace_id="failure-write",
+        session_key="session-a",
+        source_type="user",
+        stop_reason="tool_error",
+        user_text="请修改项目中的说明文件",
+        tools=("write_file",),
+    )
+    assert unsafe is not None
+    assert unsafe.status == "insufficient_recovery_evidence"
+
     failed = record_failed_episode(
         connection,
         workspace=workspace,

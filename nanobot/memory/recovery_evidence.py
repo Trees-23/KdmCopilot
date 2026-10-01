@@ -17,6 +17,7 @@ from uuid import uuid4
 
 from nanobot.memory.semantic_evidence import SemanticProjection, project_user_task
 
+_RECOVERY_SAFE_TOOLS = frozenset({"read_file", "list_dir", "skill_catalog_search", "skill_read"})
 
 @dataclass(frozen=True, slots=True)
 class RecoveryEpisode:
@@ -49,7 +50,10 @@ def _tools(tools: Iterable[str]) -> tuple[str, ...]:
 def _projection(text: str, tools: Iterable[str]) -> tuple[SemanticProjection | None, str | None]:
     """Reuse M12's redaction boundary; no raw user text reaches this module."""
 
-    return project_user_task(text, _tools(tools))
+    verified = _tools(tools)
+    if not verified or any(tool not in _RECOVERY_SAFE_TOOLS for tool in verified):
+        return None, "unsafe_or_unverified_recovery_operation"
+    return project_user_task(text, verified)
 
 
 def record_failed_episode(
