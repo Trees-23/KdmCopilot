@@ -256,8 +256,16 @@ class GitHubOverlayClient:
         remote = self._proposal_action(connection, proposal_id, "remote_draft_pr")
         if not remote or not remote.get("url"):
             return RemotePRStatus("not_found", proposal_id, reason="未找到远端 Draft PR 记录")
-        viewed = self._gh("pr", "view", str(remote["url"]), "--json",
-                          "number,url,isDraft,baseRefName,headRefName,statusCheckRollup,state")
+        # Fine-grained tokens may read a private PR but be denied its GraphQL
+        # statusCheckRollup field.  Keep PR identity and CI projection on the
+        # repository-scoped REST/Actions path instead.
+        viewed = self._gh(
+            "pr",
+            "view",
+            str(remote["url"]),
+            "--json",
+            "number,url,isDraft,baseRefName,headRefName,headRefOid,state",
+        )
         if viewed.returncode != 0:
             return RemotePRStatus("unavailable", proposal_id, url=str(remote["url"]), reason=_error(viewed))
         data = _json_output(viewed)
@@ -265,9 +273,26 @@ class GitHubOverlayClient:
             return RemotePRStatus("mismatch", proposal_id, url=str(remote["url"]), reason="PR base/head 与 Proposal 不一致")
         if not bool(data.get("isDraft")):
             return RemotePRStatus("mismatch", proposal_id, url=str(remote["url"]), reason="远端 PR 已脱离 Draft 状态")
-        checks = data.get("statusCheckRollup") or []
+        head_sha = str(data.get("headRefOid") or "")
+        if not head_sha:
+            return RemotePRStatus("unavailable", proposal_id, url=str(data.get("url") or remote["url"]),
+                                  reason="GitHub PR 缺少 head commit")
+        actions = self._gh("api", f"repos/{self.repository}/actions/runs?head_sha={head_sha}")
+        if actions.returncode != 0:
+            return RemotePRStatus("unavailable", proposal_id, url=str(data.get("url") or remote["url"]),
+                                  reason=_error(actions))
+        try:
+            runs = _json_output(actions).get("workflow_runs", [])
+        except (AttributeError, RuntimeError):
+            return RemotePRStatus("unavailable", proposal_id, url=str(data.get("url") or remote["url"]),
+                                  reason="GitHub Actions 返回的 CI 数据无效")
+        if not isinstance(runs, list):
+            return RemotePRStatus("unavailable", proposal_id, url=str(data.get("url") or remote["url"]),
+                                  reason="GitHub Actions 返回的 CI 列表无效")
+        checks = [run for run in runs if isinstance(run, dict)]
         ci_passed = bool(checks) and all(
-            str(item.get("conclusion") or item.get("state") or "").upper() == "SUCCESS"
+            str(item.get("status") or "").upper() == "COMPLETED"
+            and str(item.get("conclusion") or "").upper() == "SUCCESS"
             for item in checks
         )
         status = "ci_passed" if ci_passed else "ci_pending"

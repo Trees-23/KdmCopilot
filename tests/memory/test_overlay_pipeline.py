@@ -149,6 +149,36 @@ def test_ci_refresh_notifies_once_only_after_all_checks_pass(tmp_path):
     connection.close()
 
 
+def test_ci_query_failure_creates_visible_failure_signal(tmp_path):
+    workspace, connection = _setup(tmp_path)
+    proposal = ProposalRepository(connection).create_proposal(
+        proposal_id="prop-ci-unavailable",
+        workspace=str(workspace),
+        skill_id="skill-1",
+        skill_name="demo",
+        source_kind="builtin",
+        target="git_pr_proposal",
+        baseline_hash="sha256:base",
+        candidate_hash="sha256:candidate",
+        status="pr_created",
+    )
+    failures: list[tuple[str, str]] = []
+    pipeline = OverlayProposalPipeline(
+        str(workspace),
+        create_draft_pr=lambda _proposal_id: SimpleNamespace(status="idempotent"),
+        refresh_ci=lambda _proposal_id: SimpleNamespace(
+            status="unavailable", ci_passed=False, reason="GitHub Actions unavailable"
+        ),
+        notify_failure=lambda *args: failures.append(args),
+    )
+
+    outcome = pipeline.refresh_ci_and_notify(connection, proposal.proposal_id)
+
+    assert outcome.status == "ci_unavailable"
+    assert failures == [(proposal.proposal_id, "CI validation: GitHub Actions unavailable")]
+    connection.close()
+
+
 def test_failed_handoff_notifies_and_retries_without_a_second_gate(tmp_path):
     workspace, connection = _setup(tmp_path)
     repo = ProposalRepository(connection)

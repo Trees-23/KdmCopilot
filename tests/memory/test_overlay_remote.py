@@ -126,8 +126,12 @@ def test_private_overlay_client_ci_projection_only_notifies_after_success(tmp_pa
                 "isDraft": True,
                 "baseRefName": "main",
                 "headRefName": "evolve/prop-shared-test",
-                "statusCheckRollup": [{"conclusion": "SUCCESS"}],
+                "headRefOid": "a" * 40,
                 "state": "OPEN",
+            }))
+        if command[0] == "gh" and command[1:2] == ["api"]:
+            return _gh_result(json.dumps({
+                "workflow_runs": [{"status": "completed", "conclusion": "success"}],
             }))
         if command[:2] == ["git", "push"]:
             return subprocess.CompletedProcess(command, 0, stdout="", stderr="")

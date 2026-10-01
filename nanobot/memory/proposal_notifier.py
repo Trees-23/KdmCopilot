@@ -72,7 +72,7 @@ class ProposalNotifier:
             return "私有 Overlay 的 Git 提交身份未配置"
         if "worktree must be clean" in value or "overlay checkout is dirty" in value:
             return "私有 Overlay 留有未完成的系统候选文件"
-        if "ci" in value:
+        if any(marker in value for marker in ("ci", "graphql", "statuscheck", "actions")):
             return "私有 Overlay 的 CI 状态检查失败或不可用"
         if "github" in value or "gh " in value:
             return "私有 Overlay 的 GitHub 操作失败"
@@ -114,12 +114,13 @@ class ProposalNotifier:
             connection.close()
         skill = record.skill_name if record is not None else "未知候选"
         safe_reason = self._safe_failure_reason(reason)
+        ci_failure = "CI" in safe_reason
         return self.enqueue_alert(
             "overlay_handoff_failed",
             "【Skill 进化异常】\n"
             f"Skill：{skill}\n"
-            "阶段：私有 Overlay Draft PR\n"
-            "结果：已停止，未创建 PR，未影响当前生效 Skill。\n"
+            f"阶段：私有 Overlay {'CI 核验' if ci_failure else 'Draft PR'}\n"
+            f"结果：{'Draft PR 已保留，等待 CI 核验恢复' if ci_failure else '已停止，未创建 PR'}，未影响当前生效 Skill。\n"
             f"原因：{safe_reason}\n"
             f"查看：/evolve review {proposal_id}\n"
             "系统会在下一次受保护扫描中安全重试；如仍失败会保留告警记录。",

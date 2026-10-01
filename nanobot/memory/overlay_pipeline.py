@@ -151,6 +151,10 @@ class OverlayProposalPipeline:
                 return OverlayHandoffResult("notification_idempotent", proposal_id)
             status = self.refresh_ci(proposal_id)
             if not bool(getattr(status, "ci_passed", False)):
+                if str(getattr(status, "status", "")) in {"unavailable", "mismatch", "not_found"}:
+                    reason = str(getattr(status, "reason", None) or "Overlay CI state unavailable")
+                    self._notify_failure(proposal_id, f"CI validation: {reason}")
+                    return OverlayHandoffResult("ci_unavailable", proposal_id, reason)
                 return OverlayHandoffResult("ci_pending", proposal_id, getattr(status, "reason", None))
             if self.notify_publish_candidate is None:
                 return OverlayHandoffResult("ci_passed", proposal_id)
