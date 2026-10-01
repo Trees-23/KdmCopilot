@@ -184,6 +184,7 @@ class EvolutionCommandService:
             "/evolve review <Skill 名称或 Proposal 编号>\n查看详细评审信息\n\n"
             "/evolve review <Proposal 编号> cases\n查看完整评测案例（问题、预期、结果）\n\n"
             "/evolve review <Proposal 编号> diff\n查看候选 Skill 与基线差异\n\n"
+            "/evolve reject <Proposal 编号> 原因\n拒绝未发布 Proposal；Overlay Draft 会保持未发布状态\n\n"
             "/evolve menu\n再次显示本菜单\n\n"
             "也可以直接用中文问：\n"
             "“看看候选 Skill”\n"
@@ -240,6 +241,22 @@ class EvolutionCommandService:
                 value = {}
             action_values.append({"action": action, "status": action_status, **value})
         pr = next((item for item in reversed(action_values) if item["action"] in {"remote_draft_pr", "create_draft_pr"}), None)
+        semantic_rows = details.get("semantic", ())
+        quality_rows = details.get("quality_reviews", ())
+        semantic_goal = str(semantic_rows[0][1]) if semantic_rows else "（历史 Proposal 未保存业务语义）"
+        semantic_intent = str(semantic_rows[0][2]) if semantic_rows else "未记录"
+        semantic_scope = str(semantic_rows[0][3]) if semantic_rows else "未记录"
+        semantic_expected = str(semantic_rows[0][4]) if semantic_rows else "未记录"
+        operation_signature = "未记录"
+        if semantic_rows:
+            try:
+                operation_signature = "、".join(json.loads(semantic_rows[0][5] or "[]")) or "未记录"
+            except (TypeError, ValueError, json.JSONDecodeError):
+                operation_signature = "未记录"
+        quality = quality_rows[0] if quality_rows else None
+        quality_text = (
+            f"{quality[1]}：{quality[3]}" if quality else "历史 Proposal 未记录语义质量 Gate"
+        )
         lines = [
             "【Skill 沉淀审批详情】",
             f"编号：{public_id}",
@@ -253,10 +270,14 @@ class EvolutionCommandService:
             "",
             "一、这次沉淀解决什么问题",
             f"- 触发证据：{len(details['trace_ids'])} 条 Trace、{len(details['case_ids'])} 个案例",
-            "- 目标：把重复成功案例归纳为可复用的 Skill 行为规则。",
+            f"- 任务目标：{semantic_goal}",
+            f"- 任务类型：{semantic_intent}；范围：{semantic_scope}",
+            f"- 预期结果：{semantic_expected}",
+            "- 为什么值得沉淀：同类业务任务在多个独立 turn 中稳定完成，并形成可复用的范围、操作和结果约束。",
             "- 当前 Skill 指针未因本 Proposal 自动切换。",
             "",
             "二、案例与安全边界",
+            f"- 已验证操作：{operation_signature}",
             f"- 评测使用工具：{', '.join(sorted(tools)) if tools else '无记录'}",
             f"- 高风险工具调用：{high_risk} 次",
             f"- 安全违规：{violations} 次",
@@ -269,6 +290,7 @@ class EvolutionCommandService:
             f"- Holdout：{split_totals['holdout'][1]}/{split_totals['holdout'][0]}",
             f"- Gate：{'通过' if snapshot.get('holdout_passed', record.gate_result == 'passed') else '未通过'}；安全检查：{'通过' if snapshot.get('security_clean', not violations) else '未通过'}",
             f"- 独立回放：{'已执行' if any(bool(row[7]) for row in runs) else '未记录'}",
+            f"- 语义质量 Gate：{quality_text}",
             "",
             "四、实际 Skill 内容",
             "--- SKILL.md ---",

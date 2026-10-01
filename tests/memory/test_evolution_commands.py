@@ -264,6 +264,23 @@ def test_evolve_reject_is_idempotent_for_replayed_message(tmp_path):
     assert "拒绝失败" in second.content or "已拒绝" in second.content
 
 
+def test_admin_can_reject_an_unpublished_overlay_draft(tmp_path):
+    proposal_id = _published_proposal(tmp_path)
+    service = EvolutionCommandService(str(tmp_path), _config())
+
+    result = service.handle(
+        f"reject {proposal_id} 候选缺少业务语义，拒绝发布",
+        metadata=_metadata(sender="admin-1", message_id="reject-overlay-1"),
+    )
+
+    assert "已拒绝" in result.content
+    connection = connect_memory_db(tmp_path)
+    assert connection.execute(
+        "SELECT status FROM skill_proposals WHERE proposal_id=?", (proposal_id,)
+    ).fetchone()[0] == "rejected_by_admin"
+    connection.close()
+
+
 def test_publish_confirmation_is_group_admin_only_and_runs_in_two_steps(tmp_path):
     proposal_id = _published_proposal(tmp_path)
     calls: list[str] = []

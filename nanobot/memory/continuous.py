@@ -93,6 +93,11 @@ class TraceCandidate:
     summary: str
     frequency: int
     value_score: float
+    intent: str = ""
+    input_scope: str = ""
+    expected_outcome: str = ""
+    operation_signature: tuple[str, ...] = ()
+    evidence_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,16 +204,35 @@ def select_low_risk_tasks(
         if not _is_low_risk(record):
             continue
         trace_id = str(record.get("trace_id") or "").strip()
-        key, summary = _normalize_task(str(record.get("summary") or ""))
+        normalized_key, summary = _normalize_task(str(record.get("summary") or ""))
+        key = str(record.get("task_key") or normalized_key).strip()
         if not trace_id or not key:
             continue
-        group = groups.setdefault(key, {"summary": summary, "trace_ids": [], "score": 0.0})
+        group = groups.setdefault(
+            key,
+            {
+                "summary": summary,
+                "trace_ids": [],
+                "score": 0.0,
+                "intent": str(record.get("intent") or ""),
+                "input_scope": str(record.get("input_scope") or ""),
+                "expected_outcome": str(record.get("expected_outcome") or ""),
+                "operation_signature": tuple(str(item) for item in (record.get("tools") or ()) if str(item)),
+                "evidence_ids": [],
+            },
+        )
         group["trace_ids"].append(trace_id)
+        if record.get("evidence_id"):
+            group["evidence_ids"].append(str(record["evidence_id"]))
         group["score"] = max(group["score"], float(record.get("value_score") or 0.0))
     minimum = int(_config_value(config, "min_repeat_count", 3))
     candidates = [
-        TraceCandidate(key, tuple(sorted(set(value["trace_ids"]))), value["summary"],
-                       len(set(value["trace_ids"])), value["score"])
+        TraceCandidate(
+            key, tuple(sorted(set(value["trace_ids"]))), value["summary"],
+            len(set(value["trace_ids"])), value["score"], value["intent"], value["input_scope"],
+            value["expected_outcome"], value["operation_signature"],
+            tuple(sorted(set(value["evidence_ids"]))),
+        )
         for key, value in groups.items() if len(set(value["trace_ids"])) >= minimum
     ]
     candidates.sort(key=lambda item: (-item.frequency, -item.value_score, item.task_key))

@@ -18,7 +18,6 @@ from nanobot.memory.continuous import (
     Phase6RuntimeConfig,
     append_evidence,
     load_failed_trace_records,
-    load_trace_records,
     run_cycle,
 )
 from nanobot.memory.db import connect_memory_db
@@ -114,29 +113,68 @@ def run_phase6_review_scan(
                         notify_error(str(exc)[:300])
                     except Exception:
                         pass
+        # Candidate selection intentionally consumes only the separately
+        # persisted business-semantic projection.  ``trace_index.summary`` is
+        # lifecycle metadata and must never become a Skill name or prompt.
+        from nanobot.memory.semantic_evidence import (
+            load_semantic_candidate_records,
+            record_quality_review,
+        )
+
+        semantic_records = load_semantic_candidate_records(connection, str(root))
         cycle = run_cycle(
             connection,
             root,
             runtime,
-            trace_records=load_trace_records(connection),
+            trace_records=semantic_records,
             failed_traces=load_failed_trace_records(connection),
         )
         if cycle.status != "completed":
             return cycle
         result = cycle
         if cycle.selected_tasks:
-            from nanobot.memory.phase6_candidates import build_candidate_specs
+            from nanobot.memory.phase6_candidates import (
+                build_candidate_specs,
+                evaluate_candidate_quality,
+            )
+
+            accepted = []
+            for candidate in cycle.selected_tasks:
+                quality = evaluate_candidate_quality(candidate)
+                record_quality_review(
+                    connection,
+                    workspace=str(root),
+                    semantic_key=candidate.task_key,
+                    evidence_ids=candidate.evidence_ids,
+                    status=quality.status,
+                    reason_code=quality.reason_code or "passed",
+                    reason_text=quality.reason_text or "业务语义、范围、结果和已验证操作均完整。",
+                )
+                if quality.status == "passed":
+                    accepted.append(candidate)
+                else:
+                    append_evidence(
+                        root,
+                        EvidenceRecord(
+                            "semantic_quality_gate",
+                            datetime.now(UTC).isoformat(timespec="seconds"),
+                            trace_ids=candidate.trace_ids,
+                            status="rejected_by_quality_gate",
+                            reason=quality.reason_text,
+                        ),
+                        runtime,
+                    )
 
             built = build_candidate_specs(
                 connection,
-                cycle.selected_tasks,
+                accepted,
                 min_repeat_count=runtime.min_repeat_count,
             )
             result = run_fixture_review_cycle(
                 connection,
                 root,
                 runtime,
-                trace_records=load_trace_records(connection),
+                trace_records=semantic_records,
                 candidate_specs=built.specs,
                 failed_traces=(),
                 overlay_pipeline=overlay_pipeline,

@@ -2253,7 +2253,57 @@ class AgentLoop:
                 run=ctx.audit_run,
                 reason="turn_completed",
             )
+        self._capture_semantic_evolution_evidence(ctx)
         return "ok"
+
+    def _capture_semantic_evolution_evidence(self, ctx: TurnContext) -> None:
+        """Persist a bounded semantic projection after a successful user turn.
+
+        This is deliberately best-effort telemetry: failure to write an
+        evolution candidate must never change a normal user response.  The
+        projector itself stores no raw transcript and rejects commands,
+        framework/internal turns and unverified no-tool tasks.
+        """
+
+        if not bool(getattr(self.phase6_config, "enabled", False)):
+            return
+        if (
+            ctx.kind is not TurnKind.USER
+            or ctx.original_user_text is None
+            or ctx.audit_turn is None
+            or ctx.audit_run is None
+            or ctx.stop_reason in {"error", "tool_error"}
+        ):
+            return
+        workspace = (
+            str(ctx.request_context.workspace)
+            if ctx.request_context is not None and ctx.request_context.workspace
+            else self.workspace
+        )
+        connection = None
+        try:
+            from nanobot.memory.db import connect_memory_db
+            from nanobot.memory.migrations.runner import apply_migrations
+            from nanobot.memory.semantic_evidence import persist_turn_semantic_evidence
+
+            connection = connect_memory_db(workspace)
+            apply_migrations(connection)
+            persist_turn_semantic_evidence(
+                connection,
+                workspace=str(Path(workspace).expanduser().resolve()),
+                trace_id=ctx.audit_turn.trace_id,
+                turn_id=ctx.audit_turn.turn_id,
+                session_key=ctx.session_key,
+                source_type=ctx.audit_run.source_type,
+                outcome="success",
+                user_text=ctx.original_user_text,
+                tools=ctx.tools_used,
+            )
+        except Exception:
+            logger.warning("Failed to persist semantic Skill-evolution evidence", exc_info=True)
+        finally:
+            if connection is not None:
+                connection.close()
 
     async def _state_respond(self, ctx: TurnContext) -> str:
         if ctx.suppress_response:

@@ -13,6 +13,7 @@ from nanobot.memory.phase6_trigger import (
     register_phase6_review_job,
     run_phase6_review_scan,
 )
+from nanobot.memory.semantic_evidence import persist_turn_semantic_evidence
 
 
 class _Cron:
@@ -95,10 +96,27 @@ def _insert_readonly_traces(workspace, count: int) -> None:
     connection.close()
 
 
-def test_production_scan_generates_candidate_proposal_at_three_repeats(tmp_path) -> None:
+def _insert_semantic_evidence(workspace, count: int) -> None:
+    connection = open_maintenance_db(workspace)
+    for index in range(count):
+        persist_turn_semantic_evidence(
+            connection,
+            workspace=str(workspace.resolve()),
+            trace_id=f"semantic-repeat-{index}",
+            turn_id=f"turn-{index}",
+            session_key=f"session-{index}",
+            source_type="user",
+            outcome="success",
+            user_text="请查看当前工作区有哪些可用 Skill，并按名称列出",
+            tools=("skill_read",),
+        )
+    connection.close()
+
+
+def test_production_scan_generates_candidate_proposal_at_three_semantic_repeats(tmp_path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    _insert_readonly_traces(workspace, 3)
+    _insert_semantic_evidence(workspace, 3)
 
     result = run_phase6_review_scan(str(workspace), Phase6Config(enabled=True))
 
@@ -128,6 +146,19 @@ def test_production_scan_does_not_generate_before_three_repeats(tmp_path) -> Non
 
     assert result.status == "completed"
     assert result.selected_tasks == ()
+    connection = open_maintenance_db(workspace)
+    assert connection.execute("SELECT count(*) FROM skill_proposals").fetchone()[0] == 0
+    connection.close()
+
+
+def test_framework_event_json_never_generates_a_candidate_proposal(tmp_path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _insert_readonly_traces(workspace, 3)
+
+    result = run_phase6_review_scan(str(workspace), Phase6Config(enabled=True))
+
+    assert result.status == "completed"
     connection = open_maintenance_db(workspace)
     assert connection.execute("SELECT count(*) FROM skill_proposals").fetchone()[0] == 0
     connection.close()

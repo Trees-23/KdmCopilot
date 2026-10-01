@@ -32,7 +32,7 @@ _TRANSITIONS: dict[str, frozenset[str]] = {
     "approved": frozenset({"adopting", "creating_pr", "publish_approved", "failed"}),
     "adopting": frozenset({"adopted", "failed", "rolled_back"}),
     "creating_pr": frozenset({"pr_created", "failed"}),
-    "pr_created": frozenset({"publish_approved", "failed", "expired"}),
+    "pr_created": frozenset({"publish_approved", "rejected_by_admin", "failed", "expired"}),
     "publish_approved": frozenset({"publishing", "failed", "expired"}),
     "publishing": frozenset({"published", "failed"}),
     "adopted": frozenset({"rolled_back", "failed"}),
@@ -262,6 +262,19 @@ class ProposalRepository:
                 ",".join("?" for _ in eval_run_ids) or "NULL"
             ), eval_run_ids,
         ).fetchall() if eval_run_ids else []
+        semantic = self.connection.execute(
+            "SELECT trace_id,task_goal,intent,input_scope,expected_outcome,operation_signature_json,semantic_key "
+            "FROM semantic_task_evidence WHERE trace_id IN ({}) ORDER BY created_at".format(
+                ",".join("?" for _ in trace_ids) or "NULL"
+            ), trace_ids,
+        ).fetchall() if trace_ids else []
+        semantic_keys = [str(item[6]) for item in semantic if item[6]]
+        quality_reviews = self.connection.execute(
+            "SELECT semantic_key,status,reason_code,reason_text,created_at FROM semantic_quality_reviews "
+            "WHERE semantic_key IN ({}) ORDER BY created_at DESC".format(
+                ",".join("?" for _ in semantic_keys) or "NULL"
+            ), semantic_keys,
+        ).fetchall() if semantic_keys else []
         actions = self.connection.execute(
             "SELECT action,result_status,result_json,created_at FROM proposal_actions "
             "WHERE proposal_id=? AND action IN ('create_draft_pr','remote_draft_pr','remote_pr_status','publish_candidate_notification') "
@@ -279,6 +292,8 @@ class ProposalRepository:
             "cases": tuple(tuple(row) for row in cases),
             "runs": tuple(tuple(row) for row in runs),
             "results": tuple(tuple(row) for row in results),
+            "semantic": tuple(tuple(row) for row in semantic),
+            "quality_reviews": tuple(tuple(row) for row in quality_reviews),
             "actions": tuple(tuple(row) for row in actions),
         }
 
@@ -581,14 +596,14 @@ class ProposalRepository:
         current = self.get(proposal_id)
         if current is None:
             raise KeyError(proposal_id)
-        if current.status not in {"eligible_for_confirmation", "notified"}:
+        if current.status not in {"eligible_for_confirmation", "notified", "pr_created"}:
             raise ProposalConflict("Proposal is not awaiting rejection")
         timestamp = _iso(now)
         self.connection.execute("BEGIN IMMEDIATE")
         try:
             cursor = self.connection.execute(
                 "UPDATE skill_proposals SET status='rejected_by_admin',rejected_by=?,rejected_at=?,failure_reason=?,"
-                "version_epoch=version_epoch+1,updated_at=? WHERE proposal_id=? AND status IN ('eligible_for_confirmation','notified')",
+                "version_epoch=version_epoch+1,updated_at=? WHERE proposal_id=? AND status IN ('eligible_for_confirmation','notified','pr_created')",
                 (actor_openid, timestamp, reason[:500], timestamp, proposal_id),
             )
             if cursor.rowcount != 1:
