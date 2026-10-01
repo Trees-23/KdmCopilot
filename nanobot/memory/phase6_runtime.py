@@ -127,6 +127,7 @@ def _reclaim_clean_failed_overlay_branches(
     *,
     workspace: str | Path,
     base_branch: str,
+    repository: str | None,
     run: _RUN,
 ) -> bool:
     """Remove only verified local branches left by a failed remote handoff.
@@ -164,12 +165,25 @@ def _reclaim_clean_failed_overlay_branches(
                      check=False, capture_output=True, text=True)
         if exists.returncode != 0:
             continue
-        remote = run(["git", "ls-remote", "--heads", "origin", branch], cwd=checkout,
-                     check=False, capture_output=True, text=True)
-        if remote.returncode != 0:
-            raise RuntimeError("Overlay remote branch state cannot be verified")
-        if remote.stdout.strip():
-            continue
+        if repository:
+            # The runtime checkout intentionally uses SSH origin, while the
+            # protected Gateway receives a scoped API token rather than an
+            # SSH private key.  Ask GitHub directly whether this exact branch
+            # exists remotely; a 404 is the only accepted absence signal.
+            remote = run(["gh", "api", "--silent", f"repos/{repository}/git/ref/heads/{branch}"],
+                         cwd=checkout, check=False, capture_output=True, text=True)
+            detail = (remote.stderr or remote.stdout or "").casefold()
+            if remote.returncode == 0:
+                continue
+            if "404" not in detail and "not found" not in detail:
+                raise RuntimeError("Overlay remote branch state cannot be verified")
+        else:
+            remote = run(["git", "ls-remote", "--heads", "origin", branch], cwd=checkout,
+                         check=False, capture_output=True, text=True)
+            if remote.returncode != 0:
+                raise RuntimeError("Overlay remote branch state cannot be verified")
+            if remote.stdout.strip():
+                continue
         changed = run(["git", "diff", "--name-only", f"{base_branch}...{branch}"], cwd=checkout,
                       check=False, capture_output=True, text=True)
         if changed.returncode != 0:
@@ -216,6 +230,7 @@ def recover_abandoned_overlay_candidate(
     *,
     workspace: str | Path,
     base_branch: str = "main",
+    repository: str | None = None,
     run: _RUN = _run,
 ) -> bool:
     """Remove only a verified system-generated, uncommitted failed candidate.
@@ -244,6 +259,7 @@ def recover_abandoned_overlay_candidate(
             checkout,
             workspace=workspace,
             base_branch=base_branch,
+            repository=repository,
             run=run,
         )
     if len(rows) != 1 or not rows[0].startswith("A  skills/"):
@@ -300,7 +316,13 @@ def build_overlay_pipeline(
     branch = str(getattr(evolution, "overlay_base_branch", "main") or "main")
     configured_path = getattr(evolution, "overlay_checkout_path", None)
     checkout = configured_path or (Path(workspace).resolve().parent / "skill-evolution-overlay")
-    recover_abandoned_overlay_candidate(connection, checkout, workspace=workspace, base_branch=branch)
+    recover_abandoned_overlay_candidate(
+        connection,
+        checkout,
+        workspace=workspace,
+        base_branch=branch,
+        repository=repository,
+    )
     checkout = ensure_overlay_checkout(repository, checkout, base_branch=branch)
     client = GitHubOverlayClient(
         checkout,
