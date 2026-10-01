@@ -147,8 +147,7 @@ class EvolutionCommandService:
             f"--- SKILL.md ---\n{content}"
         )
 
-    @staticmethod
-    def _record_line(record: Any) -> str:
+    def _record_line(self, record: Any, *, next_action: bool = False) -> str:
         statuses = {
             "eligible_for_confirmation": "待确认",
             "notified": "已通知待确认",
@@ -163,7 +162,7 @@ class EvolutionCommandService:
         }
         gate = "通过" if record.gate_result == "passed" else "未通过"
         date = _format_beijing_time(record.created_at) if record.created_at else "未知"
-        return (
+        line = (
             f"- Skill：{record.skill_name}\n"
             f"  日期：{date}\n"
             f"  状态：{statuses.get(record.status, record.status)}\n"
@@ -171,6 +170,33 @@ class EvolutionCommandService:
             f"  编号：{record.public_id}\n"
             f"  查看：/evolve review {record.public_id}"
         )
+        if not next_action:
+            return line
+        if record.status in {"eligible_for_confirmation", "notified"}:
+            return line + "\n  下一步：先审阅；如同意，请使用通知中的确认码执行 /evolve approve"
+        if record.status == "pr_created":
+            enabled = bool(getattr(getattr(self.config, "evolution", self.config), "publish_enabled", False))
+            command = f"/evolve publish {record.public_id}"
+            if enabled:
+                return line + f"\n  下一步：可申请群内二次发布确认：{command}"
+            return line + "\n  下一步：可继续审阅；当前发布能力关闭，不能发布。"
+        return line
+
+    @staticmethod
+    def _list_spec(mode: str) -> tuple[str, tuple[str, ...] | None] | None:
+        """Return a user-facing queue title and its explicitly allowed states."""
+
+        specs: dict[str, tuple[str, tuple[str, ...] | None]] = {
+            # Compatibility alias: it now means every item that needs an
+            # administrator action, not just the first confirmation step.
+            "pending": ("等待管理员处理", ("eligible_for_confirmation", "notified", "pr_created")),
+            "review": ("等待首次审阅", ("eligible_for_confirmation", "notified")),
+            "publish": ("等待最终发布确认", ("pr_created",)),
+            "rejected": ("已拒绝或质量拦截", ("rejected_by_admin", "rejected_by_gate", "insufficient_evidence", "stale")),
+            "failed": ("失败的 Proposal", ("failed",)),
+            "recent": ("最近 Proposal 记录", None),
+        }
+        return specs.get(mode)
 
     @staticmethod
     def _menu() -> str:
@@ -178,6 +204,12 @@ class EvolutionCommandService:
             "自进化查询菜单\n\n"
             "/evolve status\n查看模块开关状态\n\n"
             "/evolve list pending\n查看待确认的沉淀 Skill\n\n"
+
+            "/evolve list review\n查看等待首次审阅的候选\n\n"
+
+            "/evolve list publish\n查看已建 Draft PR、等待最终发布确认的候选\n\n"
+
+            "/evolve list rejected | failed\n查看已拒绝/质量拦截或失败的记录\n\n"
             "/evolve list recent\n查看最近的 Proposal\n\n"
             "/evolve overlay\n查看私有 Overlay 中的候选 Skill\n\n"
             "/evolve overlay <Skill 名称>\n查看候选 Skill 正文（仅审批管理员）\n\n"
@@ -340,7 +372,13 @@ class EvolutionCommandService:
             return None
         if "自进化" in value and not has_skill_context:
             return self.handle("status", metadata=metadata)
-        if any(word in value for word in ("待确认", "待审核", "待批准", "沉淀")):
+        if any(word in value for word in ("待发布", "待我发布", "等待发布")):
+            return self.handle("list publish", metadata=metadata)
+        if any(word in value for word in ("拒绝", "拦截")):
+            return self.handle("list rejected", metadata=metadata)
+        if any(word in value for word in ("失败", "报错", "异常")):
+            return self.handle("list failed", metadata=metadata)
+        if any(word in value for word in ("待确认", "待审核", "待批准", "待审阅", "沉淀")):
             return self.handle("list pending", metadata=metadata)
         if any(word in value for word in ("候选", "未发布", "overlay")):
             return self.handle("overlay", metadata=metadata)
@@ -354,7 +392,7 @@ class EvolutionCommandService:
         action = tokens[0].lower() if tokens else "status"
         if action not in {"status", "list", "menu", "help", "commands", "enum", "overlay", "review", "approve", "reject", "rollback", "publish"}:
             return EvolutionCommandResult(
-                "用法：/evolve menu | status | list [pending|recent] | overlay [skill-name] | review <proposal-id> | "
+                "用法：/evolve menu | status | list [pending|review|publish|rejected|failed|recent] | overlay [skill-name] | review <proposal-id> | "
                 "approve <proposal-id> <code> | reject <proposal-id> <reason> | "
                 "rollback <proposal-id> <code> | publish <proposal-id> [code]"
             )
@@ -387,12 +425,21 @@ class EvolutionCommandService:
 
             if action == "list":
                 mode = tokens[1].lower() if len(tokens) > 1 else "pending"
-                statuses = ("eligible_for_confirmation", "notified") if mode == "pending" else None
+                spec = self._list_spec(mode)
+                if spec is None:
+                    return EvolutionCommandResult(
+                        "用法：/evolve list [pending|review|publish|rejected|failed|recent]"
+                    )
+                title, statuses = spec
                 records = repo.list_proposals(workspace=self.workspace, statuses=statuses, limit=20)
                 if not records:
-                    return EvolutionCommandResult("没有可显示的 Proposal。")
-                title = "待确认沉淀 Skill" if statuses else "最近沉淀记录"
-                return EvolutionCommandResult(title + "：\n" + "\n".join(self._record_line(r) for r in records))
+                    return EvolutionCommandResult(f"{title}：当前没有可显示的 Proposal。")
+                return EvolutionCommandResult(
+                    title + "：\n" + "\n".join(
+                        self._record_line(item, next_action=mode in {"pending", "review", "publish"})
+                        for item in records
+                    )
+                )
 
             if len(tokens) < 2:
                 return EvolutionCommandResult("缺少 proposal-id。")

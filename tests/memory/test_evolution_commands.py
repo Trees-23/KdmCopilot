@@ -253,6 +253,54 @@ def test_evolve_menu_and_natural_read_only_queries(tmp_path):
     assert unrelated is None
 
 
+def test_evolve_list_splits_review_publish_rejected_and_failed_queues(tmp_path):
+    review_id, _ = _proposal(tmp_path)
+    publish_id = _published_proposal(tmp_path)
+    connection = connect_memory_db(tmp_path)
+    repo = ProposalRepository(connection)
+    review = repo.get(review_id)
+    publish = repo.get(publish_id)
+    assert review is not None
+    assert publish is not None
+    rejected = repo.create_proposal(
+        workspace=str(tmp_path), skill_name="rejected-skill", source_kind="workspace",
+        target="workspace_adopt_proposal", baseline_hash="sha256:rejected-base",
+        candidate_hash="sha256:rejected-candidate", status="rejected_by_admin",
+    )
+    failed = repo.create_proposal(
+        workspace=str(tmp_path), skill_name="failed-skill", source_kind="workspace",
+        target="workspace_adopt_proposal", baseline_hash="sha256:failed-base",
+        candidate_hash="sha256:failed-candidate", status="failed", gate_result="failed",
+    )
+    connection.close()
+    service = EvolutionCommandService(str(tmp_path), _config())
+
+    pending = service.handle("list pending", metadata=_metadata())
+    assert review.public_id in pending.content
+    assert publish.public_id in pending.content
+    assert "下一步" in pending.content
+
+    review_result = service.handle("list review", metadata=_metadata())
+    assert review.public_id in review_result.content
+    assert publish.public_id not in review_result.content
+
+    publish_result = service.handle("list publish", metadata=_metadata())
+    assert publish.public_id in publish_result.content
+    assert "当前发布能力关闭" in publish_result.content
+
+    rejected_result = service.handle("list rejected", metadata=_metadata())
+    assert rejected.public_id in rejected_result.content
+    assert failed.public_id not in rejected_result.content
+
+    failed_result = service.handle("list failed", metadata=_metadata())
+    assert failed.public_id in failed_result.content
+    assert rejected.public_id not in failed_result.content
+
+    natural = service.handle_natural_query("看看有哪些待我发布的 Skill", metadata=_metadata())
+    assert natural is not None
+    assert publish.public_id in natural.content
+
+
 def test_evolve_reject_is_idempotent_for_replayed_message(tmp_path):
     proposal_id, _ = _proposal(tmp_path)
     service = EvolutionCommandService(str(tmp_path), _config())
