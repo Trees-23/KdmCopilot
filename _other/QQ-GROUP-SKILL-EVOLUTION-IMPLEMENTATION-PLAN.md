@@ -384,7 +384,7 @@ workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → �
 | M10-B | 自动候选与私有 Draft PR | 开启 | 开启 | 自动建私有 Draft PR | 关闭 | 3 次重复低风险成功后生成候选，Gate/CI 通过后 QQ 通知 |
 | M10-C | 稳态观察与运营复盘 | 开启 | 开启 | 按白名单 | 按策略 | 连续 7 天验证 dead-letter、越权、跨群隔离和通知质量 |
 | M11 | Proposal 可审阅透明化 | 开启 | 开启 | 自动建私有 Draft PR | 关闭 | 用中文编号、候选正文、案例、评测与 PR/CI 信息支持人工判断 |
-| M12 | 候选语义质量门禁 | 开启（影子） | 关闭 | 关闭 | 关闭 | 只从可解释的业务任务沉淀候选；框架事件、泛化模板与无业务价值候选在 Draft PR 前拦截 |
+| M12 | 候选语义质量门禁 | 开启 | 开启 | 自动建私有 Draft PR（仅质量通过） | 关闭 | 只从可解释的业务任务沉淀候选；框架事件、泛化模板与无业务价值候选在 Draft PR 前拦截 |
 
 每个阶段都必须有独立验收记录。任何阶段失败都回退到上一阶段的开关状态；不能跳过 M4 直接打开通知、采用或发布。
 
@@ -641,7 +641,7 @@ phase6.kill_switch                      # 立即禁止所有自动化写路径
 
 开关的实际启用顺序必须遵循 M4～M9：先只开 `phase6.enabled` 做影子评审，再开通知，再开人工批准后的 workspace 采用，再准备个人 Overlay、创建个人 Draft PR，最后才允许二次确认后的个人 Gateway 发布。单独打开 `phase6.enabled` 不会授予 Agent 自己修改正式 Skill、合并公共 PR 或部署的权限。
 
-当前运行态为：`phase6.enabled=true`、`shadow_mode=false`、`notifications_enabled=true`、`adoption_enabled=false`、`draftPrEnabled=false`、`publish_enabled=false`。本地代码已具备自动 handoff，但真实 Draft PR 窗口需显式打开 `draftPrEnabled`；发布仍需独立二次确认。
+当前运行态为：`phase6.enabled=true`、`shadow_mode=false`、`notifications_enabled=true`、`adoption_enabled=false`、`draftPrEnabled=true`、`publish_enabled=false`。自动候选在通过语义质量、安全 Gate 与评测后可创建私有 Overlay Draft PR；发布仍需独立二次确认。
 
 当 `overlayRepository` 已配置时，Gateway 会在启动时注入受控的 GitHub Overlay
 校验、合并和热加载回调；未配置时 `/evolve publish` 会安全地返回“发布回调尚未配置”，
