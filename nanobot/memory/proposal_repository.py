@@ -264,7 +264,7 @@ class ProposalRepository:
         ).fetchall() if eval_run_ids else []
         actions = self.connection.execute(
             "SELECT action,result_status,result_json,created_at FROM proposal_actions "
-            "WHERE proposal_id=? AND action IN ('create_draft_pr','remote_draft_pr','publish_candidate_notification') "
+            "WHERE proposal_id=? AND action IN ('create_draft_pr','remote_draft_pr','remote_pr_status','publish_candidate_notification') "
             "ORDER BY created_at", (record.proposal_id,)
         ).fetchall()
         return {

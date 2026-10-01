@@ -275,10 +275,12 @@ class EvolutionCommandService:
             content or "（未找到候选 Skill 正文）",
         ]
         if pr:
-            lines.extend(["", "五、Draft PR", f"- 分支：{pr.get('branch', '未记录')}", f"- 提交：{pr.get('commit', '未记录')}"])
+            branch = str(pr.get("branch", ""))
+            branch_display = branch if "phase6" not in branch.casefold() else "已创建（历史内部名称不展示）"
+            lines.extend(["", "五、Draft PR", f"- 分支：{branch_display}", f"- 提交：{pr.get('commit', '未记录')}"])
             if pr.get("url"):
                 lines.append(f"- 链接：{pr['url']}")
-            lines.append(f"- CI：{'已通过' if any(item.get('action') == 'remote_draft_pr' and item.get('ci_passed') for item in action_values) else '请查看最新 CI 状态'}")
+            lines.append(f"- CI：{'已通过' if any(item.get('action') == 'remote_pr_status' and item.get('ci_passed') for item in action_values) else '请查看最新 CI 状态'}")
         lines.extend(["", "查看完整评测案例：/evolve review " + public_id + " cases",
                       "查看基线与候选差异：/evolve review " + public_id + " diff",
                       "安全说明：凭据不会展示；确认码哈希、成员身份和模型隐藏推理不会展示。"])
