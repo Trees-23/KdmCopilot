@@ -14,6 +14,7 @@ import os
 import re
 import sqlite3
 import subprocess
+from base64 import b64encode
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -98,20 +99,41 @@ class GitHubOverlayClient:
     def _git(self, *args: str) -> subprocess.CompletedProcess[str]:
         return self.run(
             ["git", *args], cwd=self.repo_path, check=False, capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True, encoding="utf-8", errors="replace", env=self._command_env(),
         )
 
-    def _gh(self, *args: str) -> subprocess.CompletedProcess[str]:
+    @staticmethod
+    def _command_env() -> dict[str, str]:
+        """Prepare scoped API/Git authentication without persisting credentials."""
+
         env = os.environ.copy()
         env["GH_PROMPT_DISABLED"] = "1"
-        # Compose deliberately exposes the credential under the project-scoped
-        # name.  The GitHub CLI only honours GH_TOKEN/GITHUB_TOKEN, so map it
-        # for this subprocess without persisting or logging its value.
-        if env.get("GITHUB_PERSONAL_ACCESS_TOKEN") and not env.get("GH_TOKEN"):
-            env["GH_TOKEN"] = env["GITHUB_PERSONAL_ACCESS_TOKEN"]
+        token = env.get("GITHUB_PERSONAL_ACCESS_TOKEN", "")
+        if token and not env.get("GH_TOKEN"):
+            env["GH_TOKEN"] = token
+        proxy = env.get("NANOBOT_GITHUB_PROXY_URL", "").strip()
+        if proxy:
+            for key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+                if not env.get(key):
+                    env[key] = proxy
+            # Overlay origin is intentionally cloned as SSH.  Rewrite only
+            # GitHub URLs for this child process, then attach an HTTPS header
+            # in its environment.  Neither the token nor a credential URL is
+            # written to Git config, command arguments, Proposal data or logs.
+            pairs = [("url.https://github.com/.insteadOf", "git@github.com:")]
+            if token:
+                encoded = b64encode(f"x-access-token:{token}".encode("utf-8")).decode("ascii")
+                pairs.append(("http.https://github.com/.extraheader", f"AUTHORIZATION: basic {encoded}"))
+            env["GIT_CONFIG_COUNT"] = str(len(pairs))
+            for index, (key, value) in enumerate(pairs):
+                env[f"GIT_CONFIG_KEY_{index}"] = key
+                env[f"GIT_CONFIG_VALUE_{index}"] = value
+        return env
+
+    def _gh(self, *args: str) -> subprocess.CompletedProcess[str]:
         return self.run(
             ["gh", *args], cwd=self.repo_path, check=False, capture_output=True,
-            text=True, encoding="utf-8", errors="replace", env=env,
+            text=True, encoding="utf-8", errors="replace", env=self._command_env(),
         )
 
     def _verify_repository(self) -> None:

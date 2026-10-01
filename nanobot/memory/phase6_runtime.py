@@ -31,6 +31,11 @@ def _automation_env() -> dict[str, str]:
     env["GH_PROMPT_DISABLED"] = "1"
     if env.get("GITHUB_PERSONAL_ACCESS_TOKEN") and not env.get("GH_TOKEN"):
         env["GH_TOKEN"] = env["GITHUB_PERSONAL_ACCESS_TOKEN"]
+    proxy = env.get("NANOBOT_GITHUB_PROXY_URL", "").strip()
+    if proxy:
+        for key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+            if not env.get(key):
+                env[key] = proxy
     return env
 
 

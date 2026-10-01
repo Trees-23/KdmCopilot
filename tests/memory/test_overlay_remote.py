@@ -96,6 +96,20 @@ def test_private_overlay_client_maps_project_token_to_gh_token(tmp_path, monkeyp
     assert os.environ["GITHUB_PERSONAL_ACCESS_TOKEN"] == "test-project-token"
 
 
+def test_private_overlay_client_scopes_proxy_and_https_git_auth(tmp_path, monkeypatch):
+    monkeypatch.setenv("GITHUB_PERSONAL_ACCESS_TOKEN", "test-project-token")
+    monkeypatch.setenv("NANOBOT_GITHUB_PROXY_URL", "http://proxy.example:7890")
+    client = GitHubOverlayClient(tmp_path, repository="Trees-23/KdmCopilot-skills-private")
+
+    env = client._command_env()
+
+    assert env["HTTPS_PROXY"] == "http://proxy.example:7890"
+    assert env["GIT_CONFIG_COUNT"] == "2"
+    assert env["GIT_CONFIG_KEY_0"] == "url.https://github.com/.insteadOf"
+    assert env["GIT_CONFIG_KEY_1"] == "http.https://github.com/.extraheader"
+    assert env["GIT_CONFIG_VALUE_1"].startswith("AUTHORIZATION: basic ")
+
+
 def test_private_overlay_client_ci_projection_only_notifies_after_success(tmp_path):
     repo, connection = _setup(tmp_path)
     _git(repo, "remote", "add", "origin", "git@github.com:Trees-23/KdmCopilot-skills-private.git")
