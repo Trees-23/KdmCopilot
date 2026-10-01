@@ -522,6 +522,7 @@ M11 解决“自动评审通过，但管理员不知道到底改了什么”的�
 - [x] `/evolve review <编号>` 展示解决目标、证据数量、工具风险、Train/Validation/Holdout、Gate、安全结果、完整候选 `SKILL.md` 和 Draft PR 元数据。
 - [x] `/evolve review <编号> cases` 展示完整评测案例、预期结果、得分和工具调用；`/evolve review <编号> diff` 展示基线与候选 Markdown diff。
 - [x] 用户可见日期统一展示为北京时间；确认码哈希、凭据、成员身份和模型隐藏推理继续禁止展示。
+- [x] 在长期 Gateway 完成最终只读场景验收：构建 `git-4dee93ea7064`、容器 `0a2b2366392c…`、镜像 `sha256:0a2bc6df…`、运行根挂载为仓库 `runtime/`；新 WebUI 会话 `#/chat/websocket%3A3d590214-e682-43a1-bf09-a0d9f073212f` 的 Trace `01a0f79b-c2e5-74e5-97fd-b323ab11e7da` 确认迁移 v5 为 `applied`，采用/发布开关仍关闭。另以真实持久化的历史 Proposal 投影验证 `proposal-edf57cea0284` 不回显 `phase6`、CI 显示已通过、完整候选正文可读。
 - [ ] 在长期 Gateway 的真实 QQ 测试群完成 M11 场景验收：旧 `phase6-proposal:*` 可查询但不回显阶段名、新编号可审阅、案例与 diff 可查看、管理员确认命令仍兼容。
 - [ ] 观察一轮真实定时 Proposal，核对通知、review、Draft PR、CI 和最终发布命令全链路使用新编号。
 
