@@ -5,8 +5,8 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-MIGRATION_VERSION = 4
-MIGRATION_ID = "0004_phase6_alert_deliveries"
+MIGRATION_VERSION = 5
+MIGRATION_ID = "0005_proposal_review_details"
 APP_BUILD = "memory-phase1"
 
 MIGRATIONS_DIR = Path(__file__).with_name("migrations")
@@ -14,12 +14,13 @@ BASE_MIGRATION_PATH = MIGRATIONS_DIR / "0001_memory_base.sql"
 PHASE6_MIGRATION_PATH = MIGRATIONS_DIR / "0002_phase6_proposals.sql"
 DELIVERY_PAYLOAD_MIGRATION_PATH = MIGRATIONS_DIR / "0003_phase6_delivery_payload.sql"
 ALERT_DELIVERY_MIGRATION_PATH = MIGRATIONS_DIR / "0004_phase6_alert_deliveries.sql"
+PROPOSAL_REVIEW_MIGRATION_PATH = MIGRATIONS_DIR / "0005_proposal_review_details.sql"
 
 
 def migration_sql() -> str:
     """Return the checked-in latest migration SQL."""
 
-    return ALERT_DELIVERY_MIGRATION_PATH.read_text(encoding="utf-8")
+    return PROPOSAL_REVIEW_MIGRATION_PATH.read_text(encoding="utf-8")
 
 
 def base_migration_sql() -> str:
@@ -65,9 +66,10 @@ REQUIRED_TABLES = frozenset(
         "proposal_actions",
         "group_memory_scopes",
         "phase6_alert_deliveries",
+        "eval_cases",
     }
 )
 
 BASE_REQUIRED_TABLES = REQUIRED_TABLES - frozenset(
-    {"skill_proposals", "proposal_deliveries", "proposal_actions", "group_memory_scopes", "phase6_alert_deliveries"}
+    {"skill_proposals", "proposal_deliveries", "proposal_actions", "group_memory_scopes", "phase6_alert_deliveries", "eval_cases"}
 )

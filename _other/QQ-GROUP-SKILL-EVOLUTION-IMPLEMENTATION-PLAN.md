@@ -2,7 +2,7 @@
 
 > 文档状态：分阶段实施中
 >
-> 更新时间：2026-09-28
+> 更新时间：2026-10-01
 >
 > 范围：在已完成的五层记忆 Phase 0～6 之上，为当前 nanobot 的官方 QQ 群机器人增加“自动评审 → 主动推送 → 群内交互确认 → 仅对个人部署生效的受控升级/发布”闭环。
 >
@@ -15,7 +15,7 @@
 
 ## 当前实施状态
 
-截至 2026-09-28，M0～M9 已完成；M10 已完成首批运营能力接入，正在进行连续 7 天稳态观察。M9 的真实私有 Overlay 发布窗口已完成临时验收并回滚，长期运行态已恢复 `publishEnabled=false`。M4/M5 已按用户确认完成加速验收并开启对应运行态：
+截至 2026-10-01，M0～M10 已完成既定接入，M10-C 连续稳态观察仍按原计划保留；新增 M11“Proposal 可审阅透明化”正在实施。M9 的真实私有 Overlay 发布窗口已完成临时验收并回滚，长期运行态已恢复 `publishEnabled=false`。M4/M5 已按用户确认完成加速验收并开启对应运行态：
 
 - 已加入独立的 `shadow_mode`、主动通知、采用和发布开关；当前运行态为 `phase6.enabled=true`、通知开启、采用/发布关闭。
 - 已确认 Proposal 确认码有效期为 12 小时（720 分钟），每群每日主动通知上限为 12 条。
@@ -512,6 +512,20 @@ workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → �
 本轮 M10-B 代码验收记录：`tests/memory` 120 passed，涉及路径的 `ruff check` 和 `git diff --check` 通过。长期 Gateway 已按提交 `908ffb63` 重建，构建标识为 `git-908ffb637b2e`，镜像 `sha256:5e80fbd4505f69e0a3d5424d27aacac6ff81215309d5375ce9fa85638ec3996f`，健康检查正常；容器仍挂载仓库 `runtime/`，服务为固定的 `nanobot-gateway`（8765/18790）。
 
 M10-B-3 真实隔离验收：运行态使用私有 Overlay `Trees-23/KdmCopilot-skills-private:main` 和独立 checkout，真实创建 Draft PR #6；`validate` CI 已通过并成功回写，QQ outbox 创建 1 条 `pr_created` Delivery，通知审计动作创建 1 条。PR 未合并、未发布，长期运行态仍保持 `adoptionEnabled=false`、`publishEnabled=false`、`killSwitch=false`。验收完成后已关闭 PR #6、删除远端演化分支，并将本轮临时目录移入系统回收站；未触碰公共 `Trees-23/KdmCopilot:main`。
+
+### M11：Proposal 可审阅透明化（当前实施）
+
+M11 解决“自动评审通过，但管理员不知道到底改了什么”的审批缺口。实施原则是把阶段名与业务编号分离，把候选正文、案例和评测依据做成可追溯的只读审阅材料；不改变自动评审、人工确认和私有 Overlay 发布门禁。
+
+- [x] 为 Proposal 增加独立的用户可见编号（`proposal-xxxxxxxxxxxx`）；旧的内部 ID 仍兼容查询，但 QQ、通知和 PR 说明不再展示 `phase6` 阶段前缀。
+- [x] 新增评测案例持久化表，保存评测问题、预期结果、数据集分组和来源案例 ID，避免只能看到分数而无法知道评测集跑了什么。
+- [x] `/evolve review <编号>` 展示解决目标、证据数量、工具风险、Train/Validation/Holdout、Gate、安全结果、完整候选 `SKILL.md` 和 Draft PR 元数据。
+- [x] `/evolve review <编号> cases` 展示完整评测案例、预期结果、得分和工具调用；`/evolve review <编号> diff` 展示基线与候选 Markdown diff。
+- [x] 用户可见日期统一展示为北京时间；确认码哈希、凭据、成员身份和模型隐藏推理继续禁止展示。
+- [ ] 在长期 Gateway 的真实 QQ 测试群完成 M11 场景验收：旧 `phase6-proposal:*` 可查询但不回显阶段名、新编号可审阅、案例与 diff 可查看、管理员确认命令仍兼容。
+- [ ] 观察一轮真实定时 Proposal，核对通知、review、Draft PR、CI 和最终发布命令全链路使用新编号。
+
+M11 不自动打开 `adoption_enabled` 或 `publish_enabled`，不合并任何 PR，不改变当前生效 Skill。只有完成真实 QQ 场景验收并确认审阅信息足够，才把本里程碑标记为完成。
 
 ## 11. 测试与验收矩阵
 

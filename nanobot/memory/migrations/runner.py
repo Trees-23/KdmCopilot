@@ -6,11 +6,13 @@ import sqlite3
 from datetime import UTC, datetime
 
 from nanobot.memory.schema import (
+    ALERT_DELIVERY_MIGRATION_PATH,
     APP_BUILD,
     BASE_REQUIRED_TABLES,
     DELIVERY_PAYLOAD_MIGRATION_PATH,
     MIGRATION_ID,
     MIGRATION_VERSION,
+    PROPOSAL_REVIEW_MIGRATION_PATH,
     REQUIRED_TABLES,
     base_migration_sql,
     migration_sql,
@@ -152,9 +154,10 @@ def apply_migrations(
     # Keep each migration immutable.  Version 2 creates Proposal tables;
     # version 3 adds durable notification payloads; version 4 adds a separate
     # durable alert outbox for pipeline failures that have no publish candidate.
-    phase6_required = REQUIRED_TABLES - {"phase6_alert_deliveries"}
+    phase6_required = REQUIRED_TABLES - {"phase6_alert_deliveries", "eval_cases"}
     apply_one(2, "0002_phase6_proposals", phase6_migration_sql(), phase6_required)
-    apply_one(3, "0003_phase6_delivery_payload", DELIVERY_PAYLOAD_MIGRATION_PATH.read_text(encoding="utf-8"), REQUIRED_TABLES - {"phase6_alert_deliveries"})
+    apply_one(3, "0003_phase6_delivery_payload", DELIVERY_PAYLOAD_MIGRATION_PATH.read_text(encoding="utf-8"), phase6_required)
+    apply_one(4, "0004_phase6_alert_deliveries", ALERT_DELIVERY_MIGRATION_PATH.read_text(encoding="utf-8"), REQUIRED_TABLES - {"eval_cases"})
     apply_one(MIGRATION_VERSION, MIGRATION_ID, migration_sql(), REQUIRED_TABLES)
     verify_schema(connection, schema_hash(migration_sql()))
 
@@ -187,4 +190,4 @@ def _record_failed_version(
 def migration_file_path() -> str:
     """Expose the latest checked-in migration path for evidence and diagnostics."""
 
-    return str(DELIVERY_PAYLOAD_MIGRATION_PATH)
+    return str(PROPOSAL_REVIEW_MIGRATION_PATH)

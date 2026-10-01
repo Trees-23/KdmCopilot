@@ -579,7 +579,9 @@ def make_proposal(
     if not trace_ids or not case_ids or not eval_run_ids:
         raise ValueError("proposal requires trace, case and eval run evidence")
     target = "git_pr_proposal" if source_kind in {"builtin", "shared", "entrypoint", "mcp"} else "workspace_adopt_proposal"
-    return Phase6Proposal(f"phase6-proposal:{uuid4()}", target, tuple(trace_ids), tuple(case_ids), tuple(eval_run_ids))
+    # The implementation stage is an internal detail.  Keep the Proposal
+    # identity neutral so it remains meaningful after the staged rollout ends.
+    return Phase6Proposal(f"proposal:{uuid4()}", target, tuple(trace_ids), tuple(case_ids), tuple(eval_run_ids))
 
 
 def persist_proposal(

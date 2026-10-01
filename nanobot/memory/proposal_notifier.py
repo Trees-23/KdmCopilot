@@ -113,6 +113,7 @@ class ProposalNotifier:
         finally:
             connection.close()
         skill = record.skill_name if record is not None else "未知候选"
+        public_id = record.public_id if record is not None else proposal_id
         safe_reason = self._safe_failure_reason(reason)
         ci_failure = "CI" in safe_reason
         return self.enqueue_alert(
@@ -122,7 +123,7 @@ class ProposalNotifier:
             f"阶段：私有 Overlay {'CI 核验' if ci_failure else 'Draft PR'}\n"
             f"结果：{'Draft PR 已保留，等待 CI 核验恢复' if ci_failure else '已停止，未创建 PR'}，未影响当前生效 Skill。\n"
             f"原因：{safe_reason}\n"
-            f"查看：/evolve review {proposal_id}\n"
+            f"查看：/evolve review {public_id}\n"
             "系统会在下一次受保护扫描中安全重试；如仍失败会保留告警记录。",
             fingerprint=f"{proposal_id}:{safe_reason}",
         )
@@ -142,29 +143,30 @@ class ProposalNotifier:
 
     @staticmethod
     def _content(record: Any, code: str) -> str:
+        public_id = getattr(record, "public_id", record.proposal_id)
         if getattr(record, "target", None) == "git_pr_proposal":
             return (
                 "【Skill 发布候选】\n"
-                f"提案：{record.proposal_id}\n"
+                f"提案：{public_id}\n"
                 f"Skill：{record.skill_name}\n"
                 f"来源：{record.source_kind}\n"
                 f"自动评审：{record.gate_result}\n"
                 "Draft PR：已创建；CI：已通过\n\n"
-                f"查看：/evolve review {record.proposal_id}\n"
-                f"发布确认：/evolve publish {record.proposal_id}\n"
+                f"查看：/evolve review {public_id}\n"
+                f"发布确认：/evolve publish {public_id}\n"
                 "说明：第一次命令签发一次性确认码；同一管理员再次携带确认码执行发布。"
             )
         expires = _format_beijing_time(record.confirmation_expires_at)
         return (
             "【Skill 升级候选】\n"
-            f"提案：{record.proposal_id}\n"
+            f"提案：{public_id}\n"
             f"Skill：{record.skill_name}\n"
             f"来源：{record.source_kind}\n"
             f"自动评审：{record.gate_result}\n"
             f"有效期：{expires}\n\n"
-            f"查看：/evolve review {record.proposal_id}\n"
-            f"同意：/evolve approve {record.proposal_id} {code}\n"
-            f"拒绝：/evolve reject {record.proposal_id} 原因"
+            f"查看：/evolve review {public_id}\n"
+            f"同意：/evolve approve {public_id} {code}\n"
+            f"拒绝：/evolve reject {public_id} 原因"
         )
 
     def enqueue(self, proposal_id: str, *, group_openid: str) -> NotificationEnqueueResult:

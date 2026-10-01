@@ -215,6 +215,13 @@ def build_eval_pack_draft(
          _canonical({"actor": actor, "case_ids": [item.source_case_id for item in eval_cases]}),
          total, total, grade, now),
     )
+    connection.executemany(
+        """INSERT INTO eval_cases
+           (eval_pack_id,case_key,prompt,expected,split,source_case_id,created_at)
+           VALUES(?,?,?,?,?,?,?)""",
+        [(eval_pack_id, item.case_key, item.prompt, item.expected, item.split,
+          item.source_case_id, now) for item in eval_cases],
+    )
     connection.commit()
     return EvalPackDraft(eval_pack_id, skill_id, skill_revision_id, dataset_hash, fixture_hash,
                          total, total, grade, eval_cases)

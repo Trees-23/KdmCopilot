@@ -77,6 +77,13 @@ class ProposalRecord:
     gate_result: str
     confirmation_expires_at: str | None
     created_at: str | None = None
+    display_id: str | None = None
+
+    @property
+    def public_id(self) -> str:
+        """Stable user-facing identifier, separate from internal audit IDs."""
+
+        return self.display_id or self.proposal_id
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,6 +131,7 @@ class ProposalRepository:
         eval_run_ids: Sequence[str] = (),
         gate_snapshot: Mapping[str, Any] | None = None,
         proposal_id: str | None = None,
+        display_id: str | None = None,
         now: datetime | None = None,
     ) -> ProposalRecord:
         if source_kind not in {"workspace", "builtin", "shared", "entrypoint", "mcp"}:
@@ -135,16 +143,17 @@ class ProposalRepository:
         if gate_result not in {"passed", "failed", "insufficient_evidence", "stale"}:
             raise ValueError("unsupported gate result")
         proposal_id = proposal_id or f"prop-{uuid4()}"
+        display_id = display_id or f"proposal-{uuid4().hex[:12]}"
         timestamp = _iso(now)
         self.connection.execute("BEGIN IMMEDIATE")
         try:
             self.connection.execute(
                 "INSERT INTO skill_proposals(proposal_id,workspace,skill_id,skill_name,source_kind,target,"
-                "baseline_revision_id,candidate_revision_id,baseline_hash,candidate_hash,version_epoch,"
+                "baseline_revision_id,candidate_revision_id,baseline_hash,candidate_hash,version_epoch,display_id,"
                 "gate_result,gate_snapshot_json,trace_ids_json,case_ids_json,eval_run_ids_json,status,created_at,updated_at) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (proposal_id, workspace, skill_id, skill_name, source_kind, target, baseline_revision_id,
-                 candidate_revision_id, baseline_hash, candidate_hash, 0, gate_result, _json(gate_snapshot or {}),
+                 candidate_revision_id, baseline_hash, candidate_hash, 0, display_id, gate_result, _json(gate_snapshot or {}),
                  _json(list(trace_ids)), _json(list(case_ids)), _json(list(eval_run_ids)), status, timestamp, timestamp),
             )
             self.connection.commit()
@@ -156,8 +165,8 @@ class ProposalRepository:
     def get(self, proposal_id: str) -> ProposalRecord | None:
         row = self.connection.execute(
             "SELECT proposal_id,workspace,skill_name,source_kind,target,status,baseline_revision_id,"
-            "candidate_revision_id,baseline_hash,candidate_hash,version_epoch,gate_result,confirmation_expires_at,created_at "
-            "FROM skill_proposals WHERE proposal_id=?", (proposal_id,)
+            "candidate_revision_id,baseline_hash,candidate_hash,version_epoch,gate_result,confirmation_expires_at,created_at,display_id "
+            "FROM skill_proposals WHERE proposal_id=? OR display_id=? LIMIT 1", (proposal_id, proposal_id)
         ).fetchone()
         if row is None:
             return None
@@ -185,7 +194,7 @@ class ProposalRepository:
         sql = (
             "SELECT proposal_id,workspace,skill_name,source_kind,target,status,"
             "baseline_revision_id,candidate_revision_id,baseline_hash,candidate_hash,"
-            "version_epoch,gate_result,confirmation_expires_at,created_at FROM skill_proposals "
+            "version_epoch,gate_result,confirmation_expires_at,created_at,display_id FROM skill_proposals "
             "WHERE workspace=?"
         )
         params: list[Any] = [workspace]
@@ -197,6 +206,81 @@ class ProposalRepository:
         params.append(limit)
         rows = self.connection.execute(sql, params).fetchall()
         return [ProposalRecord(*row) for row in rows]
+
+    def review_details(self, proposal_id: str) -> dict[str, Any] | None:
+        """Return the complete, safe-to-review evidence projection for a Proposal.
+
+        Prompts and expected outcomes are stored in ``eval_cases``.  Secrets,
+        confirmation hashes and actor identities are intentionally excluded;
+        this projection is suitable for the QQ administrator review command.
+        """
+
+        record = self.get(proposal_id)
+        if record is None:
+            return None
+        row = self.connection.execute(
+            "SELECT gate_snapshot_json,trace_ids_json,case_ids_json,eval_run_ids_json "
+            "FROM skill_proposals WHERE proposal_id=?", (record.proposal_id,)
+        ).fetchone()
+        snapshot = json.loads(row[0] or "{}") if row else {}
+        trace_ids = json.loads(row[1] or "[]") if row else []
+        case_ids = json.loads(row[2] or "[]") if row else []
+        eval_run_ids = json.loads(row[3] or "[]") if row else []
+        candidate = self.connection.execute(
+            "SELECT content FROM skill_revisions WHERE revision_id=?", (record.candidate_revision_id,)
+        ).fetchone()
+        baseline = self.connection.execute(
+            "SELECT content FROM skill_revisions WHERE revision_id=?", (record.baseline_revision_id,)
+        ).fetchone()
+        packs = self.connection.execute(
+            "SELECT ep.eval_pack_id,ep.question_count,ep.valid_count,ep.evidence_grade,ep.status,"
+            "ep.dataset_hash,ep.fixture_hash,ep.sealed_by,ep.sealed_at "
+            "FROM eval_packs ep JOIN eval_runs er ON er.eval_pack_id=ep.eval_pack_id "
+            "WHERE er.eval_run_id IN ({}) ORDER BY ep.created_at DESC".format(
+                ",".join("?" for _ in eval_run_ids) or "NULL"
+            ), eval_run_ids,
+        ).fetchall() if eval_run_ids else []
+        pack_ids = [str(item[0]) for item in packs]
+        cases = self.connection.execute(
+            "SELECT ec.eval_pack_id,ec.case_key,ec.prompt,ec.expected,ec.split,ec.source_case_id "
+            "FROM eval_cases ec WHERE ec.eval_pack_id IN ({}) ORDER BY ec.eval_pack_id,ec.split,ec.case_key".format(
+                ",".join("?" for _ in pack_ids) or "NULL"
+            ), pack_ids,
+        ).fetchall() if pack_ids else []
+        runs = self.connection.execute(
+            "SELECT er.eval_run_id,er.model_id,er.tool_schema_digest,er.status,er.gate_result,"
+            "er.metrics_json,er.consistency_result,er.is_independent_replay,er.started_at,er.ended_at "
+            "FROM eval_runs er WHERE er.eval_run_id IN ({}) ORDER BY er.started_at DESC".format(
+                ",".join("?" for _ in eval_run_ids) or "NULL"
+            ), eval_run_ids,
+        ).fetchall() if eval_run_ids else []
+        results = self.connection.execute(
+            "SELECT ecr.eval_run_id,ecr.case_key,ecr.split,ecr.outcome,ecr.score,ecr.tokens,"
+            "ecr.latency_ms,ecr.tools_json,ecr.high_risk_tool_count,ecr.security_violation,"
+            "ecr.rationale FROM eval_case_results ecr WHERE ecr.eval_run_id IN ({}) "
+            "ORDER BY ecr.eval_run_id,ecr.split,ecr.case_key".format(
+                ",".join("?" for _ in eval_run_ids) or "NULL"
+            ), eval_run_ids,
+        ).fetchall() if eval_run_ids else []
+        actions = self.connection.execute(
+            "SELECT action,result_status,result_json,created_at FROM proposal_actions "
+            "WHERE proposal_id=? AND action IN ('create_draft_pr','remote_draft_pr','publish_candidate_notification') "
+            "ORDER BY created_at", (record.proposal_id,)
+        ).fetchall()
+        return {
+            "record": record,
+            "gate_snapshot": snapshot,
+            "trace_ids": tuple(str(value) for value in trace_ids),
+            "case_ids": tuple(str(value) for value in case_ids),
+            "eval_run_ids": tuple(str(value) for value in eval_run_ids),
+            "candidate_content": str(candidate[0]) if candidate else "",
+            "baseline_content": str(baseline[0]) if baseline else "",
+            "packs": tuple(tuple(row) for row in packs),
+            "cases": tuple(tuple(row) for row in cases),
+            "runs": tuple(tuple(row) for row in runs),
+            "results": tuple(tuple(row) for row in results),
+            "actions": tuple(tuple(row) for row in actions),
+        }
 
     def transition(
         self,

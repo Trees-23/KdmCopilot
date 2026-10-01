@@ -135,6 +135,70 @@ def test_evolve_commands_are_deterministic_and_admin_gated(tmp_path):
     assert "未修改 Skill" in approved.content
 
 
+def test_review_hides_stage_id_and_shows_candidate_eval_and_diff(tmp_path):
+    connection = connect_memory_db(tmp_path)
+    apply_migrations(connection)
+    connection.execute(
+        "INSERT INTO skills(skill_id,namespace,name,source_kind,status,created_at,updated_at) "
+        "VALUES('skill:review','workspace','review-skill','workspace','active','now','now')"
+    )
+    connection.executemany(
+        "INSERT INTO skill_revisions(revision_id,skill_id,skill_version,content_hash,content,author_actor,created_at) "
+        "VALUES(?,?,?,?,?,?,?)",
+        [
+            ("revision:base", "skill:review", "1", "sha256:base", "# Base\n", "test", "now"),
+            ("revision:candidate", "skill:review", "2", "sha256:candidate", "# Candidate\n\n只读查询规则。\n", "test", "now"),
+        ],
+    )
+    connection.execute(
+        "INSERT INTO eval_packs(eval_pack_id,skill_id,skill_revision_id,dataset_hash,fixture_hash,rubric_json,"
+        "split_policy_json,source_manifest_json,question_count,valid_count,evidence_grade,status,created_at) "
+        "VALUES('eval-pack:review','skill:review','revision:candidate','sha256:data','sha256:fixture','{}','{}','{}',1,1,'limited','sealed','now')"
+    )
+    connection.execute(
+        "INSERT INTO eval_cases(eval_pack_id,case_key,prompt,expected,split,source_case_id,created_at) "
+        "VALUES('eval-pack:review','case-1','请列出 Skill','结构化结果','holdout','case-source','now')"
+    )
+    connection.execute(
+        "INSERT INTO eval_runs(eval_run_id,eval_pack_id,baseline_revision_id,candidate_revision_id,baseline_hash,"
+        "candidate_hash,model_id,tool_schema_digest,fixture_hash,dataset_hash,seed,replay_group_id,evidence_grade,"
+        "is_independent_replay,status,gate_result,metrics_json,started_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        ("eval-run:review", "eval-pack:review", "revision:base", "revision:candidate", "sha256:base",
+         "sha256:candidate", "fixture-model", "sha256:tools", "sha256:fixture", "sha256:data", "seed",
+         "replay:review", "limited", 1, "completed", "eligible_for_confirmation",
+         '{"holdout_passed":true,"security_clean":true}', "now"),
+    )
+    connection.execute(
+        "INSERT INTO eval_case_results(eval_run_id,case_key,split,outcome,score,tools_json,judge_actor) "
+        "VALUES('eval-run:review','case-1','holdout','passed',1.0,'[\"skill_read\"]','reviewer')"
+    )
+    connection.commit()
+    proposal = ProposalRepository(connection).create_proposal(
+        proposal_id="phase6-proposal:legacy",
+        workspace=str(tmp_path), skill_id="skill:review", skill_name="review-skill", source_kind="workspace",
+        target="workspace_adopt_proposal", baseline_hash="sha256:base", candidate_hash="sha256:candidate",
+        baseline_revision_id="revision:base", candidate_revision_id="revision:candidate",
+        trace_ids=("trace-1",), case_ids=("case-source",), eval_run_ids=("eval-run:review",),
+    )
+    repo = ProposalRepository(connection)
+    repo.issue_confirmation(proposal.proposal_id, code="4821", ttl_minutes=720)
+    connection.close()
+
+    service = EvolutionCommandService(str(tmp_path), _config())
+    review = service.handle(f"review {proposal.public_id}", metadata=_metadata())
+    assert "phase6" not in review.content
+    assert "只读查询规则" in review.content
+    assert "Holdout：1/1" in review.content
+    assert "/evolve review " + proposal.public_id + " cases" in review.content
+
+    cases = service.handle(f"review {proposal.public_id} cases", metadata=_metadata())
+    assert "请列出 Skill" in cases.content
+    assert "结构化结果" in cases.content
+    diff = service.handle(f"review {proposal.public_id} diff", metadata=_metadata())
+    assert "-# Base" in diff.content
+    assert "+# Candidate" in diff.content
+
+
 def test_evolve_rejects_wrong_group_and_missing_mention(tmp_path):
     proposal_id, _ = _proposal(tmp_path)
     service = EvolutionCommandService(str(tmp_path), _config())

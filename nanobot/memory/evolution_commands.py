@@ -8,6 +8,8 @@ and publishing are deliberately not performed here.
 
 from __future__ import annotations
 
+import difflib
+import json
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -166,7 +168,8 @@ class EvolutionCommandService:
             f"  日期：{date}\n"
             f"  状态：{statuses.get(record.status, record.status)}\n"
             f"  自动评审：{gate}\n"
-            f"  查看：/evolve review {record.skill_name}"
+            f"  编号：{record.public_id}\n"
+            f"  查看：/evolve review {record.public_id}"
         )
 
     @staticmethod
@@ -179,12 +182,109 @@ class EvolutionCommandService:
             "/evolve overlay\n查看私有 Overlay 中的候选 Skill\n\n"
             "/evolve overlay <Skill 名称>\n查看候选 Skill 正文（仅审批管理员）\n\n"
             "/evolve review <Skill 名称或 Proposal 编号>\n查看详细评审信息\n\n"
+            "/evolve review <Proposal 编号> cases\n查看完整评测案例（问题、预期、结果）\n\n"
+            "/evolve review <Proposal 编号> diff\n查看候选 Skill 与基线差异\n\n"
             "/evolve menu\n再次显示本菜单\n\n"
             "也可以直接用中文问：\n"
             "“看看候选 Skill”\n"
             "“看看现在有哪些待确认的沉淀 Skill”\n"
             "“看看当前有哪些 Skill”"
         )
+
+    @staticmethod
+    def _review_text(details: Mapping[str, Any], mode: str = "summary") -> str:
+        record = details["record"]
+        snapshot = details["gate_snapshot"]
+        public_id = record.public_id
+        content = details["candidate_content"]
+        if mode == "diff":
+            diff = "".join(difflib.unified_diff(
+                details["baseline_content"].splitlines(keepends=True),
+                content.splitlines(keepends=True),
+                fromfile="baseline/SKILL.md", tofile="candidate/SKILL.md",
+            )) or "（基线与候选没有文本差异）"
+            return f"Proposal 差异：{public_id}\n\n--- Markdown diff ---\n{diff}"
+
+        runs = details["runs"]
+        results = details["results"]
+        split_totals: dict[str, list[int]] = {"train": [0, 0], "validation": [0, 0], "holdout": [0, 0]}
+        tools: set[str] = set()
+        high_risk = 0
+        violations = 0
+        for row in results:
+            split, outcome = str(row[2]), str(row[3])
+            if split in split_totals:
+                split_totals[split][0] += 1
+                split_totals[split][1] += int(outcome == "passed")
+            try:
+                tools.update(json.loads(row[7] or "[]"))
+            except (TypeError, ValueError):
+                pass
+            high_risk += int(row[8] or 0)
+            violations += int(row[9] or 0)
+        source = {
+            "workspace": "当前工作区", "builtin": "内置 Skill", "shared": "共享 Skill",
+            "entrypoint": "入口插件", "mcp": "MCP Skill",
+        }.get(record.source_kind, record.source_kind)
+        target = "工作区采用" if record.target == "workspace_adopt_proposal" else "私有 Overlay Draft PR"
+        status = {
+            "eligible_for_confirmation": "待确认", "notified": "已通知待确认", "approved": "已批准",
+            "pr_created": "已创建 Draft PR", "published": "已发布", "adopted": "已采用",
+            "rolled_back": "已回滚", "rejected_by_admin": "已拒绝", "expired": "已过期", "failed": "失败",
+        }.get(record.status, record.status)
+        action_values: list[dict[str, Any]] = []
+        for action, action_status, result_json, _created in details["actions"]:
+            try:
+                value = json.loads(result_json or "{}")
+            except (TypeError, ValueError):
+                value = {}
+            action_values.append({"action": action, "status": action_status, **value})
+        pr = next((item for item in reversed(action_values) if item["action"] in {"remote_draft_pr", "create_draft_pr"}), None)
+        lines = [
+            "【Skill 沉淀审批详情】",
+            f"编号：{public_id}",
+            f"Skill：{record.skill_name}",
+            f"创建日期：{_format_beijing_time(record.created_at)}",
+            f"来源：{source}",
+            f"目标：{target}",
+            f"状态：{status}",
+            f"自动评审：{'通过' if record.gate_result == 'passed' else '未通过'}",
+            f"确认码有效期：{_format_beijing_time(record.confirmation_expires_at)}",
+            "",
+            "一、这次沉淀解决什么问题",
+            f"- 触发证据：{len(details['trace_ids'])} 条 Trace、{len(details['case_ids'])} 个案例",
+            "- 目标：把重复成功案例归纳为可复用的 Skill 行为规则。",
+            "- 当前 Skill 指针未因本 Proposal 自动切换。",
+            "",
+            "二、案例与安全边界",
+            f"- 评测使用工具：{', '.join(sorted(tools)) if tools else '无记录'}",
+            f"- 高风险工具调用：{high_risk} 次",
+            f"- 安全违规：{violations} 次",
+            f"- EvalRun：{len(runs)} 次",
+            "",
+            "三、评测结果",
+            f"- 评测集：{sum(item[0] for item in split_totals.values())} 条",
+            f"- Train：{split_totals['train'][1]}/{split_totals['train'][0]}",
+            f"- Validation：{split_totals['validation'][1]}/{split_totals['validation'][0]}",
+            f"- Holdout：{split_totals['holdout'][1]}/{split_totals['holdout'][0]}",
+            f"- Gate：{'通过' if snapshot.get('holdout_passed', record.gate_result == 'passed') else '未通过'}；安全检查：{'通过' if snapshot.get('security_clean', not violations) else '未通过'}",
+            f"- 独立回放：{'已执行' if any(bool(row[7]) for row in runs) else '未记录'}",
+            "",
+            "四、实际 Skill 内容",
+            "--- SKILL.md ---",
+            content or "（未找到候选 Skill 正文）",
+        ]
+        if pr:
+            lines.extend(["", "五、Draft PR", f"- 分支：{pr.get('branch', '未记录')}", f"- 提交：{pr.get('commit', '未记录')}"])
+            if pr.get("url"):
+                lines.append(f"- 链接：{pr['url']}")
+            lines.append(f"- CI：{'已通过' if any(item.get('action') == 'remote_draft_pr' and item.get('ci_passed') for item in action_values) else '请查看最新 CI 状态'}")
+        lines.extend(["", "查看完整评测案例：/evolve review " + public_id + " cases",
+                      "查看基线与候选差异：/evolve review " + public_id + " diff",
+                      "安全说明：凭据不会展示；确认码哈希、成员身份和模型隐藏推理不会展示。"])
+        if "phase6" not in record.proposal_id.casefold() and record.proposal_id != public_id:
+            lines.insert(2, f"内部追踪编号：{record.proposal_id}")
+        return "\n".join(lines)
 
     def _active_skill_list(self) -> EvolutionCommandResult:
         from nanobot.agent.skills import SkillsLoader
@@ -283,6 +383,9 @@ class EvolutionCommandService:
             record = repo.get(proposal_id)
             if record is None or record.workspace != self.workspace:
                 return EvolutionCommandResult("未找到该 Proposal，或它不属于当前工作区。")
+            # Commands may use the public display ID; all state transitions use
+            # the immutable internal primary key.
+            proposal_id = record.proposal_id
 
             if action == "publish":
                 evolution = getattr(self.config, "evolution", self.config)
@@ -301,10 +404,10 @@ class EvolutionCommandService:
                         expires = _format_beijing_time(challenge.expires_at)
                         return EvolutionCommandResult(
                             "群内二次发布确认已签发\n"
-                            f"Proposal：{proposal_id}\n"
+                            f"Proposal：{record.public_id}\n"
                             f"确认码：{challenge.code}\n"
                             f"有效期：{expires}\n"
-                            f"请由同一管理员 @机器人执行：/evolve publish {proposal_id} <确认码>"
+                            f"请由同一管理员 @机器人执行：/evolve publish {record.public_id} <确认码>"
                         )
                     if challenge.status == "idempotent":
                         return EvolutionCommandResult(
@@ -321,45 +424,34 @@ class EvolutionCommandService:
                 )
                 if result.status == "published":
                     return EvolutionCommandResult(
-                        f"Proposal {proposal_id} 已发布到个人 Gateway（状态：published）。"
+                        f"Proposal {record.public_id} 已发布到个人 Gateway（状态：published）。"
                     )
                 return EvolutionCommandResult(f"发布失败：{result.reason or result.status}")
 
             if action == "review":
-                expires = _format_beijing_time(record.confirmation_expires_at)
-                status = {
-                    "eligible_for_confirmation": "待确认",
-                    "notified": "已通知待确认",
-                    "approved": "已批准",
-                    "pr_created": "已创建 Draft PR",
-                    "published": "已发布",
-                    "adopted": "已采用",
-                    "rolled_back": "已回滚",
-                    "rejected_by_admin": "已拒绝",
-                    "expired": "已过期",
-                    "failed": "失败",
-                }.get(record.status, record.status)
-                source = {
-                    "workspace": "当前工作区",
-                    "builtin": "内置 Skill",
-                    "shared": "共享 Skill",
-                    "entrypoint": "入口插件",
-                    "mcp": "MCP Skill",
-                }.get(record.source_kind, record.source_kind)
-                target = "工作区采用" if record.target == "workspace_adopt_proposal" else "私有 Overlay Draft PR"
-                gate = "通过" if record.gate_result == "passed" else "未通过"
-                return EvolutionCommandResult(
-                    "Proposal 审阅：\n"
-                    f"Proposal 编号：{record.proposal_id}\n"
-                    f"Skill：{record.skill_name}\n"
-                    f"创建日期：{_format_beijing_time(record.created_at)}\n"
-                    f"来源：{source}\n"
-                    f"目标：{target}\n"
-                    f"状态：{status}\n"
-                    f"自动评审：{gate}\n"
-                    f"确认码有效期：{expires}\n"
-                    "证据正文已脱敏；不会在群内展示确认码哈希或完整模型输出。"
-                )
+                mode = tokens[2].lower() if len(tokens) > 2 else "summary"
+                if mode not in {"summary", "cases", "diff"}:
+                    return EvolutionCommandResult("用法：/evolve review <Proposal 编号> [cases|diff]")
+                details = repo.review_details(record.proposal_id)
+                if details is None:
+                    return EvolutionCommandResult("未找到该 Proposal 的评审证据。")
+                if mode == "cases":
+                    rows = details["cases"]
+                    if not rows:
+                        return EvolutionCommandResult(f"Proposal {record.public_id} 当前没有可展示的评测案例正文。")
+                    lines = [f"Proposal 评测案例：{record.public_id}", ""]
+                    for _pack_id, case_key, prompt, expected, split, source_case_id in rows:
+                        result = next((item for item in details["results"] if item[1] == case_key), None)
+                        lines.extend([
+                            f"[{split}] {case_key}（来源案例：{source_case_id}）",
+                            f"问题：{prompt}",
+                            f"预期：{expected}",
+                            f"结果：{result[3] if result else '未记录'}；得分：{result[4] if result else '未记录'}",
+                            f"工具：{result[7] if result else '未记录'}",
+                            "",
+                        ])
+                    return EvolutionCommandResult("\n".join(lines).rstrip())
+                return EvolutionCommandResult(self._review_text(details, mode))
 
             if action == "approve":
                 if len(tokens) < 3:
@@ -385,14 +477,14 @@ class EvolutionCommandService:
                     )
                 if adopted is not None and adopted.status == "adopted":
                     return EvolutionCommandResult(
-                        f"Proposal {proposal_id} 已批准并采用 Skill（状态：adopted）。"
+                        f"Proposal {record.public_id} 已批准并采用 Skill（状态：adopted）。"
                     )
                 if adopted is not None and adopted.status not in {"disabled", "adopted"}:
                     return EvolutionCommandResult(
-                        f"Proposal {proposal_id} 已批准，但采用失败：{adopted.reason or adopted.status}。"
+                        f"Proposal {record.public_id} 已批准，但采用失败：{adopted.reason or adopted.status}。"
                     )
                 return EvolutionCommandResult(
-                    f"Proposal {proposal_id} 已记录管理员批准（状态：{result.status}）。"
+                    f"Proposal {record.public_id} 已记录管理员批准（状态：{result.status}）。"
                     + ("采用流程已启用，将由受控后台继续处理。" if adoption else "当前采用开关关闭，未修改 Skill。")
                 )
 
@@ -409,7 +501,7 @@ class EvolutionCommandService:
                 )
                 if result.status != "rolled_back":
                     return EvolutionCommandResult(f"回滚失败：{result.reason or result.status}")
-                return EvolutionCommandResult(f"Proposal {proposal_id} 已回滚（状态：rolled_back）。")
+                return EvolutionCommandResult(f"Proposal {record.public_id} 已回滚（状态：rolled_back）。")
 
             reason = tokens[2] if len(tokens) > 2 else "未提供原因"
             message_id = str(metadata.get("message_id") or "")
@@ -425,7 +517,7 @@ class EvolutionCommandService:
                 )
             except (ProposalConflict, ValueError) as exc:
                 return EvolutionCommandResult(f"拒绝失败：{exc}")
-            return EvolutionCommandResult(f"Proposal {proposal_id} 已拒绝（状态：{result.status}）。")
+            return EvolutionCommandResult(f"Proposal {record.public_id} 已拒绝（状态：{result.status}）。")
         finally:
             connection.close()
 
