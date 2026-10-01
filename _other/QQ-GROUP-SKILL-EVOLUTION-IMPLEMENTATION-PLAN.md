@@ -589,6 +589,8 @@ M12 的目标是把“安全且重复”改为“安全、重复、可解释且�
 
 既有 `proposal-edf57cea0284`、`proposal-eb8e9e7a640e`、`proposal-c77a36aabeb0` 已按管理员明确授权拒绝：私有 Overlay Draft PR #9、#8、#7 已关闭，Proposal 状态为 `rejected_by_admin`，拒绝原因记录为“候选仅包含框架运行事件，缺少可复用业务语义”。未发布、未部署、未删除远端分支，也未影响当前 Gateway。
 
+本轮实施与验收记录（2026-10-01）：首版 M12 已提交 `39dbe54e` 并部署到长期 Gateway（构建 `git-39dbe54e046f`）。`tests/memory` 为 135 passed，AgentLoop 聚焦测试为 54 passed；排除仓库既有交互式 shell 会话挂起用例后，全量回归为 5459 passed、18 skipped、1 deselected，相关 `ruff check` 与 `git diff --check` 均通过。新 WebUI 只读场景 Trace `01a0f88c-c330-7675-a684-8588399421b1` 因没有实际经过验证的工具操作而记录为 `insufficient_semantic_evidence`，未创建 Proposal、Draft PR 或 QQ 通知，符合门禁预期。用户明确要求保持自动扫描与通知开启；后续以真实业务使用观察第一条候选，不人为制造候选或发布。
+
 #### M12 需要用户确认的产品取舍
 
 1. 默认采用“至少 3 次、至少来自 2 个独立 turn”的重复证据；同一 turn 内的重试/子步骤不计次数。若你希望更保守，可改为至少 3 个不同日期或会话。
