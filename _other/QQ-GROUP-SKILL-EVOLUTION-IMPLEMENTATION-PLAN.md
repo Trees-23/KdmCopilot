@@ -501,6 +501,7 @@ workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → �
 - [x] M10-B-2：由 3 次重复 Trace 生成隔离 staging Skill revision、3-case EvalPack、只读确定性 Replay 和独立 Gate；Gate 通过后持久化 `git_pr_proposal`，当前 Skill 指针保持不变；重复每日扫描幂等去重。
 - [x] M10-B-3：把私有 Overlay Draft PR 创建、CI 回写和 QQ 投递器作为 Gateway 运行态适配器注入受保护 Cron；未注入适配器时只保留 Proposal，不得伪造 PR/CI/通知成功。
 - [x] M10-B-4：修复定时评审只读取空 `trace_index` 的问题；每次生产 Cron 扫描前先从提交后的 Audit 根目录增量索引 Trace，再执行低风险候选选择。2026-09-29 核对到此前已有 135 条 Audit Trace 未进入索引，已补齐索引入口和聚焦测试。
+- [ ] M10-B-5：失败可感知与安全恢复。Overlay checkout 自动使用仓库级机器人 Git 身份；仅在分支、暂存路径和候选 hash 全部匹配时恢复失败的系统候选；Draft PR handoff 和扫描/初始化失败进入独立的持久化 QQ 告警队列。代码与聚焦测试已完成，待长期 Gateway 重建后进行真实群投递、残骸恢复和重试验收。
 - [x] 每周输出候选数量、Gate 通过率、通知失败率、管理员拒绝率、采用/回滚率和误报原因；周报只读取 Proposal/Delivery/Action 元数据，不读取模型原文或凭据。
 - [x] 超过阈值自动暂停 Phase 6，并通过注入式通知适配器向管理员发送暂停原因；暂停状态持久化且不会自动恢复。
 - [x] 提供定期复审检查：群白名单、管理员名单、Overlay 配置、配额和 kill switch 的不一致会形成明确 finding；Skill 白名单仍需按运营周期人工确认。
@@ -527,6 +528,8 @@ M10-B-3 真实隔离验收：运行态使用私有 Overlay `Trees-23/KdmCopilot-
 | workspace 回滚 | 恢复已知 revision，下一 turn 生效 | CAS、落盘 hash、审计 |
 | shared Skill 批准 | 仅创建 Draft PR | PR 状态，无合并/部署 |
 | 发布确认 | CI 成功后按既有流程部署 | Git、PR、Gateway build、真实群场景 Trace |
+| Overlay 提交/扫描失败 | 不创建 PR、不改生效 Skill；QQ 收到脱敏中文异常告警；投递失败可重试且可审计 | Proposal、`phase6_alert_deliveries`、群消息、Overlay 状态 |
+| 遗留系统候选 | 只恢复已验证的系统生成暂存文件，拒绝处理任意用户改动；下一次扫描可安全重试 | 分支/路径/hash 比对、恢复审计、后续 Draft PR 或异常告警 |
 | 群隔离 | A 群不能查询/批准 B 群 Proposal | 群 scope、命令拒绝、检索审计 |
 
 涉及 QQ、审计、Agent 流程、持久化和用户可见行为的里程碑，除聚焦 `pytest`/`ruff` 外，都必须在长期 Gateway 的全新 WebUI 会话和一个明确授权的 QQ 测试群完成真实场景验收。场景不得使用真实生产 Skill、长期记忆或凭据作为测试对象。
