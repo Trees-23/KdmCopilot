@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import sqlite3
 import subprocess
@@ -101,9 +102,16 @@ class GitHubOverlayClient:
         )
 
     def _gh(self, *args: str) -> subprocess.CompletedProcess[str]:
+        env = os.environ.copy()
+        env["GH_PROMPT_DISABLED"] = "1"
+        # Compose deliberately exposes the credential under the project-scoped
+        # name.  The GitHub CLI only honours GH_TOKEN/GITHUB_TOKEN, so map it
+        # for this subprocess without persisting or logging its value.
+        if env.get("GITHUB_PERSONAL_ACCESS_TOKEN") and not env.get("GH_TOKEN"):
+            env["GH_TOKEN"] = env["GITHUB_PERSONAL_ACCESS_TOKEN"]
         return self.run(
             ["gh", *args], cwd=self.repo_path, check=False, capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True, encoding="utf-8", errors="replace", env=env,
         )
 
     def _verify_repository(self) -> None:

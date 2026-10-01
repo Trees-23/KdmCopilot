@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from types import SimpleNamespace
 
@@ -70,6 +71,29 @@ def test_private_overlay_client_requires_matching_origin(tmp_path):
         "SELECT status FROM skill_proposals WHERE proposal_id=?", ("prop-shared-test",)
     ).fetchone()[0] == "approved"
     connection.close()
+
+
+def test_private_overlay_client_maps_project_token_to_gh_token(tmp_path, monkeypatch):
+    monkeypatch.setenv("GITHUB_PERSONAL_ACCESS_TOKEN", "test-project-token")
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    captured = {}
+
+    def run(command, **kwargs):
+        captured["command"] = command
+        captured["env"] = kwargs["env"]
+        return _gh_result("")
+
+    client = GitHubOverlayClient(
+        tmp_path,
+        repository="Trees-23/KdmCopilot-skills-private",
+        run=run,
+    )
+    client._gh("auth", "status")
+
+    assert captured["command"] == ["gh", "auth", "status"]
+    assert captured["env"]["GH_TOKEN"] == "test-project-token"
+    assert captured["env"]["GH_PROMPT_DISABLED"] == "1"
+    assert os.environ["GITHUB_PERSONAL_ACCESS_TOKEN"] == "test-project-token"
 
 
 def test_private_overlay_client_ci_projection_only_notifies_after_success(tmp_path):

@@ -24,6 +24,16 @@ _AUTOMATION_GIT_NAME = "nanobot Skill Evolution"
 _AUTOMATION_GIT_EMAIL = "nanobot-skill-evolution@users.noreply.github.com"
 
 
+def _automation_env() -> dict[str, str]:
+    """Return the non-persistent environment for protected GitHub commands."""
+
+    env = os.environ.copy()
+    env["GH_PROMPT_DISABLED"] = "1"
+    if env.get("GITHUB_PERSONAL_ACCESS_TOKEN") and not env.get("GH_TOKEN"):
+        env["GH_TOKEN"] = env["GITHUB_PERSONAL_ACCESS_TOKEN"]
+    return env
+
+
 def _evolution(config: Any) -> Any:
     return getattr(config, "evolution", config)
 
@@ -40,7 +50,7 @@ def _run(
         check=bool(kwargs.pop("check", False)),
         capture_output=bool(kwargs.pop("capture_output", True)),
         text=bool(kwargs.pop("text", True)),
-        env={**os.environ, "GH_PROMPT_DISABLED": "1"},
+        env=_automation_env(),
         **kwargs,
     )
 
@@ -69,7 +79,7 @@ def ensure_overlay_checkout(
             check=False,
             capture_output=True,
             text=True,
-            env={**os.environ, "GH_PROMPT_DISABLED": "1"},
+            env=_automation_env(),
         )
         if cloned.returncode != 0:
             detail = (cloned.stderr or cloned.stdout or "Overlay clone failed").strip()[:300]
@@ -111,6 +121,95 @@ def _content_hash(value: str) -> str:
     return "sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def _reclaim_clean_failed_overlay_branches(
+    connection: Any,
+    checkout: Path,
+    *,
+    workspace: str | Path,
+    base_branch: str,
+    run: _RUN,
+) -> bool:
+    """Remove only verified local branches left by a failed remote handoff.
+
+    ``create_draft_pr`` writes its local commit before it talks to GitHub.  If
+    authentication fails at that boundary, the dedicated branch contains no
+    user work but would block an idempotent retry.  This collector requires
+    every changed file in each branch to match a failed, Gate-passed candidate
+    byte-for-byte and refuses remote branches.  It never removes a branch
+    containing any other file or a user-created branch.
+    """
+
+    candidates = connection.execute(
+        "SELECT proposal_id,skill_name,candidate_hash FROM skill_proposals "
+        "WHERE workspace=? AND target='git_pr_proposal' AND status='failed' AND gate_result='passed'",
+        (str(Path(workspace).expanduser().resolve()),),
+    ).fetchall()
+    by_branch = {
+        _branch_name(str(proposal_id)): (f"skills/{skill_name}/SKILL.md", str(candidate_hash))
+        for proposal_id, skill_name, candidate_hash in candidates
+    }
+    by_path = {path: content_hash for path, content_hash in by_branch.values()}
+    if not by_branch:
+        return False
+
+    base_tip = run(["git", "rev-parse", base_branch], cwd=checkout, check=False,
+                   capture_output=True, text=True)
+    current = run(["git", "branch", "--show-current"], cwd=checkout, check=False,
+                  capture_output=True, text=True)
+    if base_tip.returncode != 0 or current.returncode != 0:
+        raise RuntimeError("Overlay checkout branch state cannot be read")
+    removable: list[str] = []
+    for branch, (expected_path, _expected_hash) in sorted(by_branch.items()):
+        exists = run(["git", "show-ref", "--verify", f"refs/heads/{branch}"], cwd=checkout,
+                     check=False, capture_output=True, text=True)
+        if exists.returncode != 0:
+            continue
+        remote = run(["git", "ls-remote", "--heads", "origin", branch], cwd=checkout,
+                     check=False, capture_output=True, text=True)
+        if remote.returncode != 0:
+            raise RuntimeError("Overlay remote branch state cannot be verified")
+        if remote.stdout.strip():
+            continue
+        changed = run(["git", "diff", "--name-only", f"{base_branch}...{branch}"], cwd=checkout,
+                      check=False, capture_output=True, text=True)
+        if changed.returncode != 0:
+            raise RuntimeError("Overlay branch diff cannot be read")
+        paths = [item for item in changed.stdout.splitlines() if item.strip()]
+        if not paths:
+            tip = run(["git", "rev-parse", branch], cwd=checkout, check=False,
+                      capture_output=True, text=True)
+            if tip.returncode == 0 and tip.stdout.strip() == base_tip.stdout.strip():
+                removable.append(branch)
+            continue
+        if expected_path not in paths or any(path not in by_path for path in paths):
+            continue
+        verified = True
+        for path in paths:
+            content = run(["git", "show", f"{branch}:{path}"], cwd=checkout, check=False,
+                          capture_output=True, text=True)
+            if content.returncode != 0 or _content_hash(content.stdout) != by_path[path]:
+                verified = False
+                break
+        if verified:
+            removable.append(branch)
+    if not removable:
+        return False
+    active = current.stdout.strip()
+    if active != base_branch:
+        if active not in removable:
+            raise RuntimeError("Overlay checkout is on an unverified branch; refusing automatic recovery")
+        switched = run(["git", "switch", base_branch], cwd=checkout, check=False,
+                       capture_output=True, text=True)
+        if switched.returncode != 0:
+            raise RuntimeError("Overlay base branch recovery failed")
+    for branch in removable:
+        deleted = run(["git", "branch", "-D", "--", branch], cwd=checkout, check=False,
+                      capture_output=True, text=True)
+        if deleted.returncode != 0:
+            raise RuntimeError("Verified Overlay branch recovery failed")
+    return True
+
+
 def recover_abandoned_overlay_candidate(
     connection: Any,
     checkout_path: str | Path,
@@ -140,7 +239,13 @@ def recover_abandoned_overlay_candidate(
         raise RuntimeError("Overlay checkout status cannot be read")
     rows = [line for line in status.stdout.splitlines() if line.strip()]
     if not rows:
-        return False
+        return _reclaim_clean_failed_overlay_branches(
+            connection,
+            checkout,
+            workspace=workspace,
+            base_branch=base_branch,
+            run=run,
+        )
     if len(rows) != 1 or not rows[0].startswith("A  skills/"):
         raise RuntimeError("Overlay checkout has unrecognized changes; refusing automatic recovery")
     relative = rows[0][3:]
