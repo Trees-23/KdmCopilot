@@ -501,7 +501,7 @@ workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → �
 - [x] M10-B-2：由 3 次重复 Trace 生成隔离 staging Skill revision、3-case EvalPack、只读确定性 Replay 和独立 Gate；Gate 通过后持久化 `git_pr_proposal`，当前 Skill 指针保持不变；重复每日扫描幂等去重。
 - [x] M10-B-3：把私有 Overlay Draft PR 创建、CI 回写和 QQ 投递器作为 Gateway 运行态适配器注入受保护 Cron；未注入适配器时只保留 Proposal，不得伪造 PR/CI/通知成功。
 - [x] M10-B-4：修复定时评审只读取空 `trace_index` 的问题；每次生产 Cron 扫描前先从提交后的 Audit 根目录增量索引 Trace，再执行低风险候选选择。2026-09-29 核对到此前已有 135 条 Audit Trace 未进入索引，已补齐索引入口和聚焦测试。
-- [ ] M10-B-5：失败可感知与安全恢复。Overlay checkout 自动使用仓库级机器人 Git 身份；仅在分支、暂存路径和候选 hash 全部匹配时恢复失败的系统候选；Draft PR handoff 和扫描/初始化失败进入独立的持久化 QQ 告警队列。代码与聚焦测试已完成，待长期 Gateway 重建后进行真实群投递、残骸恢复和重试验收。
+- [x] M10-B-5：失败可感知与安全恢复。Overlay checkout 自动使用仓库级机器人 Git 身份；仅在分支、暂存路径和候选 hash 全部匹配时恢复失败的系统候选；Draft PR handoff、CI 核验和扫描/初始化失败进入独立的持久化 QQ 告警队列。2026-10-01 已在长期 Gateway 真实恢复 3 条失败 Proposal 的暂存/专用分支，重建私有 Draft PR #7～#9，`validate` CI 全部通过；3 条异常告警和 3 条发布候选通知均为 QQ `sent`，未合并、未发布、未写入当前生效 Skill。
 - [x] 每周输出候选数量、Gate 通过率、通知失败率、管理员拒绝率、采用/回滚率和误报原因；周报只读取 Proposal/Delivery/Action 元数据，不读取模型原文或凭据。
 - [x] 超过阈值自动暂停 Phase 6，并通过注入式通知适配器向管理员发送暂停原因；暂停状态持久化且不会自动恢复。
 - [x] 提供定期复审检查：群白名单、管理员名单、Overlay 配置、配额和 kill switch 的不一致会形成明确 finding；Skill 白名单仍需按运营周期人工确认。
@@ -572,6 +572,12 @@ Agent turn 保持已经构建好的旧 Context；下一轮 turn 的 `SkillsLoade
 
 如果未来修改的是 Python 代码、依赖、Docker 镜像或 Skill 加载器本身，仍然需要按
 代码部署流程重建 Gateway；“热加载”只覆盖个人 Overlay 的 Markdown Skill 内容。
+
+个人 Overlay 的 Git/GitHub 子进程可从忽略的本地 `.env` 读取
+`NANOBOT_GITHUB_PROXY_URL`，仅用于访问 GitHub；Token 仍只经受控环境变量临时传给
+子进程，不进入 Git URL、提交、Proposal 或 QQ。若 WSL 网络重建导致 Windows 主机地址变化，
+Draft PR/CI 核验会留下可重试审计并向 QQ 发送异常告警；更新该本地代理地址后，下一次受保护
+扫描会安全重试，不能静默卡住。
 
 ### 12.3 Gateway 重启与连接恢复说明
 
