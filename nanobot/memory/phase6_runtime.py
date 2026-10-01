@@ -28,14 +28,20 @@ def _evolution(config: Any) -> Any:
     return getattr(config, "evolution", config)
 
 
-def _run(command: list[str], *, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+def _run(
+    command: list[str],
+    *,
+    cwd: Path | None = None,
+    **kwargs: Any,
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         command,
         cwd=cwd,
-        check=False,
-        capture_output=True,
-        text=True,
+        check=bool(kwargs.pop("check", False)),
+        capture_output=bool(kwargs.pop("capture_output", True)),
+        text=bool(kwargs.pop("text", True)),
         env={**os.environ, "GH_PROMPT_DISABLED": "1"},
+        **kwargs,
     )
 
 
