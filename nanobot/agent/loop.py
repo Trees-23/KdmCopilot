@@ -2272,7 +2272,6 @@ class AgentLoop:
             or ctx.original_user_text is None
             or ctx.audit_turn is None
             or ctx.audit_run is None
-            or ctx.stop_reason in {"error", "tool_error"}
         ):
             return
         workspace = (
@@ -2284,18 +2283,44 @@ class AgentLoop:
         try:
             from nanobot.memory.db import connect_memory_db
             from nanobot.memory.migrations.runner import apply_migrations
+            from nanobot.memory.recovery_evidence import (
+                link_successful_correction,
+                record_failed_episode,
+            )
             from nanobot.memory.semantic_evidence import persist_turn_semantic_evidence
 
-            connection = connect_memory_db(workspace)
+            resolved_workspace = str(Path(workspace).expanduser().resolve())
+            connection = connect_memory_db(resolved_workspace)
             apply_migrations(connection)
+            if ctx.stop_reason in {"error", "tool_error"}:
+                record_failed_episode(
+                    connection,
+                    workspace=resolved_workspace,
+                    trace_id=ctx.audit_turn.trace_id,
+                    session_key=ctx.session_key,
+                    source_type=ctx.audit_run.source_type,
+                    stop_reason=ctx.stop_reason,
+                    user_text=ctx.original_user_text,
+                    tools=ctx.tools_used,
+                )
+                return
             persist_turn_semantic_evidence(
                 connection,
-                workspace=str(Path(workspace).expanduser().resolve()),
+                workspace=resolved_workspace,
                 trace_id=ctx.audit_turn.trace_id,
                 turn_id=ctx.audit_turn.turn_id,
                 session_key=ctx.session_key,
                 source_type=ctx.audit_run.source_type,
                 outcome="success",
+                user_text=ctx.original_user_text,
+                tools=ctx.tools_used,
+            )
+            link_successful_correction(
+                connection,
+                workspace=resolved_workspace,
+                trace_id=ctx.audit_turn.trace_id,
+                session_key=ctx.session_key,
+                source_type=ctx.audit_run.source_type,
                 user_text=ctx.original_user_text,
                 tools=ctx.tools_used,
             )

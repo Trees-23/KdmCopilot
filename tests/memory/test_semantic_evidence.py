@@ -91,3 +91,33 @@ def test_agent_loop_captures_only_successful_user_semantic_evidence(tmp_path) ->
     ).fetchone()
     assert tuple(row) == ("请查看当前工作区有哪些可用 Skill，并按名称列出", "eligible")
     connection.close()
+
+
+def test_agent_loop_records_a_safe_recovery_failure_without_creating_semantic_evidence(tmp_path) -> None:
+    loop = AgentLoop.__new__(AgentLoop)
+    loop.workspace = str(tmp_path)
+    loop.phase6_config = SimpleNamespace(enabled=True)
+    context = SimpleNamespace(
+        kind=TurnKind.USER,
+        original_user_text="请查看当前工作区有哪些可用 Skill，token=secret-value",
+        audit_turn=SimpleNamespace(trace_id="trace-loop-failed", turn_id="turn-loop-failed"),
+        audit_run=SimpleNamespace(source_type="user"),
+        stop_reason="tool_error",
+        request_context=None,
+        session_key="session-loop-failed",
+        tools_used=["skill_read"],
+    )
+
+    loop._capture_semantic_evolution_evidence(context)
+
+    connection = connect_memory_db(tmp_path)
+    apply_migrations(connection)
+    assert connection.execute(
+        "SELECT count(*) FROM semantic_task_evidence WHERE trace_id='trace-loop-failed'"
+    ).fetchone()[0] == 0
+    row = connection.execute(
+        "SELECT status,failure_goal FROM recovery_episodes WHERE failure_trace_id='trace-loop-failed'"
+    ).fetchone()
+    assert row[0] == "failed"
+    assert "secret-value" not in row[1]
+    connection.close()

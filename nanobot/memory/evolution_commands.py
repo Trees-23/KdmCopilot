@@ -210,6 +210,8 @@ class EvolutionCommandService:
             "/evolve list publish\n查看已建 Draft PR、等待最终发布确认的候选\n\n"
 
             "/evolve list rejected | failed\n查看已拒绝/质量拦截或失败的记录\n\n"
+
+            "/evolve recovery\n查看已通过质量门禁的恢复案例（不会自动生成 Skill）\n\n"
             "/evolve list recent\n查看最近的 Proposal\n\n"
             "/evolve overlay\n查看私有 Overlay 中的候选 Skill\n\n"
             "/evolve overlay <Skill 名称>\n查看候选 Skill 正文（仅审批管理员）\n\n"
@@ -376,6 +378,8 @@ class EvolutionCommandService:
             return self.handle("list publish", metadata=metadata)
         if any(word in value for word in ("拒绝", "拦截")):
             return self.handle("list rejected", metadata=metadata)
+        if any(word in value for word in ("恢复案例", "恢复经验", "怎么修复过")):
+            return self.handle("recovery", metadata=metadata)
         if any(word in value for word in ("失败", "报错", "异常")):
             return self.handle("list failed", metadata=metadata)
         if any(word in value for word in ("待确认", "待审核", "待批准", "待审阅", "沉淀")):
@@ -390,9 +394,9 @@ class EvolutionCommandService:
     def handle(self, args: str, *, metadata: Mapping[str, Any]) -> EvolutionCommandResult:
         tokens = args.strip().split(maxsplit=3)
         action = tokens[0].lower() if tokens else "status"
-        if action not in {"status", "list", "menu", "help", "commands", "enum", "overlay", "review", "approve", "reject", "rollback", "publish"}:
+        if action not in {"status", "list", "menu", "help", "commands", "enum", "overlay", "recovery", "review", "approve", "reject", "rollback", "publish"}:
             return EvolutionCommandResult(
-                "用法：/evolve menu | status | list [pending|review|publish|rejected|failed|recent] | overlay [skill-name] | review <proposal-id> | "
+                "用法：/evolve menu | status | list [pending|review|publish|rejected|failed|recent] | overlay [skill-name] | recovery | review <proposal-id> | "
                 "approve <proposal-id> <code> | reject <proposal-id> <reason> | "
                 "rollback <proposal-id> <code> | publish <proposal-id> [code]"
             )
@@ -422,6 +426,23 @@ class EvolutionCommandService:
 
             if action == "overlay":
                 return self._overlay_command(tokens, actor=actor)
+
+            if action == "recovery":
+                from nanobot.memory.recovery_evidence import list_recovery_reviews
+
+                cards = list_recovery_reviews(connection, workspace=self.workspace)
+                if not cards:
+                    return EvolutionCommandResult("当前没有通过质量门禁的恢复案例。")
+                labels = {"passed": "可审阅", "insufficient_recovery_evidence": "证据不足"}
+                lines = ["恢复案例（仅记录经验，不会自动生成 Skill）："]
+                for card in cards:
+                    lines.extend([
+                        f"- 失败任务：{card['failure_goal']}",
+                        f"  失败类别：{card['failure_class']}；纠正方向：{card['correction_goal']}",
+                        f"  证据：{card['episode_count']} 个恢复 Episode；状态：{labels.get(str(card['status']), card['status'])}",
+                        f"  结论：{card['reason_text']}",
+                    ])
+                return EvolutionCommandResult("\n".join(lines))
 
             if action == "list":
                 mode = tokens[1].lower() if len(tokens) > 1 else "pending"

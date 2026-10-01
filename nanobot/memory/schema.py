@@ -5,8 +5,8 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-MIGRATION_VERSION = 6
-MIGRATION_ID = "0006_semantic_quality_gate"
+MIGRATION_VERSION = 7
+MIGRATION_ID = "0007_recovery_cases"
 APP_BUILD = "memory-phase1"
 
 MIGRATIONS_DIR = Path(__file__).with_name("migrations")
@@ -16,12 +16,13 @@ DELIVERY_PAYLOAD_MIGRATION_PATH = MIGRATIONS_DIR / "0003_phase6_delivery_payload
 ALERT_DELIVERY_MIGRATION_PATH = MIGRATIONS_DIR / "0004_phase6_alert_deliveries.sql"
 PROPOSAL_REVIEW_MIGRATION_PATH = MIGRATIONS_DIR / "0005_proposal_review_details.sql"
 SEMANTIC_QUALITY_MIGRATION_PATH = MIGRATIONS_DIR / "0006_semantic_quality_gate.sql"
+RECOVERY_CASES_MIGRATION_PATH = MIGRATIONS_DIR / "0007_recovery_cases.sql"
 
 
 def migration_sql() -> str:
     """Return the checked-in latest migration SQL."""
 
-    return SEMANTIC_QUALITY_MIGRATION_PATH.read_text(encoding="utf-8")
+    return RECOVERY_CASES_MIGRATION_PATH.read_text(encoding="utf-8")
 
 
 def base_migration_sql() -> str:
@@ -70,6 +71,8 @@ REQUIRED_TABLES = frozenset(
         "eval_cases",
         "semantic_task_evidence",
         "semantic_quality_reviews",
+        "recovery_episodes",
+        "recovery_case_reviews",
     }
 )
 
@@ -77,6 +80,6 @@ BASE_REQUIRED_TABLES = REQUIRED_TABLES - frozenset(
     {
         "skill_proposals", "proposal_deliveries", "proposal_actions", "group_memory_scopes",
         "phase6_alert_deliveries", "eval_cases", "semantic_task_evidence",
-        "semantic_quality_reviews",
+        "semantic_quality_reviews", "recovery_episodes", "recovery_case_reviews",
     }
 )

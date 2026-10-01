@@ -122,6 +122,11 @@ def run_phase6_review_scan(
         )
 
         semantic_records = load_semantic_candidate_records(connection, str(root))
+        # Recovery lessons are a separate M13 path.  They create only
+        # redacted Case-review metadata and can never create a Skill or PR.
+        from nanobot.memory.recovery_evidence import review_recovery_episodes
+
+        review_recovery_episodes(connection, workspace=str(root))
         cycle = run_cycle(
             connection,
             root,
