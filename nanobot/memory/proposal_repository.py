@@ -434,6 +434,53 @@ class ProposalRepository:
             now=now,
         )
 
+    def requeue_failed_overlay_handoff(self, proposal_id: str, *, workspace: str) -> bool:
+        """Resume one previously automatic-gated Overlay handoff after repair.
+
+        The candidate is neither recreated nor re-evaluated.  This narrow path
+        only changes a failed private-Overlay handoff whose recorded Gate
+        already passed and whose automatic Gate action is present.
+        """
+        current = self.get(proposal_id)
+        if current is None or current.workspace != workspace:
+            return False
+        if current.target != "git_pr_proposal" or current.status != "failed" or current.gate_result != "passed":
+            return False
+        approved = self.connection.execute(
+            "SELECT 1 FROM proposal_actions WHERE proposal_id=? AND action='automatic_gate_approval' "
+            "AND result_status IN ('approved','idempotent') LIMIT 1",
+            (proposal_id,),
+        ).fetchone()
+        if approved is None:
+            return False
+        timestamp = _iso()
+        self.connection.execute("BEGIN IMMEDIATE")
+        try:
+            updated = self.connection.execute(
+                "UPDATE skill_proposals SET status='approved',version_epoch=version_epoch+1,updated_at=? "
+                "WHERE proposal_id=? AND status='failed' AND gate_result='passed'",
+                (timestamp, proposal_id),
+            )
+            if updated.rowcount != 1:
+                self.connection.rollback()
+                return False
+            self.connection.commit()
+        except Exception:
+            self.connection.rollback()
+            raise
+        self._record_action(
+            proposal_id=proposal_id,
+            workspace=workspace,
+            action="retry_overlay_handoff",
+            actor_openid="phase6-recovery",
+            group_openid=None,
+            idempotency_key=f"retry-overlay:{proposal_id}:{current.version_epoch}",
+            request_digest=_digest({"proposal_id": proposal_id, "previous_status": "failed"}),
+            result_status="requeued",
+            result={"status": "approved"},
+        )
+        return True
+
     def reject(
         self,
         proposal_id: str,

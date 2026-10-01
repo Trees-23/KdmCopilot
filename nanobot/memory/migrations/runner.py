@@ -149,9 +149,12 @@ def apply_migrations(
         apply_one(1, "0001_memory_base", sql, BASE_REQUIRED_TABLES)
         return
     apply_one(1, "0001_memory_base", base_migration_sql(), BASE_REQUIRED_TABLES)
-    # Keep each migration immutable.  Version 2 creates the Proposal tables;
-    # version 3 adds durable notification payloads for restart-safe delivery.
-    apply_one(2, "0002_phase6_proposals", phase6_migration_sql(), REQUIRED_TABLES)
+    # Keep each migration immutable.  Version 2 creates Proposal tables;
+    # version 3 adds durable notification payloads; version 4 adds a separate
+    # durable alert outbox for pipeline failures that have no publish candidate.
+    phase6_required = REQUIRED_TABLES - {"phase6_alert_deliveries"}
+    apply_one(2, "0002_phase6_proposals", phase6_migration_sql(), phase6_required)
+    apply_one(3, "0003_phase6_delivery_payload", DELIVERY_PAYLOAD_MIGRATION_PATH.read_text(encoding="utf-8"), REQUIRED_TABLES - {"phase6_alert_deliveries"})
     apply_one(MIGRATION_VERSION, MIGRATION_ID, migration_sql(), REQUIRED_TABLES)
     verify_schema(connection, schema_hash(migration_sql()))
 

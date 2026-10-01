@@ -72,6 +72,7 @@ def run_phase6_review_scan(
     overlay_pipeline: Any | None = None,
     overlay_pipeline_factory: Any | None = None,
     notify_proposal: Any | None = None,
+    notify_error: Any | None = None,
 ) -> Any:
     """Run the production Trace → Candidate → Gate → Proposal scan.
 
@@ -108,6 +109,11 @@ def run_phase6_review_scan(
                     ),
                     runtime,
                 )
+                if notify_error is not None:
+                    try:
+                        notify_error(str(exc)[:300])
+                    except Exception:
+                        pass
         cycle = run_cycle(
             connection,
             root,
@@ -115,25 +121,28 @@ def run_phase6_review_scan(
             trace_records=load_trace_records(connection),
             failed_traces=load_failed_trace_records(connection),
         )
-        if cycle.status != "completed" or not cycle.selected_tasks:
+        if cycle.status != "completed":
             return cycle
-        from nanobot.memory.phase6_candidates import build_candidate_specs
+        result = cycle
+        if cycle.selected_tasks:
+            from nanobot.memory.phase6_candidates import build_candidate_specs
 
-        built = build_candidate_specs(
-            connection,
-            cycle.selected_tasks,
-            min_repeat_count=runtime.min_repeat_count,
-        )
-        result = run_fixture_review_cycle(
-            connection,
-            root,
-            runtime,
-            trace_records=load_trace_records(connection),
-            candidate_specs=built.specs,
-            failed_traces=(),
-            overlay_pipeline=overlay_pipeline,
-        )
+            built = build_candidate_specs(
+                connection,
+                cycle.selected_tasks,
+                min_repeat_count=runtime.min_repeat_count,
+            )
+            result = run_fixture_review_cycle(
+                connection,
+                root,
+                runtime,
+                trace_records=load_trace_records(connection),
+                candidate_specs=built.specs,
+                failed_traces=(),
+                overlay_pipeline=overlay_pipeline,
+            )
         if overlay_pipeline is not None:
+            overlay_pipeline.retry_failed_handoffs(connection, config)
             # Draft PR creation and CI are separate phases. Poll existing
             # Proposal rows once per scheduled run; the pipeline records an
             # idempotent notification only after all checks pass.
@@ -143,10 +152,19 @@ def run_phase6_review_scan(
                 (str(root),),
             ).fetchall():
                 overlay_pipeline.refresh_ci_and_notify(connection, str(row[0]))
-        if notify_proposal is not None:
+        if notify_proposal is not None and hasattr(result, "proposal_ids"):
             for proposal_id in result.proposal_ids:
                 notify_proposal(proposal_id)
         return result
+    except Exception as exc:
+        if notify_error is not None:
+            try:
+                notify_error(str(exc)[:300])
+            except Exception:
+                # A notification failure must not replace the original Cron
+                # failure in the scheduler's durable error record.
+                pass
+        raise
     finally:
         connection.close()
 

@@ -147,3 +147,35 @@ def test_ci_refresh_notifies_once_only_after_all_checks_pass(tmp_path):
         (proposal.proposal_id,),
     ).fetchone()[0] == 1
     connection.close()
+
+
+def test_failed_handoff_notifies_and_retries_without_a_second_gate(tmp_path):
+    workspace, connection = _setup(tmp_path)
+    repo = ProposalRepository(connection)
+    proposal = repo.create_proposal(
+        proposal_id="prop-retry", workspace=str(workspace), skill_id="skill-1", skill_name="demo",
+        source_kind="shared", target="git_pr_proposal", baseline_hash="sha256:base",
+        candidate_hash="sha256:candidate", status="eligible_for_confirmation",
+    )
+    failures: list[tuple[str, str]] = []
+    attempts = iter((SimpleNamespace(status="failed", reason="Author identity unknown"), SimpleNamespace(status="pr_created")))
+    pipeline = OverlayProposalPipeline(
+        str(workspace), create_draft_pr=lambda _proposal_id: next(attempts), notify_failure=lambda *args: failures.append(args)
+    )
+    config = Phase6RuntimeConfig(enabled=True, draft_pr_enabled=True)
+
+    first = pipeline.handoff(connection, proposal.proposal_id, config)
+    assert first.status == "failed"
+    assert failures == [(proposal.proposal_id, "Author identity unknown")]
+    retried = pipeline.retry_failed_handoffs(connection, config)
+    assert [item.status for item in retried] == ["pr_created"]
+    assert connection.execute("SELECT status FROM skill_proposals WHERE proposal_id=?", (proposal.proposal_id,)).fetchone()[0] == "approved"
+    assert connection.execute(
+        "SELECT COUNT(*) FROM proposal_actions WHERE proposal_id=? AND action='automatic_gate_approval'",
+        (proposal.proposal_id,),
+    ).fetchone()[0] == 1
+    assert connection.execute(
+        "SELECT result_status FROM proposal_actions WHERE proposal_id=? AND action='retry_overlay_handoff'",
+        (proposal.proposal_id,),
+    ).fetchone()[0] == "requeued"
+    connection.close()

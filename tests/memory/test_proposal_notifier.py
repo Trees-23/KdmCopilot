@@ -119,6 +119,21 @@ async def test_overlay_notifier_uses_publish_command_after_ci(tmp_path):
     assert "/evolve publish" in message.content
 
 
+@pytest.mark.asyncio
+async def test_notifier_persists_and_delivers_pipeline_failure_alert(tmp_path):
+    proposal_id = _seed_overlay(tmp_path)
+    bus = MessageBus()
+    notifier = ProposalNotifier(str(tmp_path), _config(), bus)
+
+    assert notifier.enqueue_pipeline_failure(proposal_id, "Author identity unknown") == 1
+    assert notifier.enqueue_pipeline_failure(proposal_id, "Author identity unknown") == 0
+    assert await notifier.deliver_alert_once() == "sent"
+    message = await bus.consume_outbound()
+    assert "【Skill 进化异常】" in message.content
+    assert "Git 提交身份未配置" in message.content
+    assert "Author identity unknown" not in message.content
+
+
 def test_notification_content_formats_expiry_in_beijing_time():
     record = SimpleNamespace(
         confirmation_expires_at="2026-09-27T05:25:47+00:00",

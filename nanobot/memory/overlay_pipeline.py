@@ -38,12 +38,24 @@ class OverlayProposalPipeline:
         *,
         create_draft_pr: Callable[[str], Any],
         notify_publish_candidate: Callable[[str], Any] | None = None,
+        notify_failure: Callable[[str, str], Any] | None = None,
         refresh_ci: Callable[[str], Any] | None = None,
     ) -> None:
         self.workspace = workspace
         self.create_draft_pr = create_draft_pr
         self.notify_publish_candidate = notify_publish_candidate
+        self.notify_failure = notify_failure
         self.refresh_ci = refresh_ci
+
+    def _notify_failure(self, proposal_id: str, reason: str | None) -> None:
+        if self.notify_failure is None:
+            return
+        try:
+            self.notify_failure(proposal_id, str(reason or "overlay handoff failed")[:300])
+        except Exception:
+            # The Proposal failure has already been persisted.  Alert enqueue
+            # failure must not hide it or alter the protected state machine.
+            return
 
     @staticmethod
     def _enabled(config: Any) -> bool:
@@ -78,7 +90,9 @@ class OverlayProposalPipeline:
                         new_status="failed",
                         reason=str(getattr(result, "reason", None) or result_status),
                     )
-                return OverlayHandoffResult("failed", proposal_id, getattr(result, "reason", None))
+                reason = str(getattr(result, "reason", None) or result_status)
+                self._notify_failure(proposal_id, reason)
+                return OverlayHandoffResult("failed", proposal_id, reason)
             # Local fixture adapters do not expose CI state and retain the
             # historical immediate notification behavior.  A real remote
             # adapter must explicitly report ``ci_passed=True`` so that the
@@ -94,7 +108,24 @@ class OverlayProposalPipeline:
                     repo.transition(proposal_id, expected_status=current.status, new_status="failed", reason=str(exc))
                 except (ProposalConflict, sqlite3.Error):
                     pass
-            return OverlayHandoffResult("failed", proposal_id, str(exc)[:300])
+            reason = str(exc)[:300]
+            self._notify_failure(proposal_id, reason)
+            return OverlayHandoffResult("failed", proposal_id, reason)
+
+    def retry_failed_handoffs(self, connection: sqlite3.Connection, config: Any) -> tuple[OverlayHandoffResult, ...]:
+        """Retry durable failed handoffs after a later safe runtime repair."""
+        repo = ProposalRepository(connection)
+        rows = connection.execute(
+            "SELECT proposal_id FROM skill_proposals WHERE workspace=? AND target='git_pr_proposal' "
+            "AND status='failed' AND gate_result='passed' ORDER BY updated_at LIMIT 20",
+            (self.workspace,),
+        ).fetchall()
+        outcomes: list[OverlayHandoffResult] = []
+        for row in rows:
+            proposal_id = str(row[0])
+            if repo.requeue_failed_overlay_handoff(proposal_id, workspace=self.workspace):
+                outcomes.append(self.handoff(connection, proposal_id, config))
+        return tuple(outcomes)
 
     def refresh_ci_and_notify(
         self,

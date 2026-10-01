@@ -1910,6 +1910,7 @@ def _run_gateway(
                         notifier=channels.proposal_notifier,
                     )
                 ),
+                notify_error=channels.proposal_notifier.enqueue_scan_failure,
             )
             logger.info("Phase 6 scheduled review completed: {}", getattr(result, "status", result))
             return str(getattr(result, "status", "completed"))

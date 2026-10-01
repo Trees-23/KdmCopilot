@@ -21,6 +21,10 @@ def _completed(args, *, cwd=None, **_kwargs):
         return subprocess.CompletedProcess(command, 0, "", "")
     if command[:3] == ["git", "branch", "--show-current"]:
         return subprocess.CompletedProcess(command, 0, "main\n", "")
+    if command[:4] == ["git", "config", "--local", "--get"]:
+        return subprocess.CompletedProcess(command, 1, "", "")
+    if command[:3] == ["git", "config", "--local"]:
+        return subprocess.CompletedProcess(command, 0, "", "")
     raise AssertionError(command)
 
 

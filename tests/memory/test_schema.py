@@ -73,6 +73,7 @@ def test_all_required_tables_and_schema_meta_are_applied() -> None:
         "tombstones",
         "retrieval_events",
         "memory_outbox",
+        "phase6_alert_deliveries",
         "schema_meta",
     } <= tables
     assert connection.execute("SELECT status FROM schema_meta WHERE version=1").fetchone()[0] == "applied"

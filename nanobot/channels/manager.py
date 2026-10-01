@@ -654,6 +654,7 @@ class ChannelManager:
             try:
                 if self.proposal_notifier._enabled():
                     await self.proposal_notifier.deliver_once(worker_id="gateway-proposal-notifier")
+                    await self.proposal_notifier.deliver_alert_once(worker_id="gateway-phase6-alerts")
                     await asyncio.sleep(1)
                 else:
                     # Keep the disabled path cheap and side-effect free.
