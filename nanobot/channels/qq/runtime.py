@@ -606,6 +606,14 @@ class QQChannel(BaseChannel):
                     "message_id": data.id,
                     "attachments": att_meta,
                     "qq_chat_type": chat_type,
+                    # Group events arrive through QQ's at-message callback,
+                    # so this is a deterministic signal for /evolve's
+                    # commandRequireMention gate.  Keep the identifiers in
+                    # transport metadata only; they are never persisted in
+                    # Proposal evidence.
+                    "group_openid": chat_id if is_group else None,
+                    "sender_openid": user_id,
+                    "qq_mentioned_bot": bool(is_group),
                 },
                 is_dm=not is_group,
             )

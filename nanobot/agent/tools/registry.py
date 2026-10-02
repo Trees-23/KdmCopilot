@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from nanobot.agent.tools.base import Tool, ToolResult
 from nanobot.agent.tools.context import ContextAware, current_request_context
+from nanobot.memory.policy import ToolPolicy, ToolPolicyError
 
 if TYPE_CHECKING:
     from nanobot.runtime_context import RuntimeContextProvider
@@ -26,6 +27,10 @@ class ToolRegistry:
     def __init__(self):
         self._tools: dict[str, Tool] = {}
         self._cached_definitions: list[dict[str, Any]] | None = None
+        self._tool_policy: ToolPolicy | None = None
+
+    def set_tool_policy(self, policy: ToolPolicy | None) -> None:
+        self._tool_policy = policy
 
     def register(self, tool: Tool) -> None:
         """Register a tool."""
@@ -127,6 +132,17 @@ class ToolRegistry:
                     retryability="non_retryable",
                 )
             )
+
+        if self._tool_policy is not None:
+            ctx = current_request_context()
+            role = str((ctx.metadata if ctx else {}).get("agent_role") or self._tool_policy.role)
+            try:
+                self._tool_policy.check(name, role=role)
+            except ToolPolicyError as exc:
+                return tool, params, ToolResult.error(
+                    f"Error: {exc}", error_type="PolicyError", error_code="policy_blocked",
+                    error_source="policy", retryability="non_retryable",
+                )
 
         # Compatibility for external tools that still implement the legacy
         # setter protocol. Built-ins read the authoritative ContextVar

@@ -67,6 +67,9 @@ from nanobot.bus.runtime_events import (
 from nanobot.command import CommandContext, CommandRouter, register_builtin_commands
 from nanobot.config.schema import AgentDefaults, ModelPresetConfig
 from nanobot.cron.session_turns import is_cron_turn
+from nanobot.memory.evolution_commands import EvolutionCommandService
+from nanobot.memory.maintenance import open_maintenance_db, upsert_activity
+from nanobot.memory.policy import ToolPolicy
 from nanobot.providers.base import LLMProvider
 from nanobot.providers.factory import ProviderSnapshot
 from nanobot.runtime_context import (
@@ -333,6 +336,8 @@ class AgentLoop:
         restart_mode: str = "auto",
         local_trigger_store: Any | None = None,
         audit_runtime: AuditRuntime | None = None,
+        phase6_config: Any | None = None,
+        publish_callbacks: Any | None = None,
     ):
         from nanobot.config.schema import ToolsConfig, _resolve_tool_config_refs
 
@@ -343,6 +348,14 @@ class AgentLoop:
         self.runtime_events = runtime_events or RuntimeEventBus()
         self.runtime_event_publisher = RuntimeEventPublisher(self.runtime_events)
         self.channels_config = channels_config
+        if phase6_config is None:
+            from nanobot.config.schema import Phase6Config
+
+            phase6_config = Phase6Config()
+        self.phase6_config = phase6_config
+        self.evolution_commands = EvolutionCommandService(
+            workspace, phase6_config, publish_callbacks=publish_callbacks
+        )
         self.restart_mode = restart_mode
         self._runtime_model_publisher = runtime_model_publisher
         self.workspace = workspace
@@ -367,6 +380,7 @@ class AgentLoop:
             provider_snapshot_loader=provider_snapshot_loader,
             preset_snapshot_loader=preset_snapshot_loader,
         )
+
         self.context_block_limit = context_block_limit
         self.max_tool_result_chars = (
             max_tool_result_chars
@@ -409,6 +423,7 @@ class AgentLoop:
         self.goal_orchestration = GoalOrchestrationStore(self.sessions)
         self.sessions.set_file_cap_archiver(self.context.memory.raw_archive)
         self.tools = ToolRegistry()
+        self.tools.set_tool_policy(ToolPolicy())
         # One file-read/write tracker per logical session. The tool registry is
         # shared by this loop, so tools resolve the active state via contextvars.
         self._file_state_store = FileStateStore()
@@ -519,6 +534,16 @@ class AgentLoop:
         self.commands = CommandRouter()
         register_builtin_commands(self.commands)
 
+    def refresh_phase6_config(self, phase6_config: Any) -> None:
+        """Apply Phase 6 governance changes to future turns without restart.
+
+        Skill publication remains separately gated; replacing this in-memory
+        reference only changes the next command/cycle's policy evaluation.
+        """
+
+        self.phase6_config = phase6_config
+        self.evolution_commands.config = phase6_config
+
     @classmethod
     def from_config(
         cls,
@@ -564,6 +589,26 @@ class AgentLoop:
             "child_audit_root",
             str(get_audit_dir(config.audit.path)),
         )
+        if "publish_callbacks" not in extra:
+            evolution = config.phase6.evolution
+            repository = getattr(evolution, "overlay_repository", None)
+            if repository:
+                from nanobot.memory.overlay_deployer import (
+                    OverlayGatewayDeployer,
+                    build_publish_callbacks,
+                )
+                from nanobot.memory.overlay_release import GitHubOverlayRelease
+
+                release = GitHubOverlayRelease(
+                    repository,
+                    base_branch=str(getattr(evolution, "overlay_base_branch", "main")),
+                )
+                deployer = OverlayGatewayDeployer(
+                    repository,
+                    project_root=Path(__file__).resolve().parents[2],
+                    workspace=config.workspace_path,
+                )
+                extra["publish_callbacks"] = build_publish_callbacks(release, deployer)
         return cls(
             bus=bus,
             provider=provider,
@@ -600,6 +645,7 @@ class AgentLoop:
             restart_mode=config.gateway.restart_mode,
             provider_snapshot_loader=provider_snapshot_loader,
             preset_snapshot_loader=preset_snapshot_loader,
+            phase6_config=config.phase6,
             **extra,
         )
 
@@ -824,6 +870,9 @@ class AgentLoop:
             include_memory_recent_history=not ctx.ephemeral,
             session_key=ctx.session.key,
             unified_session=self._unified_session,
+            trace_id=ctx.audit_turn.trace_id if ctx.audit_turn else None,
+            turn_id=ctx.audit_turn.turn_id if ctx.audit_turn else None,
+            context_window_tokens=ctx.runtime.context_window_tokens,
         )
 
     def _request_context_for_turn(self, ctx: TurnContext) -> RequestContext:
@@ -1926,6 +1975,18 @@ class AgentLoop:
         if ctx.session is None:
             ctx.session = self.sessions.get_or_create(ctx.session_key)
         if ctx.kind is TurnKind.USER:
+            try:
+                scope = self.workspace_scopes.for_message(msg, ctx.session.metadata)
+                connection = open_maintenance_db(scope.project_path or self.workspace)
+                upsert_activity(
+                    connection,
+                    workspace=str((scope.project_path or self.workspace).resolve()),
+                    session_key=ctx.session_key,
+                    message_cursor=str(msg.metadata.get("message_id") or ctx.turn_id),
+                )
+                connection.close()
+            except Exception:
+                logger.warning("Failed to upsert maintenance activity", exc_info=True)
             if (
                 msg.sender_id != "subagent"
                 and not turn_continuation.internal_continuation_inbound(msg.metadata)
@@ -1988,7 +2049,21 @@ class AgentLoop:
             is_user_turn=is_user_turn,
             turn_scopes=ctx.turn_scopes,
         )
-        result = await self.commands.dispatch(cmd_ctx)
+        result = None
+        if not raw.startswith("/"):
+            natural = self.evolution_commands.handle_natural_query(
+                raw,
+                metadata={**dict(ctx.msg.metadata or {}), "chat_id": ctx.msg.chat_id, "sender_id": ctx.msg.sender_id},
+            )
+            if natural is not None:
+                result = OutboundMessage(
+                    channel=ctx.route.channel,
+                    chat_id=ctx.route.chat_id,
+                    content=natural.content,
+                    metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
+                )
+        if result is None:
+            result = await self.commands.dispatch(cmd_ctx)
         if result is not None:
             ctx.outbound = result
             # Shortcut commands skip BUILD and SAVE, so we must persist the
@@ -2178,7 +2253,82 @@ class AgentLoop:
                 run=ctx.audit_run,
                 reason="turn_completed",
             )
+        self._capture_semantic_evolution_evidence(ctx)
         return "ok"
+
+    def _capture_semantic_evolution_evidence(self, ctx: TurnContext) -> None:
+        """Persist a bounded semantic projection after a successful user turn.
+
+        This is deliberately best-effort telemetry: failure to write an
+        evolution candidate must never change a normal user response.  The
+        projector itself stores no raw transcript and rejects commands,
+        framework/internal turns and unverified no-tool tasks.
+        """
+
+        if not bool(getattr(self.phase6_config, "enabled", False)):
+            return
+        if (
+            ctx.kind is not TurnKind.USER
+            or ctx.original_user_text is None
+            or ctx.audit_turn is None
+            or ctx.audit_run is None
+        ):
+            return
+        workspace = (
+            str(ctx.request_context.workspace)
+            if ctx.request_context is not None and ctx.request_context.workspace
+            else self.workspace
+        )
+        connection = None
+        try:
+            from nanobot.memory.db import connect_memory_db
+            from nanobot.memory.migrations.runner import apply_migrations
+            from nanobot.memory.recovery_evidence import (
+                link_successful_correction,
+                record_failed_episode,
+            )
+            from nanobot.memory.semantic_evidence import persist_turn_semantic_evidence
+
+            resolved_workspace = str(Path(workspace).expanduser().resolve())
+            connection = connect_memory_db(resolved_workspace)
+            apply_migrations(connection)
+            if ctx.stop_reason in {"error", "tool_error"}:
+                record_failed_episode(
+                    connection,
+                    workspace=resolved_workspace,
+                    trace_id=ctx.audit_turn.trace_id,
+                    session_key=ctx.session_key,
+                    source_type=ctx.audit_run.source_type,
+                    stop_reason=ctx.stop_reason,
+                    user_text=ctx.original_user_text,
+                    tools=ctx.tools_used,
+                )
+                return
+            persist_turn_semantic_evidence(
+                connection,
+                workspace=resolved_workspace,
+                trace_id=ctx.audit_turn.trace_id,
+                turn_id=ctx.audit_turn.turn_id,
+                session_key=ctx.session_key,
+                source_type=ctx.audit_run.source_type,
+                outcome="success",
+                user_text=ctx.original_user_text,
+                tools=ctx.tools_used,
+            )
+            link_successful_correction(
+                connection,
+                workspace=resolved_workspace,
+                trace_id=ctx.audit_turn.trace_id,
+                session_key=ctx.session_key,
+                source_type=ctx.audit_run.source_type,
+                user_text=ctx.original_user_text,
+                tools=ctx.tools_used,
+            )
+        except Exception:
+            logger.warning("Failed to persist semantic Skill-evolution evidence", exc_info=True)
+        finally:
+            if connection is not None:
+                connection.close()
 
     async def _state_respond(self, ctx: TurnContext) -> str:
         if ctx.suppress_response:

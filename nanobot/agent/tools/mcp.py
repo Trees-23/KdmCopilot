@@ -69,7 +69,15 @@ class _OwnedMCPConnection:
     async def aclose(self) -> None:
         self._close_requested.set()
         try:
-            await asyncio.shield(self._owner)
+            # A transport may be stuck in SDK cleanup while its peer is
+            # disappearing.  Never let that block Gateway shutdown forever;
+            # cancellation is safe here because the owner task exclusively
+            # owns the AsyncExitStack and no caller can reuse it afterwards.
+            await asyncio.wait_for(asyncio.shield(self._owner), timeout=2.0)
+        except asyncio.TimeoutError:
+            self._owner.cancel()
+            with suppress(BaseException):
+                await asyncio.wait_for(asyncio.shield(self._owner), timeout=0.5)
         except asyncio.CancelledError:
             if not self._owner.cancelled():
                 raise
@@ -473,15 +481,38 @@ class MCPToolWrapper(_MCPWrapperBase):
         retried_transient = False
         refreshed_session = False
         while True:
+            call_task = asyncio.create_task(
+                self._session.call_tool(self._original_name, arguments=kwargs)
+            )
             try:
                 result = await asyncio.wait_for(
-                    self._session.call_tool(self._original_name, arguments=kwargs),
+                    asyncio.shield(call_task),
                     timeout=self._tool_timeout,
                 )
             except asyncio.TimeoutError:
+                # Some MCP SDK transports do not finish cancellation when the
+                # peer has already expired the session. Cancel the request in
+                # the background, but do not wait indefinitely for its cleanup
+                # before starting the reconnect path.
+                call_task.cancel()
+                with suppress(BaseException):
+                    await asyncio.wait_for(asyncio.shield(call_task), timeout=0.5)
                 logger.warning(
                     "MCP tool '{}' timed out after {}s", self._name, self._tool_timeout
                 )
+                # Streamable HTTP servers can leave a request pending after
+                # expiring an idle session instead of returning a structured
+                # "session terminated" error. Treat the first timeout as a
+                # reconnect hint so a stale transport cannot strand callers.
+                if not refreshed_session and self._reconnect is not None:
+                    refreshed_tool = await self._reconnect(
+                        self._server_name, self._name, self
+                    )
+                    refreshed_session_obj = getattr(refreshed_tool, "_session", None)
+                    if refreshed_session_obj is not None:
+                        self._session = refreshed_session_obj
+                        refreshed_session = True
+                        continue
                 return ToolResult.error(
                     f"(MCP tool call timed out after {self._tool_timeout}s)"
                 )
@@ -490,6 +521,15 @@ class MCPToolWrapper(_MCPWrapperBase):
                 # Re-raise only if our task was externally cancelled (e.g. /stop).
                 if task_is_cancelling():
                     raise
+                if not refreshed_session and self._reconnect is not None:
+                    refreshed_tool = await self._reconnect(
+                        self._server_name, self._name, self
+                    )
+                    refreshed_session_obj = getattr(refreshed_tool, "_session", None)
+                    if refreshed_session_obj is not None:
+                        self._session = refreshed_session_obj
+                        refreshed_session = True
+                        continue
                 logger.warning("MCP tool '{}' was cancelled by server/SDK", self._name)
                 return ToolResult.error("(MCP tool call was cancelled)")
             except Exception as exc:
