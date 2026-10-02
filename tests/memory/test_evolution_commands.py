@@ -114,6 +114,7 @@ def test_evolve_commands_are_deterministic_and_admin_gated(tmp_path):
     status = service.handle("status", metadata=_metadata())
     assert "自进化模块状态" in status.content
     assert "- 总开关：关闭" in status.content
+    assert "- A/B 质量门禁：强制门禁" in status.content
     assert "E217" not in status.content
 
     review = service.handle(f"review {proposal_id}", metadata=_metadata())

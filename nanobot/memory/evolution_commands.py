@@ -438,12 +438,19 @@ class EvolutionCommandService:
             if action == "status":
                 evolution = getattr(self.config, "evolution", self.config)
                 enabled = bool(getattr(self.config, "enabled", False))
+                ab_mode = str(getattr(evolution, "ab_evaluation_mode", "enforced"))
+                ab_mode_label = {"enforced": "强制门禁", "shadow": "影子记录", "disabled": "关闭"}.get(
+                    ab_mode, ab_mode
+                )
                 return EvolutionCommandResult(
                     "自进化模块状态\n"
                     f"- 总开关：{'开启' if enabled else '关闭'}\n"
                     f"- 主动通知：{'开启' if bool(getattr(evolution, 'notifications_enabled', False)) else '关闭'}\n"
                     f"- 人工采用：{'开启' if bool(getattr(evolution, 'adoption_enabled', False)) else '关闭'}\n"
                     f"- 发布能力：{'开启' if bool(getattr(evolution, 'publish_enabled', False)) else '关闭'}\n"
+                    f"- A/B 质量门禁：{ab_mode_label}\n"
+                    f"- A/B 评测预算：{getattr(evolution, 'ab_evaluation_max_candidates_per_day', 2)} 个候选/日，"
+                    f"{getattr(evolution, 'ab_evaluation_max_model_calls_per_day', 40)} 次调用/日\n"
                     "- 当前群：已通过群范围校验"
                 )
 
