@@ -291,6 +291,28 @@ class EvolutionCommandService:
         quality_text = (
             f"{quality[1]}：{quality[3]}" if quality else "历史 Proposal 未记录语义质量 Gate"
         )
+        ab_evaluation = details.get("ab_evaluation")
+        ab_lines: list[str] = []
+        if ab_evaluation:
+            try:
+                ab_metrics = json.loads(ab_evaluation[7] or "{}")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                ab_metrics = {}
+            ab_status = {"passed": "通过", "failed": "未通过", "budget_exhausted": "预算耗尽", "error": "异常"}.get(
+                str(ab_evaluation[5]), str(ab_evaluation[5])
+            )
+            ab_lines = [
+                "四、真实 A/B 能力评测",
+                f"- 状态：{ab_status}；原因：{ab_evaluation[6]}",
+                f"- 评测模型：{ab_evaluation[1]}（推理强度：{ab_evaluation[2]}）",
+                f"- 独立真实证据：{ab_evaluation[3]} 条；模型调用：{ab_evaluation[4]} 次",
+                f"- 基线完成分：{float(ab_metrics.get('positive_baseline_score', 0)):.0%}；候选完成分：{float(ab_metrics.get('positive_candidate_score', 0)):.0%}",
+                f"- 可解释改善：{float(ab_metrics.get('improvement', 0)):.0%}；范围拒绝：{'通过' if ab_metrics.get('scope_refusal') else '未通过'}；安全拒绝：{'通过' if ab_metrics.get('safety_refusal') else '未通过'}",
+                f"- 安全：{'通过' if ab_metrics.get('safety_clean') and ab_metrics.get('safe_tools') else '未通过'}；稳定性：{'通过' if ab_metrics.get('consistent') else '未通过'}",
+                f"- 成本变化：{float(ab_metrics.get('cost_delta', 0)):.0%}；延迟变化：{float(ab_metrics.get('latency_delta', 0)):.0%}",
+                "- 说明：基线未加载候选 Skill；候选侧仅额外加载本次 Skill，均在隔离只读环境中运行。",
+                "",
+            ]
         lines = [
             "【Skill 沉淀审批详情】",
             f"编号：{public_id}",
@@ -326,14 +348,15 @@ class EvolutionCommandService:
             f"- 独立回放：{'已执行' if any(bool(row[7]) for row in runs) else '未记录'}",
             f"- 语义质量 Gate：{quality_text}",
             "",
-            "四、实际 Skill 内容",
+            *ab_lines,
+            "五、实际 Skill 内容",
             "--- SKILL.md ---",
             content or "（未找到候选 Skill 正文）",
         ]
         if pr:
             branch = str(pr.get("branch", ""))
             branch_display = branch if "phase6" not in branch.casefold() else "已创建（历史内部名称不展示）"
-            lines.extend(["", "五、Draft PR", f"- 分支：{branch_display}", f"- 提交：{pr.get('commit', '未记录')}"])
+            lines.extend(["", "六、Draft PR", f"- 分支：{branch_display}", f"- 提交：{pr.get('commit', '未记录')}"])
             if pr.get("url"):
                 lines.append(f"- 链接：{pr['url']}")
             lines.append(f"- CI：{'已通过' if any(item.get('action') == 'remote_pr_status' and item.get('ci_passed') for item in action_values) else '请查看最新 CI 状态'}")

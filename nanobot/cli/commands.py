@@ -1893,12 +1893,12 @@ def _run_gateway(
         # projections directly; it never asks the Agent to interpret a prompt
         # or decide whether to write, notify, merge, or publish.
         from nanobot.memory.phase6_runtime import build_overlay_pipeline
-        from nanobot.memory.phase6_trigger import PHASE6_REVIEW_JOB_ID, run_phase6_review_scan
+        from nanobot.memory.phase6_trigger import PHASE6_REVIEW_JOB_ID, run_phase6_review_scan_async
 
         if job.name == PHASE6_REVIEW_JOB_ID:
             from nanobot.config.paths import get_audit_dir
 
-            result = run_phase6_review_scan(
+            result = await run_phase6_review_scan_async(
                 config.workspace_path,
                 config.phase6,
                 audit_root=get_audit_dir(config.audit.path),
@@ -1911,6 +1911,7 @@ def _run_gateway(
                     )
                 ),
                 notify_error=channels.proposal_notifier.enqueue_scan_failure,
+                active_agent=agent,
             )
             logger.info("Phase 6 scheduled review completed: {}", getattr(result, "status", result))
             return str(getattr(result, "status", "completed"))

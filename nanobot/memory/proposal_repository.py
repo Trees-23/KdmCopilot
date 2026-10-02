@@ -280,6 +280,18 @@ class ProposalRepository:
             "WHERE proposal_id=? AND action IN ('create_draft_pr','remote_draft_pr','remote_pr_status','publish_candidate_notification') "
             "ORDER BY created_at", (record.proposal_id,)
         ).fetchall()
+        ab_evaluation = self.connection.execute(
+            """SELECT evaluation_id,model_id,reasoning_effort,real_evidence_count,model_calls_used,
+                      status,reason_code,metrics_json,created_at
+               FROM ab_evaluations WHERE workspace=? AND candidate_hash=?
+               ORDER BY created_at DESC LIMIT 1""",
+            (record.workspace, record.candidate_hash),
+        ).fetchone()
+        ab_results = self.connection.execute(
+            """SELECT case_key,split,attempt,baseline_score,candidate_score,safety_clean,judge_status
+               FROM ab_case_results WHERE evaluation_id=? ORDER BY case_key,attempt""",
+            (ab_evaluation[0],),
+        ).fetchall() if ab_evaluation else []
         return {
             "record": record,
             "gate_snapshot": snapshot,
@@ -295,6 +307,8 @@ class ProposalRepository:
             "semantic": tuple(tuple(row) for row in semantic),
             "quality_reviews": tuple(tuple(row) for row in quality_reviews),
             "actions": tuple(tuple(row) for row in actions),
+            "ab_evaluation": tuple(ab_evaluation) if ab_evaluation else None,
+            "ab_results": tuple(tuple(row) for row in ab_results),
         }
 
     def transition(

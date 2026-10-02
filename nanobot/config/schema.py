@@ -508,6 +508,42 @@ class Phase6EvolutionConfig(Base):
         ),
         serialization_alias="maxNotificationsPerGroupPerDay",
     )
+    ab_evaluation_mode: Literal["disabled", "shadow", "enforced"] = Field(
+        default="enforced",
+        validation_alias=AliasChoices("abEvaluationMode", "ab_evaluation_mode"),
+        serialization_alias="abEvaluationMode",
+    )
+    ab_evaluation_model: str = Field(
+        default="glm-5.3-flash",
+        min_length=1,
+        validation_alias=AliasChoices("abEvaluationModel", "ab_evaluation_model"),
+        serialization_alias="abEvaluationModel",
+    )
+    ab_evaluation_reasoning_effort: Literal["low", "medium", "high"] = Field(
+        default="high",
+        validation_alias=AliasChoices(
+            "abEvaluationReasoningEffort", "ab_evaluation_reasoning_effort"
+        ),
+        serialization_alias="abEvaluationReasoningEffort",
+    )
+    ab_evaluation_max_candidates_per_day: int = Field(
+        default=2,
+        ge=1,
+        le=20,
+        validation_alias=AliasChoices(
+            "abEvaluationMaxCandidatesPerDay", "ab_evaluation_max_candidates_per_day"
+        ),
+        serialization_alias="abEvaluationMaxCandidatesPerDay",
+    )
+    ab_evaluation_max_model_calls_per_day: int = Field(
+        default=40,
+        ge=1,
+        le=200,
+        validation_alias=AliasChoices(
+            "abEvaluationMaxModelCallsPerDay", "ab_evaluation_max_model_calls_per_day"
+        ),
+        serialization_alias="abEvaluationMaxModelCallsPerDay",
+    )
 
 
 class Phase6Config(Base):

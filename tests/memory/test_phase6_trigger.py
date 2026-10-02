@@ -4,7 +4,7 @@ import json
 from datetime import UTC, datetime
 
 import nanobot.memory.phase6_trigger as phase6_trigger
-from nanobot.config.schema import Phase6Config
+from nanobot.config.schema import Phase6Config, Phase6EvolutionConfig
 from nanobot.cron.types import CronSchedule
 from nanobot.memory.maintenance import open_maintenance_db
 from nanobot.memory.phase6_trigger import (
@@ -118,7 +118,10 @@ def test_production_scan_generates_candidate_proposal_at_three_semantic_repeats(
     workspace.mkdir()
     _insert_semantic_evidence(workspace, 3)
 
-    result = run_phase6_review_scan(str(workspace), Phase6Config(enabled=True))
+    result = run_phase6_review_scan(
+        str(workspace),
+        Phase6Config(enabled=True, evolution=Phase6EvolutionConfig(ab_evaluation_mode="disabled")),
+    )
 
     assert result.status == "completed"
     assert len(result.proposal_ids) == 1
@@ -131,7 +134,10 @@ def test_production_scan_generates_candidate_proposal_at_three_semantic_repeats(
     connection.close()
 
     # The next daily run sees the same evidence and remains idempotent.
-    repeated = run_phase6_review_scan(str(workspace), Phase6Config(enabled=True))
+    repeated = run_phase6_review_scan(
+        str(workspace),
+        Phase6Config(enabled=True, evolution=Phase6EvolutionConfig(ab_evaluation_mode="disabled")),
+    )
     assert repeated.status == "completed"
     assert repeated.proposal_ids == ()
     assert repeated.deduplicated_task_keys

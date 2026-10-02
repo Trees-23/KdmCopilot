@@ -7,6 +7,7 @@ never turn a natural-language Agent Cron job into a write or publish path.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -63,7 +64,7 @@ def register_phase6_review_job(cron: Any, config: Any, *, policy: Phase6TriggerP
     return True
 
 
-def run_phase6_review_scan(
+async def run_phase6_review_scan_async(
     workspace: str | Path,
     config: Any,
     *,
@@ -72,6 +73,7 @@ def run_phase6_review_scan(
     overlay_pipeline_factory: Any | None = None,
     notify_proposal: Any | None = None,
     notify_error: Any | None = None,
+    active_agent: Any | None = None,
 ) -> Any:
     """Run the production Trace → Candidate → Gate → Proposal scan.
 
@@ -175,12 +177,42 @@ def run_phase6_review_scan(
                 accepted,
                 min_repeat_count=runtime.min_repeat_count,
             )
+            from nanobot.memory.ab_evaluation import evaluate_candidate_specs
+
+            ab_result = await evaluate_candidate_specs(
+                connection,
+                root,
+                built.specs,
+                runtime,
+                active_agent=active_agent,
+            )
+            append_evidence(
+                root,
+                EvidenceRecord(
+                    "ab_quality_evaluation",
+                    datetime.now(UTC).isoformat(timespec="seconds"),
+                    status=ab_result.status,
+                    metrics={
+                        "evaluated_count": ab_result.evaluated_count,
+                        "model_calls_used": ab_result.model_calls_used,
+                        "approved_count": len(ab_result.approved_specs),
+                    },
+                    reason=ab_result.reason,
+                ),
+                runtime,
+            )
+            if ab_result.status == "budget_exhausted" and notify_error is not None:
+                try:
+                    notify_error("Skill A/B 质量评测今日预算已耗尽；本轮候选已停止，不会创建审批。")
+                except Exception:
+                    pass
+            specs = built.specs if runtime.ab_evaluation_mode == "shadow" else ab_result.approved_specs
             result = run_fixture_review_cycle(
                 connection,
                 root,
                 runtime,
                 trace_records=semantic_records,
-                candidate_specs=built.specs,
+                candidate_specs=specs,
                 failed_traces=(),
                 overlay_pipeline=overlay_pipeline,
             )
@@ -212,10 +244,21 @@ def run_phase6_review_scan(
         connection.close()
 
 
+def run_phase6_review_scan(
+    workspace: str | Path,
+    config: Any,
+    **kwargs: Any,
+) -> Any:
+    """Synchronous compatibility wrapper used by maintenance callers/tests."""
+
+    return asyncio.run(run_phase6_review_scan_async(workspace, config, **kwargs))
+
+
 __all__ = [
     "PHASE6_REVIEW_JOB_ID",
     "Phase6TriggerPolicy",
     "build_phase6_review_job",
     "register_phase6_review_job",
     "run_phase6_review_scan",
+    "run_phase6_review_scan_async",
 ]

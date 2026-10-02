@@ -59,6 +59,8 @@ class CandidateSpec:
     tool_schema_digest: str = "sha256:fixture-tools"
     replay: ReplayFixture | None = None
     case_ids: tuple[str, ...] = ()
+    candidate_content: str = ""
+    holdout_case_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

@@ -211,6 +211,12 @@ def build_candidate_specs(
                 model_id="phase6-deterministic-replay",
                 replay=_replay(content),
                 case_ids=tuple(f"case:{trace_id}" for trace_id in candidate.trace_ids),
+                candidate_content=content,
+                holdout_case_ids=tuple(
+                    sorted(f"case:{trace_id}" for trace_id in candidate.trace_ids)[
+                        -max(2, (len(candidate.trace_ids) + 4) // 5):
+                    ]
+                ),
             )
         )
     return CandidateBuildResult(tuple(specs), tuple(skipped))

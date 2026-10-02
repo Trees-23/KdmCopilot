@@ -51,6 +51,11 @@ class Phase6RuntimeConfig:
     max_memory_growth_ratio: float = 0.5
     retention_days: int = 18
     payload_retention_days: int = 7
+    ab_evaluation_mode: str = "enforced"
+    ab_evaluation_model: str = "glm-5.3-flash"
+    ab_evaluation_reasoning_effort: str = "high"
+    ab_evaluation_max_candidates_per_day: int = 2
+    ab_evaluation_max_model_calls_per_day: int = 40
 
     @classmethod
     def from_config(cls, config: Any) -> "Phase6RuntimeConfig":
@@ -61,8 +66,14 @@ class Phase6RuntimeConfig:
         else:
             values = {name: getattr(config, name) for name in cls.__dataclass_fields__ if hasattr(config, name)}
             evolution = getattr(config, "evolution", None)
-            if evolution is not None and hasattr(evolution, "draft_pr_enabled"):
-                values["draft_pr_enabled"] = bool(evolution.draft_pr_enabled)
+            if evolution is not None:
+                for name in (
+                    "draft_pr_enabled", "ab_evaluation_mode", "ab_evaluation_model",
+                    "ab_evaluation_reasoning_effort", "ab_evaluation_max_candidates_per_day",
+                    "ab_evaluation_max_model_calls_per_day",
+                ):
+                    if hasattr(evolution, name):
+                        values[name] = getattr(evolution, name)
         return cls(**values)
 
     def __post_init__(self) -> None:
@@ -84,6 +95,14 @@ class Phase6RuntimeConfig:
             raise ValueError("max_memory_growth_ratio must not be negative")
         if self.payload_retention_days < 1 or self.retention_days < self.payload_retention_days:
             raise ValueError("retention_days must be >= payload_retention_days >= 1")
+        if self.ab_evaluation_mode not in {"disabled", "shadow", "enforced"}:
+            raise ValueError("ab_evaluation_mode must be disabled, shadow, or enforced")
+        if self.ab_evaluation_reasoning_effort not in {"low", "medium", "high"}:
+            raise ValueError("ab_evaluation_reasoning_effort must be low, medium, or high")
+        if self.ab_evaluation_max_candidates_per_day < 1:
+            raise ValueError("ab_evaluation_max_candidates_per_day must be positive")
+        if self.ab_evaluation_max_model_calls_per_day < 1:
+            raise ValueError("ab_evaluation_max_model_calls_per_day must be positive")
 
 
 @dataclass(frozen=True, slots=True)

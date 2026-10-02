@@ -13,6 +13,7 @@ from nanobot.memory.schema import (
     MIGRATION_ID,
     MIGRATION_VERSION,
     PROPOSAL_REVIEW_MIGRATION_PATH,
+    RECOVERY_CASES_MIGRATION_PATH,
     REQUIRED_TABLES,
     SEMANTIC_QUALITY_MIGRATION_PATH,
     base_migration_sql,
@@ -157,13 +158,14 @@ def apply_migrations(
     # durable alert outbox for pipeline failures that have no publish candidate.
     phase6_required = REQUIRED_TABLES - {
         "phase6_alert_deliveries", "eval_cases", "semantic_task_evidence", "semantic_quality_reviews",
-        "recovery_episodes", "recovery_case_reviews",
+        "recovery_episodes", "recovery_case_reviews", "ab_evaluations", "ab_case_results",
     }
     apply_one(2, "0002_phase6_proposals", phase6_migration_sql(), phase6_required)
     apply_one(3, "0003_phase6_delivery_payload", DELIVERY_PAYLOAD_MIGRATION_PATH.read_text(encoding="utf-8"), phase6_required)
-    apply_one(4, "0004_phase6_alert_deliveries", ALERT_DELIVERY_MIGRATION_PATH.read_text(encoding="utf-8"), REQUIRED_TABLES - {"eval_cases", "semantic_task_evidence", "semantic_quality_reviews", "recovery_episodes", "recovery_case_reviews"})
-    apply_one(5, "0005_proposal_review_details", PROPOSAL_REVIEW_MIGRATION_PATH.read_text(encoding="utf-8"), REQUIRED_TABLES - {"semantic_task_evidence", "semantic_quality_reviews", "recovery_episodes", "recovery_case_reviews"})
-    apply_one(6, "0006_semantic_quality_gate", SEMANTIC_QUALITY_MIGRATION_PATH.read_text(encoding="utf-8"), REQUIRED_TABLES - {"recovery_episodes", "recovery_case_reviews"})
+    apply_one(4, "0004_phase6_alert_deliveries", ALERT_DELIVERY_MIGRATION_PATH.read_text(encoding="utf-8"), REQUIRED_TABLES - {"eval_cases", "semantic_task_evidence", "semantic_quality_reviews", "recovery_episodes", "recovery_case_reviews", "ab_evaluations", "ab_case_results"})
+    apply_one(5, "0005_proposal_review_details", PROPOSAL_REVIEW_MIGRATION_PATH.read_text(encoding="utf-8"), REQUIRED_TABLES - {"semantic_task_evidence", "semantic_quality_reviews", "recovery_episodes", "recovery_case_reviews", "ab_evaluations", "ab_case_results"})
+    apply_one(6, "0006_semantic_quality_gate", SEMANTIC_QUALITY_MIGRATION_PATH.read_text(encoding="utf-8"), REQUIRED_TABLES - {"recovery_episodes", "recovery_case_reviews", "ab_evaluations", "ab_case_results"})
+    apply_one(7, "0007_recovery_cases", RECOVERY_CASES_MIGRATION_PATH.read_text(encoding="utf-8"), REQUIRED_TABLES - {"ab_evaluations", "ab_case_results"})
     apply_one(MIGRATION_VERSION, MIGRATION_ID, migration_sql(), REQUIRED_TABLES)
     verify_schema(connection, schema_hash(migration_sql()))
 

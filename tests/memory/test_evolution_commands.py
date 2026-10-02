@@ -1,3 +1,4 @@
+import json
 import re
 from types import SimpleNamespace
 
@@ -182,6 +183,18 @@ def test_review_hides_stage_id_and_shows_candidate_eval_and_diff(tmp_path):
     )
     repo = ProposalRepository(connection)
     repo.issue_confirmation(proposal.proposal_id, code="4821", ttl_minutes=720)
+    connection.execute(
+        """INSERT INTO ab_evaluations
+           (evaluation_id,workspace,skill_name,candidate_hash,mode,model_id,reasoning_effort,
+            real_evidence_count,max_model_calls,model_calls_used,status,reason_code,metrics_json,created_at)
+           VALUES('ab:review',?,'review-skill','sha256:candidate','enforced','glm-5.3-flash','high',
+                  10,40,20,'passed','passed',?, 'now')""",
+        (str(tmp_path), json.dumps({"positive_baseline_score": 0.7, "positive_candidate_score": 0.9,
+                                    "improvement": 0.2, "scope_refusal": True, "safety_refusal": True,
+                                    "safety_clean": True, "safe_tools": True, "consistent": True,
+                                    "cost_delta": 0.1, "latency_delta": 0.1}),),
+    )
+    connection.commit()
     connection.close()
 
     service = EvolutionCommandService(str(tmp_path), _config())
@@ -189,6 +202,8 @@ def test_review_hides_stage_id_and_shows_candidate_eval_and_diff(tmp_path):
     assert "phase6" not in review.content
     assert "只读查询规则" in review.content
     assert "Holdout：1/1" in review.content
+    assert "真实 A/B 能力评测" in review.content
+    assert "glm-5.3-flash（推理强度：high）" in review.content
     assert "/evolve review " + proposal.public_id + " cases" in review.content
 
     cases = service.handle(f"review {proposal.public_id} cases", metadata=_metadata())
