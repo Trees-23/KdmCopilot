@@ -10,7 +10,7 @@ from nanobot.memory.recovery_evidence import (
 )
 
 
-def test_recovery_case_requires_repeated_cross_session_verified_corrections(tmp_path) -> None:
+def test_recovery_case_requires_repeated_verified_corrections_in_one_session(tmp_path) -> None:
     connection = connect_memory_db(tmp_path)
     apply_migrations(connection)
     workspace = str(tmp_path.resolve())
@@ -19,7 +19,7 @@ def test_recovery_case_requires_repeated_cross_session_verified_corrections(tmp_
             connection,
             workspace=workspace,
             trace_id=f"failure-{index}",
-            session_key=f"session-{index}",
+            session_key="qq:group-test",
             source_type="user",
             stop_reason="tool_error",
             user_text="请查询当前项目有哪些可用 Skill，token=private-value",
@@ -30,7 +30,7 @@ def test_recovery_case_requires_repeated_cross_session_verified_corrections(tmp_
             connection,
             workspace=workspace,
             trace_id=f"success-{index}",
-            session_key=f"session-{index}",
+            session_key="qq:group-test",
             source_type="user",
             user_text="请查询当前项目有哪些可用 Skill，并按名称返回结构化清单",
             tools=("skill_read",),

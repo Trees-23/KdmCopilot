@@ -131,8 +131,9 @@ def link_successful_correction(
     """Link only the latest same-session eligible failure to a success.
 
     This deliberately refuses broad temporal correlation.  The later M13
-    quality review requires repeated, cross-session recovery episodes before
-    even a read-only Case card can be surfaced.
+    quality review requires repeated recovery episodes before even a read-only
+    Case card can be surfaced; the episodes may come from one long-lived
+    session such as a QQ group session.
     """
 
     if source_type != "user" or not trace_id or not session_key:
@@ -190,7 +191,7 @@ def review_recovery_episodes(
     *,
     workspace: str,
     min_episodes: int = 3,
-    min_sessions: int = 2,
+    min_sessions: int = 1,
 ) -> tuple[RecoveryReview, ...]:
     """Create auditable Case-quality decisions without creating a Skill."""
 
@@ -221,8 +222,8 @@ def review_recovery_episodes(
         else:
             status, code, text = (
                 "insufficient_recovery_evidence",
-                "insufficient_independent_recoveries",
-                "恢复 Episode 数量或独立会话数不足；仅保留审计，不生成 Case 卡。",
+                "insufficient_recovery_episodes",
+                "恢复 Episode 数量不足；仅保留审计，不生成 Case 卡。",
             )
         connection.execute(
             """INSERT OR IGNORE INTO recovery_case_reviews
