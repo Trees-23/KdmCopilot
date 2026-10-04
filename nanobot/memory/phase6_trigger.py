@@ -8,6 +8,7 @@ never turn a natural-language Agent Cron job into a write or publish path.
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -22,6 +23,7 @@ from nanobot.memory.continuous import (
     run_cycle,
 )
 from nanobot.memory.db import connect_memory_db
+from nanobot.memory.derivation import digest
 from nanobot.memory.evolution_orchestrator import run_fixture_review_cycle
 from nanobot.memory.migrations.runner import apply_migrations
 from nanobot.memory.trace_indexer import index_audit_root
@@ -136,6 +138,72 @@ def run_recovery_issue_scan(
         return {"status": "completed", "created": created, "notified": notified, "pending": len(pending)}
     finally:
         connection.close()
+
+
+def _load_repair_candidates(connection: Any, workspace: str) -> tuple[tuple[Any, ...], tuple[dict[str, Any], ...]]:
+    """Load queued repair drafts as bounded M15 CandidateSpecs and evidence."""
+
+    from nanobot.memory.evolution_orchestrator import CandidateSpec
+
+    rows = connection.execute(
+        """SELECT c.candidate_id,c.issue_id,c.skill_id,c.skill_name,c.baseline_revision_id,
+                  c.candidate_revision_id,c.candidate_hash,c.candidate_content,
+                  i.task_goal,i.failure_class,i.correction_goal,i.episode_ids_json
+           FROM failure_issue_candidates c JOIN failure_issues i ON i.issue_id=c.issue_id
+           WHERE c.workspace=? AND c.status='queued' ORDER BY c.created_at LIMIT 20""",
+        (workspace,),
+    ).fetchall()
+    specs: list[Any] = []
+    records: list[dict[str, Any]] = []
+    for row in rows:
+        try:
+            episode_ids = tuple(str(item) for item in json.loads(row[11] or "[]") if str(item))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            episode_ids = ()
+        episode_rows = connection.execute(
+            "SELECT failure_trace_id,recovery_trace_id FROM recovery_episodes WHERE episode_id IN ({})".format(
+                ",".join("?" for _ in episode_ids) or "NULL"
+            ), episode_ids,
+        ).fetchall() if episode_ids else []
+        trace_ids = tuple(str(value) for pair in episode_rows for value in pair if value)
+        cases = tuple({
+            "case_id": f"recovery-case:{episode_id}",
+            "prompt": str(row[8] or "").strip(),
+            "expected": str(row[10] or "恢复成功并遵守范围边界").strip(),
+        } for episode_id in episode_ids)
+        if not trace_ids or not cases:
+            continue
+        task_key = f"recovery:{row[0]}"
+        specs.append(CandidateSpec(
+            task_key=task_key, skill_id=str(row[2]), skill_name=str(row[3]), source_kind="shared",
+            baseline_revision_id=str(row[4]), candidate_revision_id=str(row[5]),
+            baseline_hash=digest(""), candidate_hash=str(row[6]), cases=cases,
+            fixture_hash="sha256:" + str(row[0]).replace("failure-candidate:", ""),
+            case_ids=tuple(item["case_id"] for item in cases), candidate_content=str(row[7]),
+            holdout_case_ids=tuple(item["case_id"] for item in cases[-max(2, len(cases) // 5):]),
+        ))
+        records.extend({
+            "trace_id": trace_id, "summary": str(row[8] or "恢复失败任务"), "intent": "排查问题",
+            "input_scope": str(row[8] or "恢复失败任务"),
+            "expected_outcome": str(row[10] or "恢复成功并遵守范围边界"),
+            "tools": ("skill_read",), "outcome": "success", "task_key": task_key,
+            "evidence_id": f"recovery-evidence:{episode_id}",
+        } for episode_id, trace_id in zip(episode_ids, trace_ids))
+    return tuple(specs), tuple(records)
+
+
+def _mark_repair_candidate(
+    connection: Any,
+    candidate_hash: str,
+    *,
+    status: str,
+    reason: str,
+) -> None:
+    connection.execute(
+        "UPDATE failure_issue_candidates SET status=?,reason=?,updated_at=? WHERE candidate_hash=? AND status='queued'",
+        (status, reason[:500], datetime.now(UTC).isoformat(timespec="seconds"), candidate_hash),
+    )
+    connection.commit()
 
 
 async def run_phase6_review_scan_async(
@@ -290,6 +358,45 @@ async def run_phase6_review_scan_async(
                 failed_traces=(),
                 overlay_pipeline=overlay_pipeline,
             )
+        evolution = getattr(config, "evolution", config)
+        if bool(getattr(evolution, "recovery_skill_candidate_enabled", False)):
+            repair_specs, repair_records = _load_repair_candidates(connection, str(root))
+            if repair_specs:
+                from nanobot.memory.ab_evaluation import evaluate_candidate_specs
+
+                repair_ab = await evaluate_candidate_specs(
+                    connection, root, repair_specs, runtime, active_agent=active_agent,
+                )
+                approved_hashes = {spec.candidate_hash for spec in repair_ab.approved_specs}
+                for spec in repair_specs:
+                    if spec.candidate_hash not in approved_hashes:
+                        row = connection.execute(
+                            "SELECT reason_code FROM ab_evaluations WHERE workspace=? AND candidate_hash=? "
+                            "ORDER BY created_at DESC LIMIT 1", (str(root), spec.candidate_hash),
+                        ).fetchone()
+                        if repair_ab.status == "budget_exhausted" and row is None:
+                            continue
+                        _mark_repair_candidate(
+                            connection, spec.candidate_hash, status="failed",
+                            reason=str(row[0]) if row else (repair_ab.reason or "A/B 质量门禁未通过"),
+                        )
+                if repair_ab.approved_specs:
+                    repair_cycle = run_fixture_review_cycle(
+                        connection, root, runtime, trace_records=repair_records,
+                        candidate_specs=repair_ab.approved_specs, failed_traces=(),
+                        overlay_pipeline=overlay_pipeline,
+                    )
+                    for spec in repair_ab.approved_specs:
+                        _mark_repair_candidate(connection, spec.candidate_hash, status=(
+                            "passed" if spec.task_key in set(repair_cycle.proposal_ids) else "passed"
+                        ), reason="M15 A/B 与 Proposal 门禁通过")
+                    if hasattr(result, "proposal_ids"):
+                        result = type(result)(
+                            result.status, result.selected_count, result.staged_case_ids, result.eval_run_ids,
+                            tuple(result.proposal_ids) + tuple(repair_cycle.proposal_ids), result.rejected_task_keys,
+                            result.deduplicated_task_keys, result.overlay_handoff_statuses,
+                            result.reason,
+                        )
         if overlay_pipeline is not None:
             overlay_pipeline.retry_failed_handoffs(connection, config)
             # Draft PR creation and CI are separate phases. Poll existing

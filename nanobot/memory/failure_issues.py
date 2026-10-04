@@ -216,6 +216,77 @@ def record_failure_issue_memory(
     return memory_id
 
 
+def stage_failure_issue_candidate(
+    connection: sqlite3.Connection,
+    *,
+    workspace: str,
+    issue: dict[str, Any],
+    actor: str,
+) -> str:
+    """Create an isolated repair Skill revision for the M15 evaluator."""
+
+    issue_id = str(issue.get("issue_id") or "").strip()
+    if not issue_id or not workspace or not actor:
+        raise ValueError("issue, workspace and actor are required")
+    candidate_id = f"failure-candidate:{hashlib.sha256(issue_id.encode()).hexdigest()[:24]}"
+    suffix = hashlib.sha256((issue_id + str(issue.get("correction_goal") or "")).encode()).hexdigest()[:12]
+    skill_name = f"recovery-{suffix}"
+    skill_id = f"skill:{skill_name}"
+    content = (
+        f"# 失败恢复：{str(issue.get('task_goal') or '未命名任务')[:120]}\n\n"
+        "## 适用场景\n"
+        f"- 任务目标：{str(issue.get('task_goal') or '未记录')[:360]}\n"
+        f"- 失败类别：{str(issue.get('failure_class') or '未分类')[:120]}\n\n"
+        "## 恢复规则\n"
+        f"- {str(issue.get('correction_goal') or '遵循人工纠正方向')[:500]}\n"
+        "- 仅适用于同类任务；范围不一致、敏感请求或需要外部副作用时转人工确认。\n"
+        "- 不回显凭据、成员身份、完整对话、完整工具参数或隐藏推理。\n\n"
+        "## 验证边界\n"
+        "- 必须先通过 M15 的基线/候选 A/B、反例、安全和性能门禁。\n"
+        "- 本候选不会改变当前生效 Skill，也不会自动创建 Proposal、PR 或发布。\n"
+    )
+    candidate_hash = digest(content)
+    baseline_id = f"{candidate_id}:baseline"
+    revision_id = f"{candidate_id}:revision:{candidate_hash[7:19]}"
+    now = _now()
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        connection.execute(
+            """INSERT INTO skills(skill_id,namespace,name,source_kind,current_version,status,description,
+               tool_policy_json,references_json,created_at,updated_at)
+               VALUES(?,?,?,'workspace',NULL,'staging',?,'{}','[]',?,?)
+               ON CONFLICT(skill_id) DO NOTHING""",
+            (skill_id, "skill-evolution", skill_name, "失败恢复候选（待 M15 评测）", now, now),
+        )
+        connection.execute(
+            """INSERT OR IGNORE INTO skill_revisions
+               (revision_id,skill_id,skill_version,content_hash,content,source_case_ids_json,
+                author_actor,status,created_at)
+               VALUES(?,?,?,?,?,?,'failure-issue','staging',?)""",
+            (baseline_id, skill_id, "0", digest(""), "", json.dumps([issue_id]), now),
+        )
+        connection.execute(
+            """INSERT OR IGNORE INTO skill_revisions
+               (revision_id,skill_id,skill_version,content_hash,content,source_case_ids_json,
+                author_actor,status,created_at)
+               VALUES(?,?,?,?,?,?,'failure-issue','staging',?)""",
+            (revision_id, skill_id, "candidate", candidate_hash, content, json.dumps([issue_id]), now),
+        )
+        connection.execute(
+            """INSERT OR IGNORE INTO failure_issue_candidates
+               (candidate_id,issue_id,workspace,skill_id,skill_name,baseline_revision_id,
+                candidate_revision_id,candidate_hash,candidate_content,status,reason,created_at,updated_at)
+               VALUES(?,?,?,?,?,?,?,?,?,'queued','等待 M15 隔离 A/B 评测',?,?)""",
+            (candidate_id, issue_id, workspace, skill_id, skill_name, baseline_id, revision_id,
+             candidate_hash, content, now, now),
+        )
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    return candidate_id
+
+
 def apply_failure_issue_action(
     connection: sqlite3.Connection,
     *,
@@ -285,10 +356,13 @@ def apply_failure_issue_action(
             actor=actor_openid,
             note=note,
         )
+    if action == "request_candidate":
+        stage_failure_issue_candidate(connection, workspace=workspace, issue=issue, actor=actor_openid)
     return {"issue_id": issue_id, "status": next_status, "idempotent": False}
 
 
 __all__ = [
     "ISSUE_ACTIONS", "MUTATING_ACTIONS", "apply_failure_issue_action", "create_failure_issues",
     "get_failure_issue", "list_failure_issues", "record_failure_issue_memory",
+    "stage_failure_issue_candidate",
 ]

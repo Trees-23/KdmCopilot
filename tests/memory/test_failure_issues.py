@@ -14,6 +14,7 @@ from nanobot.memory.phase6_trigger import (
     RECOVERY_ISSUE_REVIEW_JOB_ID,
     build_recovery_issue_review_job,
     register_recovery_issue_review_job,
+    run_phase6_review_scan,
     run_recovery_issue_scan,
 )
 from nanobot.memory.recovery_evidence import (
@@ -106,6 +107,61 @@ def test_failure_issue_record_memory_writes_redacted_versioned_memory(tmp_path) 
     assert stored[1] == "active"
     assert "恢复规则" in stored[2]
     assert connection.execute("SELECT count(*) FROM memory_outbox WHERE object_type='memory'").fetchone()[0] == 1
+    connection.close()
+
+
+def test_failure_issue_request_candidate_stages_isolated_revision(tmp_path) -> None:
+    connection = connect_memory_db(tmp_path)
+    apply_migrations(connection)
+    workspace = str(tmp_path.resolve())
+    _seed_recovery_review(connection, workspace)
+    issue_id = create_failure_issues(connection, workspace=workspace)[0]
+    result = apply_failure_issue_action(
+        connection,
+        workspace=workspace,
+        issue_id=issue_id,
+        action="request_candidate",
+        actor_openid="admin-1",
+        group_openid="group-1",
+        idempotency_key="issue-candidate-1",
+    )
+    assert result["status"] == "candidate_requested"
+    candidate = connection.execute(
+        "SELECT status,candidate_content FROM failure_issue_candidates WHERE issue_id=?", (issue_id,)
+    ).fetchone()
+    assert candidate is not None
+    assert candidate[0] == "queued"
+    assert "恢复规则" in candidate[1]
+    assert connection.execute(
+        "SELECT count(*) FROM skill_proposals WHERE workspace=?", (workspace,)
+    ).fetchone()[0] == 0
+    connection.close()
+
+
+def test_repair_candidate_enters_m15_and_fails_closed_with_three_episodes(tmp_path) -> None:
+    connection = connect_memory_db(tmp_path)
+    apply_migrations(connection)
+    workspace = str(tmp_path.resolve())
+    _seed_recovery_review(connection, workspace)
+    issue_id = create_failure_issues(connection, workspace=workspace)[0]
+    apply_failure_issue_action(
+        connection, workspace=workspace, issue_id=issue_id, action="request_candidate",
+        actor_openid="admin-1", group_openid="group-1", idempotency_key="repair-1",
+    )
+    connection.close()
+    config = Phase6Config(
+        enabled=True,
+        evolution=Phase6EvolutionConfig(recovery_skill_candidate_enabled=True),
+    )
+    result = run_phase6_review_scan(tmp_path, config)
+    assert result.status == "completed"
+    connection = connect_memory_db(tmp_path)
+    candidate = connection.execute(
+        "SELECT status,reason FROM failure_issue_candidates WHERE issue_id=?", (issue_id,)
+    ).fetchone()
+    assert candidate[0] == "failed"
+    assert candidate[1] == "insufficient_real_evidence"
+    assert connection.execute("SELECT count(*) FROM skill_proposals").fetchone()[0] == 0
     connection.close()
 
 
