@@ -281,6 +281,7 @@ async def run_phase6_review_scan_async(
         if cycle.status != "completed":
             return cycle
         result = cycle
+        repair_proposal_ids: tuple[str, ...] = ()
         if cycle.selected_tasks:
             from nanobot.memory.phase6_candidates import (
                 build_candidate_specs,
@@ -386,17 +387,11 @@ async def run_phase6_review_scan_async(
                         candidate_specs=repair_ab.approved_specs, failed_traces=(),
                         overlay_pipeline=overlay_pipeline,
                     )
+                    repair_proposal_ids = tuple(repair_cycle.proposal_ids)
                     for spec in repair_ab.approved_specs:
                         _mark_repair_candidate(connection, spec.candidate_hash, status=(
                             "passed" if spec.task_key in set(repair_cycle.proposal_ids) else "passed"
                         ), reason="M15 A/B 与 Proposal 门禁通过")
-                    if hasattr(result, "proposal_ids"):
-                        result = type(result)(
-                            result.status, result.selected_count, result.staged_case_ids, result.eval_run_ids,
-                            tuple(result.proposal_ids) + tuple(repair_cycle.proposal_ids), result.rejected_task_keys,
-                            result.deduplicated_task_keys, result.overlay_handoff_statuses,
-                            result.reason,
-                        )
         if overlay_pipeline is not None:
             overlay_pipeline.retry_failed_handoffs(connection, config)
             # Draft PR creation and CI are separate phases. Poll existing
@@ -410,6 +405,9 @@ async def run_phase6_review_scan_async(
                 overlay_pipeline.refresh_ci_and_notify(connection, str(row[0]))
         if notify_proposal is not None and hasattr(result, "proposal_ids"):
             for proposal_id in result.proposal_ids:
+                notify_proposal(proposal_id)
+        if notify_proposal is not None:
+            for proposal_id in repair_proposal_ids:
                 notify_proposal(proposal_id)
         return result
     except Exception as exc:
