@@ -81,6 +81,34 @@ def test_failure_issue_materialization_and_action_idempotency(tmp_path) -> None:
     connection.close()
 
 
+def test_failure_issue_record_memory_writes_redacted_versioned_memory(tmp_path) -> None:
+    connection = connect_memory_db(tmp_path)
+    apply_migrations(connection)
+    workspace = str(tmp_path.resolve())
+    _seed_recovery_review(connection, workspace)
+    issue_id = create_failure_issues(connection, workspace=workspace)[0]
+    result = apply_failure_issue_action(
+        connection,
+        workspace=workspace,
+        issue_id=issue_id,
+        action="record_memory",
+        actor_openid="admin-1",
+        group_openid="group-1",
+        idempotency_key="issue-memory-1",
+    )
+    assert result["status"] == "memory_recorded"
+    stored = connection.execute(
+        "SELECT r.memory_type,r.status,v.content FROM memory_records r "
+        "JOIN memory_revisions v ON v.revision_id=r.current_revision_id WHERE r.memory_id LIKE 'recovery-memory:%'"
+    ).fetchone()
+    assert stored is not None
+    assert stored[0] == "decision"
+    assert stored[1] == "active"
+    assert "恢复规则" in stored[2]
+    assert connection.execute("SELECT count(*) FROM memory_outbox WHERE object_type='memory'").fetchone()[0] == 1
+    connection.close()
+
+
 def test_failure_issue_rejects_invalid_status_and_candidate_toggle(tmp_path) -> None:
     connection = connect_memory_db(tmp_path)
     apply_migrations(connection)

@@ -15,6 +15,9 @@ from datetime import UTC, datetime
 from typing import Any, Iterable
 from uuid import uuid4
 
+from nanobot.memory.derivation import digest
+from nanobot.memory.outbox import enqueue_outbox
+
 ISSUE_ACTIONS = {"note", "record_case", "record_memory", "request_candidate", "reject"}
 MUTATING_ACTIONS = {"note", "record_case", "record_memory", "request_candidate", "reject"}
 
@@ -123,6 +126,96 @@ def get_failure_issue(connection: sqlite3.Connection, *, workspace: str, issue_i
     return next((item for item in rows if item["issue_id"] == issue_id), None)
 
 
+def record_failure_issue_memory(
+    connection: sqlite3.Connection,
+    *,
+    workspace: str,
+    issue: dict[str, Any],
+    actor: str,
+    note: str = "",
+) -> str:
+    """Persist one redacted recovery rule as a versioned semantic memory.
+
+    Issue fields are already derived by the recovery redaction boundary.  The
+    memory body is still bounded and contains no transcript or tool payload.
+    Replaying the same issue is idempotent by ``memory_id`` and content hash.
+    """
+
+    issue_id = str(issue.get("issue_id") or "").strip()
+    if not issue_id or not workspace or not actor:
+        raise ValueError("issue, workspace and actor are required")
+    memory_id = f"recovery-memory:{hashlib.sha256(issue_id.encode()).hexdigest()[:24]}"
+    title = f"失败恢复规则：{str(issue.get('task_goal') or '未命名任务')[:120]}"
+    summary = (
+        f"失败类别：{str(issue.get('failure_class') or '未分类')[:120]}；"
+        f"纠正方向：{str(issue.get('correction_goal') or '未记录')[:240]}"
+    )
+    content = (
+        "适用场景：\n"
+        f"- 任务：{str(issue.get('task_goal') or '未记录')[:360]}\n"
+        f"- 失败类别：{str(issue.get('failure_class') or '未分类')[:120]}\n\n"
+        "恢复规则：\n"
+        f"- {str(issue.get('correction_goal') or '按人工纠正方向处理')[:360]}\n"
+        "- 仅适用于同类任务；范围不一致时转人工确认。\n"
+        "- 不写入凭据、成员身份、完整对话、隐藏推理或完整工具参数。\n"
+    )
+    now = _now()
+    content_hash = digest(content)
+    revision_id = f"recovery-memory-revision:{content_hash[7:31]}"
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        existing = connection.execute(
+            "SELECT current_revision_id FROM memory_records WHERE memory_id=?", (memory_id,)
+        ).fetchone()
+        if existing and existing[0]:
+            current = connection.execute(
+                "SELECT content_hash FROM memory_revisions WHERE revision_id=?", (existing[0],)
+            ).fetchone()
+            if current and str(current[0]) == content_hash:
+                connection.commit()
+                return memory_id
+        connection.execute(
+            """INSERT INTO memory_records
+               (memory_id,namespace,memory_type,source_actor,title,summary,source_refs_json,
+                tags_json,sensitivity,confidence,authority,salience,effective_score,status,
+                deletion_state,current_revision_id,created_at,updated_at)
+               VALUES(?,?,?,?,?,?,?,'[\"failure-recovery\"]','private',0.8,0.8,0.7,0.8,
+                      'active','none',?,?,?)
+               ON CONFLICT(memory_id) DO UPDATE SET title=excluded.title,summary=excluded.summary,
+                 source_refs_json=excluded.source_refs_json,status='active',updated_at=excluded.updated_at""",
+            (memory_id, "workspace", "decision", actor, title, summary,
+             json.dumps([issue_id], ensure_ascii=False), existing[0] if existing else revision_id,
+             now, now),
+        )
+        connection.execute(
+            """INSERT OR IGNORE INTO memory_revisions
+               (revision_id,memory_id,revision_no,content,summary,content_hash,previous_revision_id,
+                author_actor,reason,created_at)
+               VALUES(?,?,?,?,?,?,?,?,?,?)""",
+            (revision_id, memory_id, 1, content, summary, content_hash,
+             existing[0] if existing else None, actor, note[:500] or "管理员确认失败恢复规则", now),
+        )
+        connection.execute(
+            "UPDATE memory_records SET current_revision_id=?,updated_at=? WHERE memory_id=?",
+            (revision_id, now, memory_id),
+        )
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    enqueue_outbox(
+        connection,
+        workspace=workspace,
+        object_type="memory",
+        object_id=memory_id,
+        revision_id=revision_id,
+        content_hash=content_hash,
+        operation="upsert",
+        payload={"memory_id": memory_id, "revision_id": revision_id},
+    )
+    return memory_id
+
+
 def apply_failure_issue_action(
     connection: sqlite3.Connection,
     *,
@@ -184,10 +277,18 @@ def apply_failure_issue_action(
     except Exception:
         connection.rollback()
         raise
+    if action == "record_memory":
+        record_failure_issue_memory(
+            connection,
+            workspace=workspace,
+            issue=issue,
+            actor=actor_openid,
+            note=note,
+        )
     return {"issue_id": issue_id, "status": next_status, "idempotent": False}
 
 
 __all__ = [
     "ISSUE_ACTIONS", "MUTATING_ACTIONS", "apply_failure_issue_action", "create_failure_issues",
-    "get_failure_issue", "list_failure_issues",
+    "get_failure_issue", "list_failure_issues", "record_failure_issue_memory",
 ]
