@@ -292,3 +292,117 @@ _other/评测/外部Benchmark/
 5. P1 和 P2 有稳定结果后，再运行 GAIA 30-case 综合试点。
 
 已有 nanobot 内部专项评测仅在对应代码变化时做聚焦回归；不再把它们作为后续外部评测项目重复执行。
+
+## 十三、外部项目、数据集和文档索引
+
+本节是后续执行入口。当前只登记链接和命令，不下载代码、数据集或模型权重。
+外部项目统一放在 nanobot 仓库之外的临时目录或专用评测目录，不能直接写入
+`runtime/workspace/`，也不能把第三方仓库混入 KdmCopilot 提交。
+
+### 13.1 BFCL：工具调用 smoke gate
+
+- 代码仓库：<https://github.com/ShishirPatil/gorilla>
+- 官方榜单：<https://gorilla.cs.berkeley.edu/leaderboard.html>
+- 项目文档入口：<https://github.com/ShishirPatil/gorilla/tree/main/berkeley-function-calling-leaderboard>
+- 相关论文：<https://arxiv.org/abs/2305.15334>
+
+建议准备命令：
+
+```bash
+mkdir -p /tmp/kdm-agent-eval-src
+git clone --depth 1 https://github.com/ShishirPatil/gorilla.git \
+  /tmp/kdm-agent-eval-src/gorilla
+```
+
+只取 BFCL 相关代码和 20～30 个 smoke case。不要下载 Gorilla 其他模型、完整实验产物或无关数据。
+
+### 13.2 τ-Bench：第一优先级正式评测
+
+- 代码仓库：<https://github.com/sierra-research/tau2-bench>
+- 官网和榜单：<https://taubench.com>
+- 快速开始：<https://github.com/sierra-research/tau2-bench/blob/main/docs/getting-started.md>
+- CLI 参考：<https://github.com/sierra-research/tau2-bench/blob/main/docs/cli-reference.md>
+- 评测规则：<https://github.com/sierra-research/tau2-bench/blob/main/docs/evaluation.md>
+- Agent 开发指南：<https://github.com/sierra-research/tau2-bench/blob/main/src/tau2/agent/README.md>
+- 领域说明：<https://github.com/sierra-research/tau2-bench/blob/main/src/tau2/domains/README.md>
+- 核心论文：<https://arxiv.org/abs/2506.07982>
+
+建议准备命令：
+
+```bash
+git clone --depth 1 https://github.com/sierra-research/tau2-bench.git \
+  /tmp/kdm-agent-eval-src/tau2-bench
+cd /tmp/kdm-agent-eval-src/tau2-bench
+uv sync
+uv run tau2 intro
+```
+
+正式适配前先锁定仓库 commit、Python/uv 版本和任务数据版本。首批只准备 `retail`、`airline`，
+不启用 voice、knowledge 或训练扩展；官方任务修复后必须升级评测版本，不能与旧分数直接比较。
+
+### 13.3 AgentDojo：安全评测
+
+- 代码仓库：<https://github.com/ethz-spylab/agentdojo>
+- 官方文档：<https://agentdojo.spylab.ai/>
+- 论文：<https://arxiv.org/abs/2406.13352>
+
+建议准备命令：
+
+```bash
+git clone --depth 1 https://github.com/ethz-spylab/agentdojo.git \
+  /tmp/kdm-agent-eval-src/agentdojo
+```
+
+执行前必须准备隔离 workspace、假凭据、本地 fixture 和无生产副作用的工具环境。
+不把真实 API key、Cookie、邮箱、消息渠道或生产文件接入 AgentDojo。
+
+### 13.4 GAIA：综合能力试点
+
+- 数据集入口：<https://huggingface.co/datasets/gaia-benchmark/GAIA>
+- 数据集组织页：<https://huggingface.co/gaia-benchmark>
+- 论文：<https://arxiv.org/abs/2311.12983>
+- 任务说明和评测讨论：<https://huggingface.co/datasets/gaia-benchmark/GAIA>
+
+GAIA 的主要入口是 Hugging Face 数据集，不要求先克隆一个 GitHub 项目。下载前先筛选 30 个
+可在隔离环境复现的文本/文件任务；不要直接下载完整数据集、运行需要真实账号的任务或保存敏感附件。
+如果后续使用 Hugging Face CLI，必须指定数据集仓库、版本和受控的本地目录，并在运行记录中保存
+下载版本和文件清单。
+
+### 13.5 暂缓项目资料
+
+以下项目暂不进入本轮执行，只保留官方入口，避免提前下载大型环境：
+
+- AgentBench：<https://github.com/THUDM/AgentBench>
+- BrowserGym：<https://github.com/ServiceNow/BrowserGym>
+- WebArena：<https://github.com/web-arena-x/webarena>
+- SWE-bench：<https://github.com/SWE-bench/SWE-bench>
+- MLE-bench：<https://github.com/openai/mle-bench>
+
+### 13.6 可选评估框架
+
+这些不是能力数据集，只有在需要统一运行器或评分器时再选用：
+
+- Inspect AI：<https://inspect.aisi.org.uk/>，代码：<https://github.com/UKGovernmentBEIS/inspect_ai>
+- DeepEval：<https://deepeval.com/docs/getting-started>，代码：<https://github.com/confident-ai/deepeval>
+- LangSmith Evaluation：<https://docs.smith.langchain.com/evaluation>
+
+首轮不因为引入评估框架而改变 nanobot 的运行链路；优先使用 nanobot 自身的 AgentRunner、Audit
+和确定性断言，框架只负责编排或展示时再接入。
+
+## 十四、合并后的执行分支约定
+
+当前分支只维护本计划和已有工作，不在本分支下载外部 Benchmark 或实现 adapter。待本分支按流程合并
+到 `main` 后，重新从最新远端 `main` 创建独立评测分支：
+
+```bash
+git switch main
+git pull --ff-only origin main
+git switch -c codex/agent-eval-external
+```
+
+随后按以下顺序开始实际工作：
+
+1. 在仓库外准备 BFCL 和 τ-Bench 源码，锁定 commit 和依赖版本。
+2. 先完成 BFCL smoke gate 的 adapter 与确定性 fake tools。
+3. 通过 smoke gate 后，立即进入 τ-Bench 第一优先级正式试点。
+4. 每项评测只新增对应的 `外部Benchmark/<项目>/V1/运行记录/`，不覆盖历史结果。
