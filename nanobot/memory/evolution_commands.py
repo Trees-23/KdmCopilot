@@ -212,6 +212,11 @@ class EvolutionCommandService:
             "/evolve list rejected | failed\n查看已拒绝/质量拦截或失败的记录\n\n"
 
             "/evolve recovery\n查看已通过质量门禁的恢复案例（不会自动生成 Skill）\n\n"
+            "/evolve recovery list pending|all\n查看失败改进 Issue\n\n"
+            "/evolve recovery review <Issue 编号>\n查看失败改进 Issue 详情\n\n"
+            "/evolve recovery accept <Issue 编号> record_case|record_memory|request_candidate\n处理 Issue\n\n"
+            "/evolve recovery reject <Issue 编号> 原因\n拒绝失败改进 Issue\n\n"
+            "/evolve recovery note <Issue 编号> 补充\n补充人工纠正方向\n\n"
             "/evolve list recent\n查看最近的 Proposal\n\n"
             "/evolve overlay\n查看私有 Overlay 中的候选 Skill\n\n"
             "/evolve overlay <Skill 名称>\n查看候选 Skill 正文（仅审批管理员）\n\n"
@@ -403,6 +408,8 @@ class EvolutionCommandService:
             return self.handle("list rejected", metadata=metadata)
         if any(word in value for word in ("恢复案例", "恢复经验", "怎么修复过")):
             return self.handle("recovery", metadata=metadata)
+        if any(word in value for word in ("失败 issue", "失败改进", "待评论", "失败问题")):
+            return self.handle("recovery list pending", metadata=metadata)
         if any(word in value for word in ("失败", "报错", "异常")):
             return self.handle("list failed", metadata=metadata)
         if any(word in value for word in ("待确认", "待审核", "待批准", "待审阅", "沉淀")):
@@ -413,6 +420,84 @@ class EvolutionCommandService:
             self._require_scope(metadata)
             return self._active_skill_list()
         return None
+
+    def _recovery_command(
+        self,
+        tokens: list[str],
+        *,
+        connection: sqlite3.Connection,
+        group: str,
+        actor: str | None,
+    ) -> EvolutionCommandResult:
+        from nanobot.memory.failure_issues import apply_failure_issue_action, list_failure_issues
+
+        subaction = tokens[1].lower() if len(tokens) > 1 else "list"
+        if subaction == "list":
+            mode = tokens[2].lower() if len(tokens) > 2 else "pending"
+            statuses = ("pending_review",) if mode == "pending" else None
+            issues = list_failure_issues(connection, workspace=self.workspace, statuses=statuses)
+            if not issues:
+                return EvolutionCommandResult("失败改进 Issue：当前没有可显示的记录。")
+            labels = {
+                "pending_review": "待评论", "recorded_case": "仅记录 Case", "memory_recorded": "已写入语义记忆",
+                "candidate_requested": "已申请修复候选", "rejected": "已拒绝",
+                "insufficient_evidence": "证据不足", "expired": "已过期",
+            }
+            lines = ["失败改进 Issue："]
+            for issue in issues:
+                lines.extend([
+                    f"- 编号：{issue['issue_id']}",
+                    f"  场景：{issue['task_goal'] or '未记录'}",
+                    f"  状态：{labels.get(issue['status'], issue['status'])}；失败类别：{issue['failure_class']}",
+                    f"  查看：/evolve recovery review {issue['issue_id']}",
+                ])
+            return EvolutionCommandResult("\n".join(lines))
+        if len(tokens) < 3:
+            return EvolutionCommandResult(
+                "用法：/evolve recovery list pending|all | review <Issue 编号> | "
+                "accept <Issue 编号> record_case|record_memory|request_candidate | "
+                "reject <Issue 编号> 原因 | note <Issue 编号> 补充"
+            )
+        issue_id = tokens[2]
+        from nanobot.memory.failure_issues import get_failure_issue
+
+        issue = get_failure_issue(connection, workspace=self.workspace, issue_id=issue_id)
+        if issue is None:
+            return EvolutionCommandResult("未找到该失败改进 Issue，或它不属于当前工作区。")
+        if subaction == "review":
+            return EvolutionCommandResult(
+                "【失败改进 Issue】\n"
+                f"编号：{issue['issue_id']}\n"
+                f"场景：{issue['task_goal'] or '未记录'}\n"
+                f"失败类别：{issue['failure_class']}\n"
+                f"纠正方向：{issue['correction_goal'] or '未记录'}\n"
+                f"状态：{issue['status']}\n"
+                f"摘要：{issue['summary']}\n"
+                f"建议：{issue['recommendation']}"
+            )
+        if actor is None:
+            return EvolutionCommandResult("拒绝：只有审批管理员可以处理失败改进 Issue。")
+        action_map = {"accept": tokens[3] if len(tokens) > 3 else "record_case", "reject": "reject", "note": "note"}
+        if subaction not in action_map:
+            return EvolutionCommandResult("用法：review | accept | reject | note")
+        action = action_map[subaction]
+        if action not in {"record_case", "record_memory", "request_candidate", "reject", "note"}:
+            return EvolutionCommandResult("可选动作：record_case、record_memory、request_candidate")
+        if action == "request_candidate" and not bool(
+            getattr(getattr(self.config, "evolution", self.config), "recovery_skill_candidate_enabled", False)
+        ):
+            return EvolutionCommandResult("修复 Skill 候选当前关闭；可先使用 record_case 或 record_memory。")
+        note = " ".join(tokens[3:]) if len(tokens) > 3 else ""
+        try:
+            result = apply_failure_issue_action(
+                connection, workspace=self.workspace, issue_id=issue_id, action=action,
+                actor_openid=actor, group_openid=group, note=note,
+                idempotency_key=f"qq:{issue_id}:{action}:{actor}:{note}",
+            )
+        except (LookupError, ValueError) as exc:
+            return EvolutionCommandResult(f"失败改进 Issue 操作未执行：{exc}")
+        labels = {"recorded_case": "已记录为 Case", "memory_recorded": "已写入语义记忆", "candidate_requested": "已申请修复 Skill 候选", "rejected": "已拒绝", "pending_review": "已记录补充意见"}
+        return EvolutionCommandResult(f"Issue {issue_id}：{labels.get(str(result['status']), result['status'])}。")
 
     def handle(self, args: str, *, metadata: Mapping[str, Any]) -> EvolutionCommandResult:
         tokens = args.strip().split(maxsplit=3)
@@ -425,6 +510,8 @@ class EvolutionCommandService:
             )
 
         mutating = action in {"approve", "reject", "rollback", "publish"}
+        if action == "recovery" and len(tokens) > 1 and tokens[1].lower() in {"accept", "reject", "note"}:
+            mutating = True
         try:
             group, actor = self._require_scope(metadata, mutating=mutating)
         except PermissionError as exc:
@@ -451,11 +538,17 @@ class EvolutionCommandService:
                     f"- A/B 质量门禁：{ab_mode_label}\n"
                     f"- A/B 评测预算：{getattr(evolution, 'ab_evaluation_max_candidates_per_day', 2)} 个候选/日，"
                     f"{getattr(evolution, 'ab_evaluation_max_model_calls_per_day', 40)} 次调用/日\n"
+                    f"- 失败 Issue 汇总：{'开启' if bool(getattr(evolution, 'recovery_review_enabled', True)) else '关闭'}（每天 12:00）\n"
+                    f"- 失败 Issue 通知：{'开启' if bool(getattr(evolution, 'recovery_notifications_enabled', False)) else '关闭'}\n"
+                    f"- 修复 Skill 候选：{'开启' if bool(getattr(evolution, 'recovery_skill_candidate_enabled', False)) else '关闭'}\n"
                     "- 当前群：已通过群范围校验"
                 )
 
             if action == "overlay":
                 return self._overlay_command(tokens, actor=actor)
+
+            if action == "recovery" and len(tokens) > 1 and tokens[1].lower() in {"list", "review", "accept", "reject", "note"}:
+                return self._recovery_command(tokens, connection=connection, group=group, actor=actor)
 
             if action == "recovery":
                 from nanobot.memory.recovery_evidence import list_recovery_reviews

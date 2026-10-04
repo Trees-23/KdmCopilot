@@ -19,6 +19,7 @@ from nanobot.memory.db import connect_memory_db
 from nanobot.memory.evolution_commands import _format_beijing_time
 from nanobot.memory.migrations.runner import apply_migrations
 from nanobot.memory.proposal_repository import (
+    DeliveryQuotaExceededError,
     ProposalConflict,
     ProposalRepository,
 )
@@ -59,6 +60,9 @@ class ProposalNotifier:
 
     def _enabled(self) -> bool:
         return bool(getattr(self._evolution(), "notifications_enabled", False))
+
+    def _recovery_enabled(self) -> bool:
+        return bool(getattr(self._evolution(), "recovery_notifications_enabled", False))
 
     def _open(self) -> sqlite3.Connection:
         connection = self._connection_factory(self.workspace)
@@ -140,6 +144,124 @@ class ProposalNotifier:
             "系统将于下一次受保护扫描重试；可用 /evolve status 查看运行状态。",
             fingerprint=safe_reason,
         )
+
+    @staticmethod
+    def _failure_issue_content(issue: Mapping[str, Any]) -> str:
+        return (
+            "【失败改进 Issue】\n"
+            f"编号：{issue['issue_id']}\n"
+            f"场景：{issue['task_goal'] or '未记录'}\n"
+            f"失败类别：{issue['failure_class']}\n"
+            f"纠正方向：{issue['correction_goal'] or '未记录'}\n"
+            f"状态：{issue['status']}\n"
+            f"建议：{issue['recommendation']}\n\n"
+            f"查看：/evolve recovery review {issue['issue_id']}\n"
+            f"处理：/evolve recovery accept {issue['issue_id']} record_case\n"
+            f"拒绝：/evolve recovery reject {issue['issue_id']} 原因"
+        )
+
+    def enqueue_failure_issue(self, issue_id: str, *, group_openid: str) -> int:
+        """Queue one idempotent human-review Issue notification."""
+        if not self._recovery_enabled() or group_openid not in self._groups():
+            return 0
+        from nanobot.memory.failure_issues import get_failure_issue
+
+        connection = self._open()
+        try:
+            issue = get_failure_issue(connection, workspace=self.workspace, issue_id=issue_id)
+            if issue is None or issue["status"] != "pending_review":
+                return 0
+            content = self._failure_issue_content(issue)
+            now = datetime.now(UTC).isoformat(timespec="seconds")
+            scope = connection.execute(
+                "SELECT notification_enabled,daily_notification_limit FROM group_memory_scopes WHERE group_openid=?",
+                (group_openid,),
+            ).fetchone()
+            if scope and int(scope[0]):
+                day_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0).isoformat(timespec="seconds")
+                sent_count = connection.execute(
+                    """SELECT count(*) FROM proposal_deliveries
+                       WHERE group_openid=? AND created_at>=? AND status IN ('pending','leased','sent','retry_wait')""",
+                    (group_openid, day_start),
+                ).fetchone()[0]
+                sent_count += connection.execute(
+                    """SELECT count(*) FROM failure_issue_deliveries
+                       WHERE group_openid=? AND created_at>=? AND status IN ('pending','leased','sent','retry')""",
+                    (group_openid, day_start),
+                ).fetchone()[0]
+                if int(sent_count) >= int(scope[1]):
+                    raise DeliveryQuotaExceededError("group notification quota exceeded")
+            try:
+                connection.execute(
+                    """INSERT INTO failure_issue_deliveries
+                       (delivery_id,issue_id,workspace,group_openid,content_hash,payload,status,next_attempt_at,created_at,updated_at)
+                       VALUES(?,?,?,?,?,?, 'pending',?,?,?)""",
+                    (f"failure-delivery-{uuid4()}", issue_id, self.workspace, group_openid,
+                     _digest(content), content, now, now, now),
+                )
+            except sqlite3.IntegrityError:
+                return 0
+            connection.commit()
+            return 1
+        finally:
+            connection.close()
+
+    async def deliver_failure_issue_once(self, *, worker_id: str = "gateway-failure-issues") -> str:
+        """Deliver one leased failure Issue notification with bounded retry."""
+        connection = self._open()
+        try:
+            now = datetime.now(UTC).isoformat(timespec="seconds")
+            row = connection.execute(
+                """SELECT delivery_id,issue_id,group_openid,payload,attempt_count FROM failure_issue_deliveries
+                   WHERE status IN ('pending','retry') AND next_attempt_at<=?
+                   ORDER BY created_at LIMIT 1""",
+                (now,),
+            ).fetchone()
+            if row is None:
+                return "empty"
+            delivery_id, issue_id, group_openid, payload, attempts = row
+            leased = connection.execute(
+                "UPDATE failure_issue_deliveries SET status='leased',lease_until=?,updated_at=? "
+                "WHERE delivery_id=? AND status IN ('pending','retry')",
+                (now, now, delivery_id),
+            ).rowcount
+            connection.commit()
+            if not leased:
+                return "empty"
+            message = OutboundMessage(
+                channel="qq", chat_id=group_openid, content=str(payload),
+                metadata={"qq_chat_type": "group", "group_openid": group_openid,
+                          "failure_issue_id": issue_id, "failure_issue_delivery_id": delivery_id,
+                          "system_notification": True},
+            )
+            try:
+                await self.bus.publish_outbound(message)
+            except Exception as exc:
+                attempts = int(attempts or 0) + 1
+                status = "dead_letter" if attempts >= 5 else "retry"
+                connection.execute(
+                    "UPDATE failure_issue_deliveries SET status=?,attempt_count=?,last_error=?,next_attempt_at=?,updated_at=? WHERE delivery_id=?",
+                    (status, attempts, str(exc)[:300], now, now, delivery_id),
+                )
+                connection.commit()
+                if status == "dead_letter":
+                    self.enqueue_alert(
+                        "recovery_issue_delivery_dead_letter",
+                        "【失败改进 Issue 通知异常】\n"
+                        f"Issue：{issue_id}\n"
+                        "结果：通知进入 dead-letter，未丢失 Issue；请使用 /evolve recovery list all 查看。\n"
+                        "原因：投递连续失败，系统已停止自动重试。",
+                        fingerprint=f"failure-issue:{issue_id}:dead-letter",
+                    )
+                return status
+            connection.execute(
+                "UPDATE failure_issue_deliveries SET status='sent',attempt_count=attempt_count+1,audit_ref=?,updated_at=? WHERE delivery_id=?",
+                (f"bus:{delivery_id}", now, delivery_id),
+            )
+            connection.commit()
+            return "sent"
+        finally:
+            connection.close()
 
     @staticmethod
     def _content(record: Any, code: str) -> str:

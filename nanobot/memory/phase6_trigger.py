@@ -27,6 +27,7 @@ from nanobot.memory.migrations.runner import apply_migrations
 from nanobot.memory.trace_indexer import index_audit_root
 
 PHASE6_REVIEW_JOB_ID = "phase6-evolution-review"
+RECOVERY_ISSUE_REVIEW_JOB_ID = "phase6-recovery-issue-review"
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +35,14 @@ class Phase6TriggerPolicy:
     """Stable production schedule policy."""
 
     cron_expression: str = "0 14 * * *"
+    timezone: str = "Asia/Shanghai"
+
+
+@dataclass(frozen=True, slots=True)
+class RecoveryIssueTriggerPolicy:
+    """Daily human-review digest schedule for recovered failures."""
+
+    cron_expression: str = "0 12 * * *"
     timezone: str = "Asia/Shanghai"
 
 
@@ -62,6 +71,71 @@ def register_phase6_review_job(cron: Any, config: Any, *, policy: Phase6TriggerP
         return False
     cron.register_system_job(build_phase6_review_job(policy))
     return True
+
+
+def build_recovery_issue_review_job(policy: RecoveryIssueTriggerPolicy | None = None) -> CronJob:
+    selected = policy or RecoveryIssueTriggerPolicy()
+    return CronJob(
+        id=RECOVERY_ISSUE_REVIEW_JOB_ID,
+        name=RECOVERY_ISSUE_REVIEW_JOB_ID,
+        schedule=CronSchedule(kind="cron", expr=selected.cron_expression, tz=selected.timezone),
+        payload=CronPayload(kind="system_event"),
+    )
+
+
+def register_recovery_issue_review_job(cron: Any, config: Any, *, policy: RecoveryIssueTriggerPolicy | None = None) -> bool:
+    if not bool(getattr(config, "enabled", False)) or bool(getattr(config, "kill_switch", False)):
+        return False
+    evolution = getattr(config, "evolution", config)
+    if not bool(getattr(evolution, "recovery_review_enabled", True)):
+        return False
+    cron.register_system_job(build_recovery_issue_review_job(policy))
+    return True
+
+
+def run_recovery_issue_scan(
+    workspace: str | Path,
+    config: Any,
+    *,
+    notify_issue: Any | None = None,
+) -> dict[str, Any]:
+    """Create idempotent human-review Issues from M13 recovery reviews."""
+
+    root = Path(workspace).expanduser().resolve()
+    connection = connect_memory_db(root)
+    try:
+        apply_migrations(connection)
+        evolution = getattr(config, "evolution", config)
+        if not bool(getattr(config, "enabled", False)) or bool(getattr(config, "kill_switch", False)):
+            return {"status": "disabled", "created": (), "notified": 0}
+        from nanobot.memory.failure_issues import create_failure_issues, list_failure_issues
+        from nanobot.memory.recovery_evidence import review_recovery_episodes
+
+        review_recovery_episodes(connection, workspace=str(root))
+        created = create_failure_issues(connection, workspace=str(root))
+        notified = 0
+        if bool(getattr(evolution, "recovery_notifications_enabled", False)) and notify_issue is not None:
+            groups = tuple(str(item) for item in getattr(evolution, "notification_groups", ()) or () if str(item))
+            for issue_id in created:
+                for group in groups:
+                    try:
+                        notified += int(notify_issue(issue_id, group) or 0)
+                    except Exception:
+                        continue
+        pending = list_failure_issues(connection, workspace=str(root), statuses=("pending_review",))
+        append_evidence(
+            root,
+            EvidenceRecord(
+                "recovery_issue_cycle",
+                datetime.now(UTC).isoformat(timespec="seconds"),
+                status="ok",
+                metrics={"created_issues": len(created), "pending_issues": len(pending), "notified": notified},
+            ),
+            Phase6RuntimeConfig.from_config(config),
+        )
+        return {"status": "completed", "created": created, "notified": notified, "pending": len(pending)}
+    finally:
+        connection.close()
 
 
 async def run_phase6_review_scan_async(
@@ -256,9 +330,14 @@ def run_phase6_review_scan(
 
 __all__ = [
     "PHASE6_REVIEW_JOB_ID",
+    "RECOVERY_ISSUE_REVIEW_JOB_ID",
     "Phase6TriggerPolicy",
+    "RecoveryIssueTriggerPolicy",
     "build_phase6_review_job",
+    "build_recovery_issue_review_job",
     "register_phase6_review_job",
+    "register_recovery_issue_review_job",
+    "run_recovery_issue_scan",
     "run_phase6_review_scan",
     "run_phase6_review_scan_async",
 ]

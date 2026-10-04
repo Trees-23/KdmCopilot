@@ -43,6 +43,61 @@ def test_confirmation_expiry_is_rendered_as_beijing_time():
     )
 
 
+def test_recovery_issue_commands_show_and_route_admin_feedback(tmp_path):
+    from nanobot.memory.failure_issues import create_failure_issues
+    from nanobot.memory.recovery_evidence import (
+        link_successful_correction,
+        record_failed_episode,
+        review_recovery_episodes,
+    )
+
+    connection = connect_memory_db(tmp_path)
+    apply_migrations(connection)
+    workspace = str(tmp_path.resolve())
+    for index in range(3):
+        record_failed_episode(
+            connection,
+            workspace=workspace,
+            trace_id=f"cmd-failure-{index}",
+            session_key=f"cmd-session-{index}",
+            source_type="user",
+            stop_reason="tool_error",
+            user_text="请查询当前工作区有哪些可用 Skill",
+            tools=("skill_read",),
+        )
+        assert link_successful_correction(
+            connection,
+            workspace=workspace,
+            trace_id=f"cmd-success-{index}",
+            session_key=f"cmd-session-{index}",
+            source_type="user",
+            user_text="请查询当前工作区有哪些可用 Skill 并返回清单",
+            tools=("skill_read",),
+        )
+    assert review_recovery_episodes(connection, workspace=workspace)[0].status == "passed"
+    issue_id = create_failure_issues(connection, workspace=workspace)[0]
+    connection.close()
+
+    config = _config()
+    config.evolution.recovery_review_enabled = True
+    config.evolution.recovery_skill_candidate_enabled = False
+    service = EvolutionCommandService(workspace, config)
+    pending = service.handle("recovery list pending", metadata=_metadata())
+    assert issue_id in pending.content
+    detail = service.handle(f"recovery review {issue_id}", metadata=_metadata())
+    assert "失败改进 Issue" in detail.content
+    member = service.handle(
+        f"recovery accept {issue_id} record_case",
+        metadata=_metadata(sender="member-1"),
+    )
+    assert "拒绝" in member.content
+    accepted = service.handle(
+        f"recovery accept {issue_id} record_case",
+        metadata=_metadata(sender="admin-1"),
+    )
+    assert "已记录为 Case" in accepted.content
+
+
 def _proposal(tmp_path):
     connection = connect_memory_db(tmp_path)
     apply_migrations(connection)

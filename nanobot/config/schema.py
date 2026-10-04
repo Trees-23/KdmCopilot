@@ -544,6 +544,21 @@ class Phase6EvolutionConfig(Base):
         ),
         serialization_alias="abEvaluationMaxModelCallsPerDay",
     )
+    recovery_review_enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("recoveryReviewEnabled", "recovery_review_enabled"),
+        serialization_alias="recoveryReviewEnabled",
+    )
+    recovery_notifications_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("recoveryNotificationsEnabled", "recovery_notifications_enabled"),
+        serialization_alias="recoveryNotificationsEnabled",
+    )
+    recovery_skill_candidate_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("recoverySkillCandidateEnabled", "recovery_skill_candidate_enabled"),
+        serialization_alias="recoverySkillCandidateEnabled",
+    )
 
 
 class Phase6Config(Base):
