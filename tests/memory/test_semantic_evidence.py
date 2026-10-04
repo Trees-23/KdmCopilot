@@ -121,3 +121,36 @@ def test_agent_loop_records_a_safe_recovery_failure_without_creating_semantic_ev
     assert row[0] == "failed"
     assert "secret-value" not in row[1]
     connection.close()
+
+
+def test_agent_loop_records_tool_failure_even_when_turn_completes(tmp_path) -> None:
+    loop = AgentLoop.__new__(AgentLoop)
+    loop.workspace = str(tmp_path)
+    loop.phase6_config = SimpleNamespace(enabled=True)
+    context = SimpleNamespace(
+        kind=TurnKind.USER,
+        original_user_text="请读取不存在的 m16-qq-recovery-check.txt",
+        audit_turn=SimpleNamespace(trace_id="trace-tool-recovered", turn_id="turn-tool-recovered"),
+        audit_run=SimpleNamespace(source_type="user"),
+        stop_reason="completed",
+        request_context=None,
+        session_key="session-tool-recovered",
+        tools_used=[],
+        tool_events=[
+            {"tool_name": "read_file", "status": "error", "error_code": "file_not_found"},
+        ],
+    )
+
+    loop._capture_semantic_evolution_evidence(context)
+
+    connection = connect_memory_db(tmp_path)
+    apply_migrations(connection)
+    assert connection.execute(
+        "SELECT count(*) FROM semantic_task_evidence WHERE trace_id='trace-tool-recovered'"
+    ).fetchone()[0] == 0
+    row = connection.execute(
+        "SELECT status,failure_tools_json,rejection_reason FROM recovery_episodes "
+        "WHERE failure_trace_id='trace-tool-recovered'"
+    ).fetchone()
+    assert tuple(row) == ("failed", '["read_file"]', None)
+    connection.close()

@@ -175,6 +175,7 @@ class TurnContext:
 
     final_content: str | None = None
     tools_used: list[str] = field(default_factory=list)
+    tool_events: list[dict[str, Any]] = field(default_factory=list)
     all_messages: list[dict[str, Any]] = field(default_factory=list)
     stop_reason: str = ""
     had_injections: bool = False
@@ -1001,6 +1002,7 @@ class AgentLoop:
         hook_factories: list[AgentTurnHookFactory] | None = None,
         turn_scopes: list[AbstractContextManager[Any]] | None = None,
         tools: ToolRegistry | None = None,
+        tool_events: list[dict[str, Any]] | None = None,
         request_context: RequestContext | None = None,
         audit_context: AuditRunContext | None = None,
     ) -> tuple[str | None, list[str], list[dict], str, bool]:
@@ -1012,6 +1014,9 @@ class AgentLoop:
         ``resuming=False`` means this is the final response.
 
         Returns (final_content, tools_used, messages, stop_reason, had_injections).
+
+        ``tool_events`` is an optional compatibility-preserving side channel for
+        callers that need to distinguish successful and failed tool calls.
         """
         self._sync_subagent_runtime_limits()
 
@@ -1395,6 +1400,8 @@ class AgentLoop:
                 await on_stream_end(resuming=False)
         elif result.stop_reason == "error":
             logger.error("LLM returned error: {}", (result.final_content or "")[:200])
+        if tool_events is not None:
+            tool_events.extend(result.tool_events)
         return result.final_content, result.tools_used, result.messages, result.stop_reason, result.had_injections
 
     async def run(self) -> None:
@@ -2188,6 +2195,7 @@ class AgentLoop:
             hook_factories=ctx.hook_factories,
             turn_scopes=ctx.turn_scopes,
             tools=ctx.tools,
+            tool_events=ctx.tool_events,
             request_context=ctx.request_context,
             audit_context=ctx.audit_run,
         )
@@ -2302,6 +2310,29 @@ class AgentLoop:
                     stop_reason=ctx.stop_reason,
                     user_text=ctx.original_user_text,
                     tools=ctx.tools_used,
+                )
+                return
+            failed_tool_names = tuple(
+                str(event.get("tool_name"))
+                for event in getattr(ctx, "tool_events", ())
+                if isinstance(event, dict)
+                and event.get("status") in {"error", "blocked", "timeout"}
+                and str(event.get("tool_name") or "").strip()
+            )
+            if failed_tool_names:
+                # A tool can fail while the Agent still completes the turn. Keep
+                # that failure as recovery evidence so a later correction can be
+                # linked to it; successful tools remain useful context but are
+                # not needed to prove the failed operation.
+                record_failed_episode(
+                    connection,
+                    workspace=resolved_workspace,
+                    trace_id=ctx.audit_turn.trace_id,
+                    session_key=ctx.session_key,
+                    source_type=ctx.audit_run.source_type,
+                    stop_reason="tool_error",
+                    user_text=ctx.original_user_text,
+                    tools=failed_tool_names,
                 )
                 return
             persist_turn_semantic_evidence(
