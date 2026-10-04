@@ -38,14 +38,15 @@ Session、Audit 或 WebUI，应只针对受影响的内部能力做聚焦回归�
 
 ```text
 P0 评测协议与适配准备
-  -> P1 BFCL 小子集：工具选择和参数
-  -> P2 τ-Bench 试点：多轮工具-Agent-User 任务
-  -> P3 AgentDojo 安全集：注入、越权和敏感数据
-  -> P4 GAIA 小规模综合集：检索、文件、规划和交付
+  -> BFCL smoke gate：工具适配器和调用底线预检
+  -> P1 τ-Bench 试点：多轮工具-Agent-User 任务
+  -> P2 AgentDojo 安全集：注入、越权和敏感数据
+  -> P3 GAIA 小规模综合集：检索、文件、规划和交付
 ```
 
 推荐顺序不是按项目知名度排序，而是按“对当前项目的相关性、适配成本、结果确定性”排序。
-P1 和 P2 是首批必须完成的外部评测；P3 是安全门禁；P4 用于综合能力横向参考。
+τ-Bench 是第一优先级和第一项正式外部评测。BFCL 只作为进入 τ-Bench 前的低成本技术预检，
+不代表产品能力优先级。P2 是安全门禁；P3 用于综合能力横向参考。
 
 ## 四、P0：协议和适配准备
 
@@ -91,7 +92,7 @@ P1 和 P2 是首批必须完成的外部评测；P3 是安全门禁；P4 用于�
 }
 ```
 
-## 五、P1：BFCL 工具调用基线
+## 五、BFCL smoke gate：工具调用技术预检
 
 官方项目：<https://github.com/ShishirPatil/gorilla>
 官方榜单：<https://gorilla.cs.berkeley.edu/leaderboard.html>
@@ -123,7 +124,8 @@ P1 和 P2 是首批必须完成的外部评测；P3 是安全门禁；P4 用于�
 - 无效工具率不高于 5%。
 - 不允许出现未记录的工具调用或无法关联到 trace 的执行。
 
-未达到门槛时，先分析 schema、Prompt、模型和 Runner 归因，不直接进入 τ-Bench。
+未达到门槛时，先分析 schema、Prompt、模型和 Runner 归因；该 smoke gate 未通过时不启动
+τ-Bench 正式试点。
 
 ### 产物
 
@@ -131,7 +133,7 @@ P1 和 P2 是首批必须完成的外部评测；P3 是安全门禁；P4 用于�
 - `cases.jsonl`、`results.jsonl`、汇总报告。
 - 失败 case 的工具调用和参数差异报告。
 
-## 六、P2：τ-Bench 多轮业务试点
+## 六、P1：τ-Bench 多轮业务试点
 
 官方项目：<https://github.com/sierra-research/tau2-bench>
 项目文档：<https://taubench.com>
@@ -171,7 +173,7 @@ P1 和 P2 是首批必须完成的外部评测；P3 是安全门禁；P4 用于�
 - 外部服务或任务数据版本发生变化且无法锁定。
 - 出现真实外部副作用但无法隔离或回滚。
 
-## 七、P3：AgentDojo 安全评测
+## 七、P2：AgentDojo 安全评测
 
 官方项目：<https://agentdojo.spylab.ai/>
 研究代码：<https://github.com/ethz-spylab/agentdojo>
@@ -203,7 +205,7 @@ P1 和 P2 是首批必须完成的外部评测；P3 是安全门禁；P4 用于�
 - 所有阻断必须在 Audit 中可定位。
 - 任一关键安全场景失败，P3 结论为不通过，不用平均分掩盖。
 
-## 八、P4：GAIA 综合能力试点
+## 八、P3：GAIA 综合能力试点
 
 官方数据入口：<https://huggingface.co/gaia-benchmark/GAIA>
 参考项目：<https://github.com/gaia-benchmark/GAIA>
@@ -260,10 +262,10 @@ _other/评测/外部Benchmark/
 | 阶段 | 进入条件 | 出口条件 | 不通过时动作 |
 |---|---|---|---|
 | P0 | 配置和结果 schema 固定 | adapter、fixture、评分器可复现 | 不开正式考试 |
-| P1 BFCL | P0 通过 | 达到工具选择/参数门槛 | 修复工具 schema、Prompt 或 Runner |
-| P2 τ-Bench | P1 基线稳定 | 两领域完成 60 次 trial 且无关键 policy violation | 缩小领域或修复状态/工具适配 |
-| P3 AgentDojo | 隔离环境可证明 | 关键安全场景零泄露、零越权 | 阻断后续综合评测，先修安全 |
-| P4 GAIA | P1-P3 有结果 | 形成综合能力画像和人工复核报告 | 仅作为诊断，不发布单一总分 |
+| BFCL smoke gate | P0 通过 | 达到工具选择/参数预检门槛 | 修复工具 schema、Prompt 或 Runner |
+| P1 τ-Bench | smoke gate 通过 | 两领域完成 60 次 trial 且无关键 policy violation | 缩小领域或修复状态/工具适配 |
+| P2 AgentDojo | 隔离环境可证明 | 关键安全场景零泄露、零越权 | 阻断后续综合评测，先修安全 |
+| P3 GAIA | P1-P2 有结果 | 形成综合能力画像和人工复核报告 | 仅作为诊断，不发布单一总分 |
 
 ## 十一、最终交付物
 
@@ -283,10 +285,10 @@ _other/评测/外部Benchmark/
 
 在没有额外范围变更前，按下面顺序推进：
 
-1. 完成 P0 的 BFCL adapter 设计和确定性 fake tools。
-2. 运行 BFCL 30～50 case，形成工具调用基线。
-3. 通过后适配 τ-Bench retail/airline 试点。
-4. 并行准备 AgentDojo 的本地隔离安全场景，但不连接生产资源。
-5. P2 和 P3 有稳定结果后，再运行 GAIA 30-case 综合试点。
+1. 完成 P0 的评测协议、τ-Bench adapter 设计和确定性状态断言。
+2. 先运行 BFCL 20～30 case smoke gate，确认工具 schema 和 Runner 链路可用。
+3. 通过 smoke gate 后，立即执行第一优先级的 τ-Bench retail/airline 试点。
+4. τ-Bench 试点稳定后，运行 AgentDojo 的本地隔离安全场景，不连接生产资源。
+5. P1 和 P2 有稳定结果后，再运行 GAIA 30-case 综合试点。
 
 已有 nanobot 内部专项评测仅在对应代码变化时做聚焦回归；不再把它们作为后续外部评测项目重复执行。
