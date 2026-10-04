@@ -2313,11 +2313,11 @@ class AgentLoop:
                 )
                 return
             failed_tool_names = tuple(
-                str(event.get("tool_name"))
+                str(event.get("tool_name") or event.get("name"))
                 for event in getattr(ctx, "tool_events", ())
                 if isinstance(event, dict)
                 and event.get("status") in {"error", "blocked", "timeout"}
-                and str(event.get("tool_name") or "").strip()
+                and str(event.get("tool_name") or event.get("name") or "").strip()
             )
             if failed_tool_names:
                 # A tool can fail while the Agent still completes the turn. Keep

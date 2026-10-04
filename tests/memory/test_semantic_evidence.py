@@ -137,7 +137,7 @@ def test_agent_loop_records_tool_failure_even_when_turn_completes(tmp_path) -> N
         session_key="session-tool-recovered",
         tools_used=[],
         tool_events=[
-            {"tool_name": "read_file", "status": "error", "error_code": "file_not_found"},
+            {"name": "read_file", "status": "error", "detail": "file not found"},
         ],
     )
 
