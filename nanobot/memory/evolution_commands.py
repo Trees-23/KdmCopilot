@@ -448,7 +448,8 @@ class EvolutionCommandService:
                 lines.extend([
                     f"- 编号：{issue['issue_id']}",
                     f"  场景：{issue['task_goal'] or '未记录'}",
-                    f"  状态：{labels.get(issue['status'], issue['status'])}；失败类别：{issue['failure_class']}",
+                    f"  状态：{labels.get(issue['status'], issue['status'])}；异常族：{issue.get('failure_family', '未分类')}",
+                    f"  任务族：{issue.get('task_family', '未分类')}；纠正族：{issue.get('correction_family', '未分类')}",
                     f"  查看：/evolve recovery review {issue['issue_id']}",
                 ])
             return EvolutionCommandResult("\n".join(lines))
@@ -470,10 +471,15 @@ class EvolutionCommandService:
                 f"编号：{issue['issue_id']}\n"
                 f"场景：{issue['task_goal'] or '未记录'}\n"
                 f"失败类别：{issue['failure_class']}\n"
+                f"操作族：{issue.get('operation_family', '未分类')}\n"
+                f"异常族：{issue.get('failure_family', '未分类')}\n"
+                f"任务族：{issue.get('task_family', '未分类')}\n"
+                f"纠正族：{issue.get('correction_family', '未分类')}\n"
                 f"纠正方向：{issue['correction_goal'] or '未记录'}\n"
                 f"状态：{issue['status']}\n"
                 f"摘要：{issue['summary']}\n"
-                f"建议：{issue['recommendation']}"
+                f"建议：{issue['recommendation']}\n"
+                f"人工评论：{issue.get('review_reason') or '尚未提交；申请修复候选前请先使用 note'}"
             )
         if actor is None:
             return EvolutionCommandResult("拒绝：只有审批管理员可以处理失败改进 Issue。")

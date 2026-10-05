@@ -11,6 +11,7 @@ from nanobot.memory.schema import (
     APP_BUILD,
     BASE_REQUIRED_TABLES,
     DELIVERY_PAYLOAD_MIGRATION_PATH,
+    FAILURE_ISSUE_CANDIDATES_MIGRATION_PATH,
     FAILURE_ISSUES_MIGRATION_PATH,
     MIGRATION_ID,
     MIGRATION_VERSION,
@@ -173,6 +174,7 @@ def apply_migrations(
     apply_one(7, "0007_recovery_cases", RECOVERY_CASES_MIGRATION_PATH.read_text(encoding="utf-8"), REQUIRED_TABLES - {"ab_evaluations", "ab_case_results", *legacy_issue_tables})
     apply_one(8, "0008_ab_quality_evaluations", AB_QUALITY_EVALUATIONS_MIGRATION_PATH.read_text(encoding="utf-8"), REQUIRED_TABLES - {"failure_issues", "failure_issue_actions", "failure_issue_deliveries", "failure_issue_candidates"})
     apply_one(9, "0009_failure_issues", FAILURE_ISSUES_MIGRATION_PATH.read_text(encoding="utf-8"), REQUIRED_TABLES - {"failure_issue_candidates"})
+    apply_one(10, "0010_failure_issue_candidates", FAILURE_ISSUE_CANDIDATES_MIGRATION_PATH.read_text(encoding="utf-8"), REQUIRED_TABLES)
     apply_one(MIGRATION_VERSION, MIGRATION_ID, migration_sql(), REQUIRED_TABLES)
     verify_schema(connection, schema_hash(migration_sql()))
 

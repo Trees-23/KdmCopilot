@@ -88,6 +88,11 @@ def test_failure_issue_record_memory_writes_redacted_versioned_memory(tmp_path) 
     workspace = str(tmp_path.resolve())
     _seed_recovery_review(connection, workspace)
     issue_id = create_failure_issues(connection, workspace=workspace)[0]
+    apply_failure_issue_action(
+        connection, workspace=workspace, issue_id=issue_id, action="note",
+        actor_openid="admin-1", group_openid="group-1", note="遇到同类读文件失败时先核对工作区相对路径",
+        idempotency_key="issue-candidate-note-1",
+    )
     result = apply_failure_issue_action(
         connection,
         workspace=workspace,
@@ -116,6 +121,12 @@ def test_failure_issue_request_candidate_stages_isolated_revision(tmp_path) -> N
     workspace = str(tmp_path.resolve())
     _seed_recovery_review(connection, workspace)
     issue_id = create_failure_issues(connection, workspace=workspace)[0]
+    apply_failure_issue_action(
+        connection, workspace=workspace, issue_id=issue_id, action="note",
+        actor_openid="admin-1", group_openid="group-1",
+        note="先核对工作区相对路径，再读取目标文件",
+        idempotency_key="issue-candidate-note-1",
+    )
     result = apply_failure_issue_action(
         connection,
         workspace=workspace,
@@ -138,12 +149,32 @@ def test_failure_issue_request_candidate_stages_isolated_revision(tmp_path) -> N
     connection.close()
 
 
+def test_failure_issue_candidate_requires_human_note(tmp_path) -> None:
+    connection = connect_memory_db(tmp_path)
+    apply_migrations(connection)
+    workspace = str(tmp_path.resolve())
+    _seed_recovery_review(connection, workspace)
+    issue_id = create_failure_issues(connection, workspace=workspace)[0]
+    with pytest.raises(ValueError, match="先用 note"):
+        apply_failure_issue_action(
+            connection, workspace=workspace, issue_id=issue_id, action="request_candidate",
+            actor_openid="admin-1", group_openid="group-1", idempotency_key="candidate-no-note",
+        )
+    assert connection.execute("SELECT count(*) FROM failure_issue_candidates").fetchone()[0] == 0
+    connection.close()
+
+
 def test_repair_candidate_enters_m15_and_fails_closed_with_three_episodes(tmp_path) -> None:
     connection = connect_memory_db(tmp_path)
     apply_migrations(connection)
     workspace = str(tmp_path.resolve())
     _seed_recovery_review(connection, workspace)
     issue_id = create_failure_issues(connection, workspace=workspace)[0]
+    apply_failure_issue_action(
+        connection, workspace=workspace, issue_id=issue_id, action="note",
+        actor_openid="admin-1", group_openid="group-1", note="只在文件不存在时纠正路径，不扩大读取范围",
+        idempotency_key="repair-note-1",
+    )
     apply_failure_issue_action(
         connection, workspace=workspace, issue_id=issue_id, action="request_candidate",
         actor_openid="admin-1", group_openid="group-1", idempotency_key="repair-1",

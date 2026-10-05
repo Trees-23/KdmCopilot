@@ -53,6 +53,10 @@ def create_failure_issues(
     for recovery_key, episode_json, review_status, reason_code, reason_text, _created_at in _load_review_rows(
         connection, workspace
     ):
+        # Insufficient groups remain in recovery_case_reviews for audit, but
+        # they are not Issue cards and cannot trigger QQ notifications.
+        if str(review_status) != "passed":
+            continue
         try:
             episode_ids = tuple(str(item) for item in json.loads(episode_json or "[]") if str(item))
         except (TypeError, ValueError, json.JSONDecodeError):
@@ -61,19 +65,24 @@ def create_failure_issues(
             continue
         issue_id = _stable_issue_id(str(recovery_key), episode_ids)
         sample = connection.execute(
-            """SELECT failure_goal,failure_class,correction_goal FROM recovery_episodes
+            """SELECT failure_goal,failure_class,correction_goal,operation_family,failure_family,
+                      task_family,correction_family FROM recovery_episodes
                WHERE workspace=? AND episode_id=?""",
             (workspace, episode_ids[0]),
         ).fetchone()
         goal = str(sample[0]) if sample and sample[0] else "未记录任务目标"
         failure_class = str(sample[1]) if sample and sample[1] else "未分类失败"
         correction = str(sample[2]) if sample and sample[2] else "未记录人工纠正"
-        passed = str(review_status) == "passed"
-        status = "pending_review" if passed else "insufficient_evidence"
-        recommendation = "可选择记录 Case、写入语义记忆或申请修复候选" if passed else "证据不足，仅建议保留失败记录"
+        operation = str(sample[3]) if sample and sample[3] else "unknown_operation"
+        failure_family = str(sample[4]) if sample and sample[4] else "unknown_failure"
+        task_family = str(sample[5]) if sample and sample[5] else "unknown_task"
+        correction_family = str(sample[6]) if sample and sample[6] else "unknown_correction"
+        status = "pending_review"
+        recommendation = "可选择记录 Case、写入语义记忆或申请修复候选"
         summary = (
             f"任务：{goal}；失败类别：{failure_class}；"
-            f"纠正方向：{correction}；质量结论：{str(reason_text)[:240]}"
+            f"操作族：{operation}；任务族：{task_family}；异常族：{failure_family}；"
+            f"纠正族：{correction_family}；纠正方向：{correction}；质量结论：{str(reason_text)[:240]}"
         )
         title = f"失败恢复改进：{goal[:80]}"
         cursor = connection.execute(
@@ -102,7 +111,7 @@ def list_failure_issues(
     if limit < 1 or limit > 100:
         raise ValueError("failure issue list limit must be between 1 and 100")
     values = tuple(str(item) for item in (statuses or ()) if str(item))
-    sql = "SELECT issue_id,title,task_goal,failure_class,correction_goal,summary,status,recommendation,created_at,updated_at,review_reason FROM failure_issues WHERE workspace=?"
+    sql = "SELECT issue_id,title,task_goal,failure_class,correction_goal,summary,status,recommendation,created_at,updated_at,review_reason,episode_ids_json FROM failure_issues WHERE workspace=?"
     params: list[Any] = [workspace]
     if values:
         sql += " AND status IN (" + ",".join("?" for _ in values) + ")"
@@ -110,15 +119,28 @@ def list_failure_issues(
     sql += " ORDER BY created_at DESC,issue_id DESC LIMIT ?"
     params.append(limit)
     rows = connection.execute(sql, params).fetchall()
-    return tuple(
-        {
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        try:
+            episode_ids = tuple(str(item) for item in json.loads(row[11] or "[]") if str(item))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            episode_ids = ()
+        sample = connection.execute(
+            """SELECT operation_family,failure_family,task_family,correction_family
+               FROM recovery_episodes WHERE workspace=? AND episode_id=?""",
+            (workspace, episode_ids[0]),
+        ).fetchone() if episode_ids else None
+        result.append({
             "issue_id": str(row[0]), "title": str(row[1]), "task_goal": str(row[2] or ""),
             "failure_class": str(row[3]), "correction_goal": str(row[4] or ""),
             "summary": str(row[5]), "status": str(row[6]), "recommendation": str(row[7]),
             "created_at": str(row[8]), "updated_at": str(row[9]), "review_reason": str(row[10] or ""),
-        }
-        for row in rows
-    )
+            "operation_family": str(sample[0]) if sample and sample[0] else "unknown_operation",
+            "failure_family": str(sample[1]) if sample and sample[1] else "unknown_failure",
+            "task_family": str(sample[2]) if sample and sample[2] else "unknown_task",
+            "correction_family": str(sample[3]) if sample and sample[3] else "unknown_correction",
+        })
+    return tuple(result)
 
 
 def get_failure_issue(connection: sqlite3.Connection, *, workspace: str, issue_id: str) -> dict[str, Any] | None:
@@ -148,7 +170,8 @@ def record_failure_issue_memory(
     title = f"失败恢复规则：{str(issue.get('task_goal') or '未命名任务')[:120]}"
     summary = (
         f"失败类别：{str(issue.get('failure_class') or '未分类')[:120]}；"
-        f"纠正方向：{str(issue.get('correction_goal') or '未记录')[:240]}"
+        f"纠正方向：{str(issue.get('correction_goal') or '未记录')[:240]}；"
+        f"人工边界：{str(note or issue.get('review_reason') or '未补充')[:300]}"
     )
     content = (
         "适用场景：\n"
@@ -156,6 +179,7 @@ def record_failure_issue_memory(
         f"- 失败类别：{str(issue.get('failure_class') or '未分类')[:120]}\n\n"
         "恢复规则：\n"
         f"- {str(issue.get('correction_goal') or '按人工纠正方向处理')[:360]}\n"
+        f"- 管理员补充方向：{str(note or issue.get('review_reason') or '未补充')[:360]}\n"
         "- 仅适用于同类任务；范围不一致时转人工确认。\n"
         "- 不写入凭据、成员身份、完整对话、隐藏推理或完整工具参数。\n"
     )
@@ -222,6 +246,7 @@ def stage_failure_issue_candidate(
     workspace: str,
     issue: dict[str, Any],
     actor: str,
+    feedback: str = "",
 ) -> str:
     """Create an isolated repair Skill revision for the M15 evaluator."""
 
@@ -239,6 +264,7 @@ def stage_failure_issue_candidate(
         f"- 失败类别：{str(issue.get('failure_class') or '未分类')[:120]}\n\n"
         "## 恢复规则\n"
         f"- {str(issue.get('correction_goal') or '遵循人工纠正方向')[:500]}\n"
+        f"- 管理员确认方向：{str(feedback or issue.get('review_reason') or '未补充')[:500]}\n"
         "- 仅适用于同类任务；范围不一致、敏感请求或需要外部副作用时转人工确认。\n"
         "- 不回显凭据、成员身份、完整对话、完整工具参数或隐藏推理。\n\n"
         "## 验证边界\n"
@@ -325,6 +351,14 @@ def apply_failure_issue_action(
     elif action == "request_candidate":
         if issue["recommendation"].startswith("证据不足"):
             raise ValueError("recovery evidence is insufficient for a repair candidate")
+        feedback_row = connection.execute(
+            """SELECT note FROM failure_issue_actions
+               WHERE issue_id=? AND action='note' AND trim(note)<>''
+               ORDER BY created_at DESC LIMIT 1""",
+            (issue_id,),
+        ).fetchone()
+        if not note.strip() and not (feedback_row and str(feedback_row[0]).strip()):
+            raise ValueError("请先用 note 提交人工修复方向，再申请修复候选")
         next_status = "candidate_requested"
     else:
         next_status = "rejected"
@@ -357,7 +391,10 @@ def apply_failure_issue_action(
             note=note,
         )
     if action == "request_candidate":
-        stage_failure_issue_candidate(connection, workspace=workspace, issue=issue, actor=actor_openid)
+        feedback = note.strip() or (str(feedback_row[0]).strip() if feedback_row else "")
+        stage_failure_issue_candidate(
+            connection, workspace=workspace, issue=issue, actor=actor_openid, feedback=feedback,
+        )
     return {"issue_id": issue_id, "status": next_status, "idempotent": False}
 
 

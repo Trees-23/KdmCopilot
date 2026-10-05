@@ -2301,6 +2301,14 @@ class AgentLoop:
             connection = connect_memory_db(resolved_workspace)
             apply_migrations(connection)
             if ctx.stop_reason in {"error", "tool_error"}:
+                failed_event = next(
+                    (
+                        event for event in reversed(getattr(ctx, "tool_events", ()))
+                        if isinstance(event, dict)
+                        and event.get("status") in {"error", "blocked", "timeout"}
+                    ),
+                    {},
+                )
                 record_failed_episode(
                     connection,
                     workspace=resolved_workspace,
@@ -2310,14 +2318,21 @@ class AgentLoop:
                     stop_reason=ctx.stop_reason,
                     user_text=ctx.original_user_text,
                     tools=ctx.tools_used,
+                    failure_error_code=failed_event.get("error_code"),
+                    failure_error_type=failed_event.get("error_type"),
+                    failure_error_source=failed_event.get("error_source"),
+                    failure_retryability=failed_event.get("retryability"),
+                    failure_detail=failed_event.get("detail"),
                 )
                 return
+            failed_events = tuple(
+                event for event in getattr(ctx, "tool_events", ())
+                if isinstance(event, dict) and event.get("status") in {"error", "blocked", "timeout"}
+            )
             failed_tool_names = tuple(
                 str(event.get("tool_name") or event.get("name"))
-                for event in getattr(ctx, "tool_events", ())
-                if isinstance(event, dict)
-                and event.get("status") in {"error", "blocked", "timeout"}
-                and str(event.get("tool_name") or event.get("name") or "").strip()
+                for event in failed_events
+                if str(event.get("tool_name") or event.get("name") or "").strip()
             )
             if failed_tool_names:
                 # A tool can fail while the Agent still completes the turn. Keep
@@ -2333,6 +2348,11 @@ class AgentLoop:
                     stop_reason="tool_error",
                     user_text=ctx.original_user_text,
                     tools=failed_tool_names,
+                    failure_error_code=next((event.get("error_code") for event in failed_events if event.get("error_code")), None),
+                    failure_error_type=next((event.get("error_type") for event in failed_events if event.get("error_type")), None),
+                    failure_error_source=next((event.get("error_source") for event in failed_events if event.get("error_source")), None),
+                    failure_retryability=next((event.get("retryability") for event in failed_events if event.get("retryability")), None),
+                    failure_detail=next((event.get("detail") for event in failed_events if event.get("detail")), None),
                 )
                 return
             persist_turn_semantic_evidence(
