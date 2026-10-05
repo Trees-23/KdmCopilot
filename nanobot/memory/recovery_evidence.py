@@ -328,7 +328,7 @@ def review_recovery_episodes(
     cutoff = _iso(_now() - timedelta(days=window_days))
 
     rows = connection.execute(
-        """SELECT episode_id,session_key,failure_goal,failure_class,correction_intent,recovery_tools_json,
+        """SELECT episode_id,session_key,failure_goal,failure_class,correction_goal,correction_intent,recovery_tools_json,
                   operation_family,failure_family,task_family,correction_family,recovered_at
            FROM recovery_episodes
            WHERE workspace=? AND status='recovered' AND redaction_status='safe' AND recovered_at>=?
@@ -337,7 +337,7 @@ def review_recovery_episodes(
     ).fetchall()
     groups: dict[str, list[tuple[str, str]]] = {}
     for (
-        episode_id, session_key, failure_goal, failure_class, correction_intent, tools_json,
+        episode_id, session_key, failure_goal, failure_class, correction_goal, correction_intent, tools_json,
         operation_family, failure_family, task_family, correction_family, _recovered_at,
     ) in rows:
         if not failure_goal or not correction_intent:
@@ -363,7 +363,7 @@ def review_recovery_episodes(
             else task_value
         )
         correction = (
-            _correction_family(str(failure_goal))
+            _correction_family(str(correction_goal))
             if correction_value in {"", "unknown_correction"}
             else correction_value
         )
