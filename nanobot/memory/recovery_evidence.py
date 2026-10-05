@@ -347,10 +347,26 @@ def review_recovery_episodes(
         except (TypeError, ValueError, json.JSONDecodeError):
             raw_tools = ()
         tools = _tools(raw_tools)
-        operation = str(operation_family or "") or _operation_family(tools)
-        failure = str(failure_family or "") or "unknown_failure"
-        task = str(task_family or "") or _task_family(str(failure_goal), tools)
-        correction = str(correction_family or "") or _correction_family(str(failure_goal))
+        operation_value = str(operation_family or "")
+        failure_value = str(failure_family or "")
+        task_value = str(task_family or "")
+        correction_value = str(correction_family or "")
+        operation = (
+            _operation_family(tools)
+            if operation_value in {"", "unknown_operation"}
+            else operation_value
+        )
+        failure = failure_value if failure_value not in {"", "unknown_failure"} else "unknown_failure"
+        task = (
+            _task_family(str(failure_goal), tools)
+            if task_value in {"", "unknown_task"}
+            else task_value
+        )
+        correction = (
+            _correction_family(str(failure_goal))
+            if correction_value in {"", "unknown_correction"}
+            else correction_value
+        )
         key = _recovery_key(operation, failure, task, correction)
         groups.setdefault(key, []).append((str(episode_id), str(session_key)))
     reviews: list[RecoveryReview] = []
