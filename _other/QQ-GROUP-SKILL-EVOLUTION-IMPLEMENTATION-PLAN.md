@@ -877,7 +877,7 @@ M17 解决 M16 的两个产品问题：不同文件名不应被拆成不同故�
 @小肯肯 /evolve recovery accept <Issue编号> request_candidate
 ```
 
-预期：进入隔离修复候选队列，等待 M15 A/B/Gate；当前生效 Skill、公共 main、私有 Overlay 和 Gateway 均不改变。
+预期：当前运行态因 `recovery_skill_candidate_enabled=false` 会明确提示候选开关关闭；若后续按独立变更打开该开关，则只进入隔离修复候选队列并等待 M15 A/B/Gate。两种情况都不会直接创建 Proposal，当前生效 Skill、公共 main、私有 Overlay 和 Gateway 均不改变。
 
 ## 11. 测试与验收矩阵
 
