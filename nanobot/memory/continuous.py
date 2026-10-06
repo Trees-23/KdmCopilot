@@ -56,6 +56,11 @@ class Phase6RuntimeConfig:
     ab_evaluation_reasoning_effort: str = "high"
     ab_evaluation_max_candidates_per_day: int = 2
     ab_evaluation_max_model_calls_per_day: int = 40
+    stepwise_evidence_enabled: bool = False
+    stepwise_evidence_mode: str = "shadow"
+    mixed_risk_policy: str = "manual"
+    stepwise_candidate_enabled: bool = False
+    case_candidate_promotion: bool = False
 
     @classmethod
     def from_config(cls, config: Any) -> "Phase6RuntimeConfig":
@@ -71,6 +76,8 @@ class Phase6RuntimeConfig:
                     "draft_pr_enabled", "ab_evaluation_mode", "ab_evaluation_model",
                     "ab_evaluation_reasoning_effort", "ab_evaluation_max_candidates_per_day",
                     "ab_evaluation_max_model_calls_per_day",
+                    "stepwise_evidence_enabled", "stepwise_evidence_mode", "mixed_risk_policy",
+                    "stepwise_candidate_enabled", "case_candidate_promotion",
                 ):
                     if hasattr(evolution, name):
                         values[name] = getattr(evolution, name)
@@ -103,6 +110,10 @@ class Phase6RuntimeConfig:
             raise ValueError("ab_evaluation_max_candidates_per_day must be positive")
         if self.ab_evaluation_max_model_calls_per_day < 1:
             raise ValueError("ab_evaluation_max_model_calls_per_day must be positive")
+        if self.stepwise_evidence_mode not in {"disabled", "shadow", "enforced"}:
+            raise ValueError("stepwise_evidence_mode must be disabled, shadow, or enforced")
+        if self.mixed_risk_policy not in {"partial", "manual", "reject"}:
+            raise ValueError("mixed_risk_policy must be partial, manual, or reject")
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,6 +128,7 @@ class TraceCandidate:
     expected_outcome: str = ""
     operation_signature: tuple[str, ...] = ()
     evidence_ids: tuple[str, ...] = ()
+    stepwise: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -238,11 +250,13 @@ def select_low_risk_tasks(
                 "expected_outcome": str(record.get("expected_outcome") or ""),
                 "operation_signature": tuple(str(item) for item in (record.get("tools") or ()) if str(item)),
                 "evidence_ids": [],
+                "stepwise": False,
             },
         )
         group["trace_ids"].append(trace_id)
         if record.get("evidence_id"):
             group["evidence_ids"].append(str(record["evidence_id"]))
+        group["stepwise"] = bool(group["stepwise"] or record.get("stepwise"))
         group["score"] = max(group["score"], float(record.get("value_score") or 0.0))
     minimum = int(_config_value(config, "min_repeat_count", 3))
     candidates = [
@@ -250,7 +264,7 @@ def select_low_risk_tasks(
             key, tuple(sorted(set(value["trace_ids"]))), value["summary"],
             len(set(value["trace_ids"])), value["score"], value["intent"], value["input_scope"],
             value["expected_outcome"], value["operation_signature"],
-            tuple(sorted(set(value["evidence_ids"]))),
+            tuple(sorted(set(value["evidence_ids"]))), bool(value["stepwise"]),
         )
         for key, value in groups.items() if len(set(value["trace_ids"])) >= minimum
     ]

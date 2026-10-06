@@ -176,6 +176,7 @@ class TurnContext:
     final_content: str | None = None
     tools_used: list[str] = field(default_factory=list)
     tool_events: list[dict[str, Any]] = field(default_factory=list)
+    tool_evidence: list[dict[str, Any]] = field(default_factory=list)
     all_messages: list[dict[str, Any]] = field(default_factory=list)
     stop_reason: str = ""
     had_injections: bool = False
@@ -1003,6 +1004,7 @@ class AgentLoop:
         turn_scopes: list[AbstractContextManager[Any]] | None = None,
         tools: ToolRegistry | None = None,
         tool_events: list[dict[str, Any]] | None = None,
+        tool_evidence: list[dict[str, Any]] | None = None,
         request_context: RequestContext | None = None,
         audit_context: AuditRunContext | None = None,
     ) -> tuple[str | None, list[str], list[dict], str, bool]:
@@ -1017,6 +1019,8 @@ class AgentLoop:
 
         ``tool_events`` is an optional compatibility-preserving side channel for
         callers that need to distinguish successful and failed tool calls.
+        ``tool_evidence`` carries a separate redacted operation projection for
+        M18 and is never sent to channels.
         """
         self._sync_subagent_runtime_limits()
 
@@ -1402,6 +1406,8 @@ class AgentLoop:
             logger.error("LLM returned error: {}", (result.final_content or "")[:200])
         if tool_events is not None:
             tool_events.extend(result.tool_events)
+        if tool_evidence is not None:
+            tool_evidence.extend(result.tool_evidence)
         return result.final_content, result.tools_used, result.messages, result.stop_reason, result.had_injections
 
     async def run(self) -> None:
@@ -2196,6 +2202,7 @@ class AgentLoop:
             turn_scopes=ctx.turn_scopes,
             tools=ctx.tools,
             tool_events=ctx.tool_events,
+            tool_evidence=ctx.tool_evidence,
             request_context=ctx.request_context,
             audit_context=ctx.audit_run,
         )
@@ -2296,14 +2303,61 @@ class AgentLoop:
                 record_failed_episode,
             )
             from nanobot.memory.semantic_evidence import persist_turn_semantic_evidence
+            evolution = getattr(self.phase6_config, "evolution", self.phase6_config)
+            stepwise_enabled = bool(getattr(evolution, "stepwise_evidence_enabled", False))
+            stepwise_mode = str(getattr(evolution, "stepwise_evidence_mode", "shadow"))
+            mixed_risk_policy = str(getattr(evolution, "mixed_risk_policy", "manual"))
 
             resolved_workspace = str(Path(workspace).expanduser().resolve())
             connection = connect_memory_db(resolved_workspace)
             apply_migrations(connection)
+            if stepwise_enabled and stepwise_mode != "disabled":
+                from nanobot.memory.stepwise_evidence import (
+                    build_task_evidence,
+                    persist_task_evidence,
+                )
+
+                legacy_tools = tuple(str(item) for item in (ctx.tools_used or ()) if str(item))
+                step_events = tuple(getattr(ctx, "tool_evidence", ()) or getattr(ctx, "tool_events", ()))
+                legacy_eligible = (
+                    ctx.stop_reason not in {"error", "tool_error"}
+                    and bool(legacy_tools)
+                    and all(item in {"read_file", "list_dir", "find_files", "grep", "skill_catalog_search", "skill_read"} for item in legacy_tools)
+                )
+                task_evidence = build_task_evidence(
+                    workspace=resolved_workspace,
+                    session_key=ctx.session_key,
+                    trace_id=ctx.audit_turn.trace_id,
+                    turn_id=ctx.audit_turn.turn_id,
+                    user_text=ctx.original_user_text,
+                    events=step_events,
+                    actual_outcome=str(ctx.stop_reason or "unknown"),
+                    legacy_qualification="candidate_eligible" if legacy_eligible else "rejected_by_legacy_gate",
+                    mixed_risk_policy=mixed_risk_policy,
+                )
+                persist_task_evidence(connection, task_evidence)
+                # Enforced mode lets the new task qualification control the
+                # semantic candidate stream; shadow mode deliberately keeps
+                # the old whole-turn selector as a comparison baseline.
+                if stepwise_mode == "enforced" and task_evidence.qualification != "candidate_eligible":
+                    stepwise_events = tuple(step_events)
+                    has_failed_step = any(
+                        isinstance(event, dict)
+                        and event.get("status") in {"error", "blocked", "timeout"}
+                        for event in stepwise_events
+                    )
+                    # Recovery evidence still needs to see a failed tool even
+                    # when the overall turn returned a conversational answer.
+                    # Only a clean, non-eligible turn skips the legacy semantic
+                    # write entirely.
+                    if ctx.stop_reason not in {"error", "tool_error"} and not has_failed_step:
+                        return
             if ctx.stop_reason in {"error", "tool_error"}:
                 failed_event = next(
                     (
-                        event for event in reversed(getattr(ctx, "tool_events", ()))
+                        event for event in reversed(
+                            getattr(ctx, "tool_evidence", ()) or getattr(ctx, "tool_events", ())
+                        )
                         if isinstance(event, dict)
                         and event.get("status") in {"error", "blocked", "timeout"}
                     ),
@@ -2326,7 +2380,7 @@ class AgentLoop:
                 )
                 return
             failed_events = tuple(
-                event for event in getattr(ctx, "tool_events", ())
+                event for event in (getattr(ctx, "tool_evidence", ()) or getattr(ctx, "tool_events", ()))
                 if isinstance(event, dict) and event.get("status") in {"error", "blocked", "timeout"}
             )
             failed_tool_names = tuple(

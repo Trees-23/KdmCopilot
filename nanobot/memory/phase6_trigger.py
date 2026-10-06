@@ -265,7 +265,12 @@ async def run_phase6_review_scan_async(
             record_quality_review,
         )
 
-        semantic_records = load_semantic_candidate_records(connection, str(root))
+        if runtime.stepwise_evidence_enabled and runtime.stepwise_evidence_mode == "enforced":
+            from nanobot.memory.stepwise_evidence import load_stepwise_candidate_records
+
+            semantic_records = load_stepwise_candidate_records(connection, str(root))
+        else:
+            semantic_records = load_semantic_candidate_records(connection, str(root))
         # Recovery lessons are a separate M13 path.  They create only
         # redacted Case-review metadata and can never create a Skill or PR.
         from nanobot.memory.recovery_evidence import review_recovery_episodes
@@ -282,7 +287,53 @@ async def run_phase6_review_scan_async(
             return cycle
         result = cycle
         repair_proposal_ids: tuple[str, ...] = ()
+        staged_candidate_ids: list[str] = []
         if cycle.selected_tasks:
+            if runtime.stepwise_candidate_enabled and runtime.stepwise_evidence_mode == "enforced":
+                from nanobot.memory.candidate_staging import (
+                    mark_candidate_status,
+                    stage_task_candidate,
+                )
+                from nanobot.memory.stepwise_evidence import load_task_evidence
+
+                staged = 0
+                for selected_task in cycle.selected_tasks:
+                    # One representative task envelope is enough to create an
+                    # isolated candidate; the grouped TraceCandidate still
+                    # supplies the complete repeated evidence to M15 below.
+                    task_id = next(
+                        (str(value).removeprefix("evolution:") for value in selected_task.evidence_ids if str(value).startswith("evolution:")),
+                        None,
+                    )
+                    task = load_task_evidence(connection, task_id) if task_id else None
+                    if task is None:
+                        continue
+                    try:
+                        staged_record = stage_task_candidate(connection, task=task, workspace=str(root))
+                        staged_candidate_ids.append(staged_record.candidate_id)
+                        mark_candidate_status(
+                            connection,
+                            staged_record.candidate_id,
+                            status="evaluating",
+                            reason="进入 M15 隔离评测",
+                        )
+                        staged += 1
+                    except ValueError:
+                        # A conservative staging refusal must not stop the
+                        # ordinary review scan or create a Proposal.
+                        continue
+                if staged:
+                    append_evidence(
+                        root,
+                        EvidenceRecord(
+                            "m19_candidate_staging",
+                            datetime.now(UTC).isoformat(timespec="seconds"),
+                            trace_ids=tuple(trace_id for item in cycle.selected_tasks for trace_id in item.trace_ids),
+                            status="staged",
+                            metrics={"staged_count": staged},
+                        ),
+                        runtime,
+                    )
             from nanobot.memory.phase6_candidates import (
                 build_candidate_specs,
                 evaluate_candidate_quality,
@@ -359,6 +410,19 @@ async def run_phase6_review_scan_async(
                 failed_traces=(),
                 overlay_pipeline=overlay_pipeline,
             )
+            if staged_candidate_ids:
+                from nanobot.memory.candidate_staging import mark_candidate_status
+
+                if result.proposal_ids:
+                    status, reason = "proposal_eligible", "M15 评测与 Proposal 门禁通过"
+                elif ab_result.status == "budget_exhausted":
+                    status, reason = "insufficient_evidence", "M15 评测预算耗尽，未创建 Proposal"
+                elif not ab_result.approved_specs:
+                    status, reason = "rejected_by_quality_gate", ab_result.reason or "M15 质量门禁未通过"
+                else:
+                    status, reason = "insufficient_evidence", "尚未形成可审阅 Proposal"
+                for candidate_id in staged_candidate_ids:
+                    mark_candidate_status(connection, candidate_id, status=status, reason=reason)
         evolution = getattr(config, "evolution", config)
         if bool(getattr(evolution, "recovery_skill_candidate_enabled", False)):
             repair_specs, repair_records = _load_repair_candidates(connection, str(root))

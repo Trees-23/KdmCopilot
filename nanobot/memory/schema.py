@@ -5,8 +5,8 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-MIGRATION_VERSION = 11
-MIGRATION_ID = "0011_recovery_semantic_families"
+MIGRATION_VERSION = 13
+MIGRATION_ID = "0013_evolution_candidate_staging"
 APP_BUILD = "memory-phase1"
 
 MIGRATIONS_DIR = Path(__file__).with_name("migrations")
@@ -21,12 +21,14 @@ AB_QUALITY_EVALUATIONS_MIGRATION_PATH = MIGRATIONS_DIR / "0008_ab_quality_evalua
 FAILURE_ISSUES_MIGRATION_PATH = MIGRATIONS_DIR / "0009_failure_issues.sql"
 FAILURE_ISSUE_CANDIDATES_MIGRATION_PATH = MIGRATIONS_DIR / "0010_failure_issue_candidates.sql"
 RECOVERY_SEMANTIC_FAMILIES_MIGRATION_PATH = MIGRATIONS_DIR / "0011_recovery_semantic_families.sql"
+STEPWISE_EVOLUTION_EVIDENCE_MIGRATION_PATH = MIGRATIONS_DIR / "0012_stepwise_evolution_evidence.sql"
+CANDIDATE_STAGING_MIGRATION_PATH = MIGRATIONS_DIR / "0013_evolution_candidate_staging.sql"
 
 
 def migration_sql() -> str:
     """Return the checked-in latest migration SQL."""
 
-    return RECOVERY_SEMANTIC_FAMILIES_MIGRATION_PATH.read_text(encoding="utf-8")
+    return CANDIDATE_STAGING_MIGRATION_PATH.read_text(encoding="utf-8")
 
 
 def base_migration_sql() -> str:
@@ -83,6 +85,10 @@ REQUIRED_TABLES = frozenset(
         "failure_issue_actions",
         "failure_issue_deliveries",
         "failure_issue_candidates",
+        "evolution_task_evidence",
+        "evolution_step_evidence",
+        "evolution_task_links",
+        "evolution_candidate_staging",
     }
 )
 
@@ -93,5 +99,13 @@ BASE_REQUIRED_TABLES = REQUIRED_TABLES - frozenset(
         "semantic_quality_reviews", "recovery_episodes", "recovery_case_reviews", "ab_evaluations",
         "ab_case_results", "failure_issues", "failure_issue_actions", "failure_issue_deliveries",
         "failure_issue_candidates",
+        "evolution_task_evidence", "evolution_step_evidence", "evolution_task_links",
+        "evolution_candidate_staging",
     }
 )
+
+STEPWISE_EVOLUTION_TABLES = frozenset(
+    {"evolution_task_evidence", "evolution_step_evidence", "evolution_task_links"}
+)
+
+CANDIDATE_STAGING_TABLES = frozenset({"evolution_candidate_staging"})

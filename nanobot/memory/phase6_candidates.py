@@ -183,11 +183,29 @@ def build_candidate_specs(
         if candidate.frequency < min_repeat_count or quality.status != "passed":
             skipped.append(candidate.task_key)
             continue
-        name = _skill_name(candidate)
-        content = _skill_content(candidate, name)
-        skill_id, baseline_id, candidate_id, baseline_hash = _ensure_revisions(
-            connection, candidate, name, content
-        )
+        staged_row = None
+        if candidate.stepwise:
+            task_id = next(
+                (str(value).removeprefix("evolution:") for value in candidate.evidence_ids if str(value).startswith("evolution:")),
+                None,
+            )
+            if task_id:
+                staged_row = connection.execute(
+                    """SELECT candidate_id,skill_id,skill_name,baseline_revision_id,candidate_revision_id,
+                              baseline_hash,candidate_hash,candidate_content
+                       FROM evolution_candidate_staging
+                      WHERE task_id=? AND status IN ('evaluating','candidate_staged','proposal_eligible')
+                      ORDER BY created_at DESC LIMIT 1""", (task_id,)
+                ).fetchone()
+        if staged_row is not None:
+            _, skill_id, name, baseline_id, candidate_id, baseline_hash, candidate_hash, content = staged_row
+        else:
+            name = _skill_name(candidate)
+            content = _skill_content(candidate, name)
+            skill_id, baseline_id, candidate_id, baseline_hash = _ensure_revisions(
+                connection, candidate, name, content
+            )
+            candidate_hash = _content_hash(content)
         cases = tuple(
             {
                 "case_id": f"case:{trace_id}",
@@ -205,7 +223,7 @@ def build_candidate_specs(
                 baseline_revision_id=baseline_id,
                 candidate_revision_id=candidate_id,
                 baseline_hash=baseline_hash,
-                candidate_hash=_content_hash(content),
+                candidate_hash=candidate_hash,
                 cases=cases,
                 fixture_hash=digest({"task_key": candidate.task_key, "trace_ids": candidate.trace_ids}),
                 model_id="phase6-deterministic-replay",

@@ -559,6 +559,31 @@ class Phase6EvolutionConfig(Base):
         validation_alias=AliasChoices("recoverySkillCandidateEnabled", "recovery_skill_candidate_enabled"),
         serialization_alias="recoverySkillCandidateEnabled",
     )
+    stepwise_evidence_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("stepwiseEvidenceEnabled", "stepwise_evidence_enabled"),
+        serialization_alias="stepwiseEvidenceEnabled",
+    )
+    stepwise_evidence_mode: Literal["disabled", "shadow", "enforced"] = Field(
+        default="shadow",
+        validation_alias=AliasChoices("stepwiseEvidenceMode", "stepwise_evidence_mode"),
+        serialization_alias="stepwiseEvidenceMode",
+    )
+    mixed_risk_policy: Literal["partial", "manual", "reject"] = Field(
+        default="manual",
+        validation_alias=AliasChoices("mixedRiskPolicy", "mixed_risk_policy"),
+        serialization_alias="mixedRiskPolicy",
+    )
+    stepwise_candidate_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("stepwiseCandidateEnabled", "stepwise_candidate_enabled"),
+        serialization_alias="stepwiseCandidateEnabled",
+    )
+    case_candidate_promotion: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("caseCandidatePromotion", "case_candidate_promotion"),
+        serialization_alias="caseCandidatePromotion",
+    )
 
 
 class Phase6Config(Base):
