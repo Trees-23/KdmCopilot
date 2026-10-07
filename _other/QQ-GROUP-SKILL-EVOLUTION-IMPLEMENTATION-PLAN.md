@@ -1,12 +1,12 @@
 # QQ 群内 Skill 进化、主动通知与人工发布实施方案
 
-> 文档状态：分阶段实施中
+> 文档状态：最终产品目标已锁定；实现与真实验收未完成
 >
 > 更新时间：2026-10-07
 >
-> 范围：在已完成的五层记忆 Phase 0～6 之上，为当前 nanobot 的官方 QQ 群机器人增加“自动评审 → 主动推送 → 群内交互确认 → 仅对个人部署生效的受控升级/发布”闭环。
+> 范围：在已完成的五层记忆 Phase 0～6 之上，为当前 nanobot 的官方 QQ 群机器人增加“成功/失败证据 → 自动评审 → workspace Skill 自动采用，或个人 Overlay 主动推送 → 群内二次确认发布”的双路径闭环。
 >
-> 当前运行态已打开 M4/M5；长期运行态的 workspace 采用、Draft PR 自动衔接和发布仍由独立开关控制。个人 Overlay 只允许自动创建 Draft PR，最终合并/部署必须由 QQ 群内管理员执行第二次确认。本文同步记录实施与验收状态，不代表自动发布已授权。
+> 当前运行态已打开 M4/M5；成功任务自动沉淀和失败 Issue 评价后沉淀是本次待完成的产品闭环，不得把候选生成、Proposal 或 Draft PR 误报为正式 Skill。个人 Overlay 仍遵守 Draft PR、CI 和二次发布确认；本文同步记录实施与验收状态，不代表闭环已完成。
 >
 > 2026-09-28 部署策略调整：个人 Overlay 发布改为运行时热加载。合并后的
 > `skills/*/SKILL.md` 通过原子写入同步到当前 Gateway 挂载的 workspace，下一轮
@@ -15,9 +15,55 @@
 
 ## 当前实施状态
 
-截至 2026-10-07，M0～M10 已完成既定接入，M10-C 连续稳态观察仍按原计划保留；M11～M15 已完成代码、评测和发布门禁接入。M16 已完成失败记录、恢复关联、12:00 Issue 基础设施与人工分流；M17 已完成结构化恢复分类、90 天窗口、两次同类聚合和人工评论门禁，隔离测试和 WebUI/QQ 入口验收已补充，但真实 QQ 的完整通知、三条分流和长期观察证据仍需单独记录。当前已确认：`record_case` 只保存正式恢复 Case，不会自动写入 Memory 或改变生效 Skill；M18/M19 负责把已确认 Case 安全接入 Skill 候选、已有 Skill 修订和受控采用。M9 的真实私有 Overlay 发布窗口已完成临时验收并回滚，长期运行态已恢复 `publishEnabled=false`。M4/M5 已按用户确认完成加速验收并开启对应运行态：
+### 2026-10-07 最终产品决策（覆盖本文此前冲突的 M18/M19 口径）
 
-M18/M19 目前只完成设计规划，尚未修改代码、迁移数据库或打开任何新开关。本计划不把“目标被记录”误写成“Skill 已生成”：M18 先保存脱敏的任务目标与有序步骤证据，M19 再依据风险策略和 M15 评测决定是否形成新 Skill 或已有 Skill 的独立 revision。含高风险步骤的任务不会因为使用过一个高风险工具而整次丢弃，但高风险原始参数、命令和副作用也不会直接进入可执行 Skill。
+本节是后续实现、测试和汇报的唯一业务口径。本文其他较早的“设计中”“只记录 Case”“必须人工批准 workspace Skill”等描述，若与本节冲突，以本节为准。
+
+目标不是“记录一些证据”或“生成一个隔离 candidate”，而是完成下面两条不同来源、最终都能到达正式 workspace Skill 的闭环：
+
+```text
+成功任务：成功完成
+  → M18 目标包 + 有序步骤证据
+  → 每个工具步骤独立做风险判断
+  → M19 生成新 Skill candidate 或已有 Skill revision
+  → M15 A/B、正反例、安全、性能 Gate
+  → Gate 通过后自动原子采用为 workspace 正式 Skill
+
+失败任务：工具失败/任务失败
+  → M16/M17 失败 Episode 聚合为 Issue
+  → 管理员提交评价/纠正方向（note）
+  → 管理员明确申请修复 candidate（request_candidate）
+  → M19 生成新 Skill 或已有 Skill revision
+  → M15 A/B、正反例、安全、性能 Gate
+  → Gate 通过后自动原子采用为 workspace 正式 Skill
+```
+
+两条路径的差异只有“是否需要人工评价”：成功路径不需要逐条人工批准；失败路径必须先有管理员评价和明确的 candidate 申请。`record_case` 仍然只是归档，不是 Skill 沉淀完成。任何路径都不得把 R4 敏感、破坏性、特权或不可逆原始动作直接写进可执行 Skill；混合任务保留目标和安全步骤，高风险步骤只能变成脱敏的抽象边界、受控动作或人工确认点。
+
+当前真实状态必须按以下三类汇报：
+
+- **已经实现并验证**：M16/M17 失败 Episode、Issue、人工评论和 Case 归档；M18 步骤证据与风险分级基础设施；M19 成功任务 candidate staging；M15 评测基础设施。
+- **已经实现但缺真实场景验收**：成功任务从 M18/M19 经 M15 到 workspace 正式 Skill；失败 Issue 经评价、candidate、M15 到 workspace 正式 Skill；两条路径在长期 Gateway 的 WebUI 新会话中的端到端证据。
+- **尚未实现或等待用户决定**：失败 Case 晋级到 M19 的完整运行链路、Gate 通过后的自动 workspace 采用、采用后的正式 Skill 再次被 Agent 使用的真实验证。Overlay Draft PR/发布仍是独立部署路径，不能替代 workspace 正式 Skill 验收。
+
+当前配置中 `adoptionEnabled=false`、`workspaceSkillAllowlist=[]`、`recoverySkillCandidateEnabled=false`、`caseCandidatePromotion=false`，因此当前 Gateway **不可能**完成上述正式 Skill 闭环。打开开关不是验收本身；必须先完成代码、迁移、测试、真实 WebUI 场景和回滚证据，再按阶段打开。
+
+### 本次执行的固定顺序（不得跳步）
+
+1. **方案冻结**：先确认本节产品目标、状态机、风险表、开关顺序和验收矩阵；方案未确认前不得改代码。
+2. **M18 证据修复**：统一任务级目标包、步骤级风险、混合任务资格、脱敏和跨 turn/Trace/Event/Issue 关联；验证高风险步骤被隔离而不是拖累整次任务。
+3. **成功任务 M19**：重复成功任务达到门槛后生成新 Skill candidate 或已有 Skill revision，送入 M15；Gate 失败零写入，Gate 通过进入 workspace 自动采用流程。
+4. **失败任务 M19**：Issue 必须有管理员 `note`；`request_candidate` 才能生成修复 candidate；随后与成功 candidate 共用 M15、revision 匹配、CAS、采用和回滚流程。
+5. **workspace 自动采用**：只允许明确 allowlist 的 workspace Skill；M15 通过后使用临时文件、fsync、原子 rename、revision CAS 和审计自动采用。普通群消息、`record_case`、自然语言批准不得触发采用。
+6. **自动化测试**：先运行迁移、候选、M15、采用、回滚、权限、脱敏、幂等和安全边界聚焦测试，再运行相关 Python 全量测试与 `ruff check`；失败不得进入真实 Gateway。
+7. **WebUI 真实验收**：在长期 Gateway 的全新 WebUI 会话完成两条真实场景：成功 candidate→M15→workspace Skill→下一轮读取→回滚；失败 Issue→note→request_candidate→M15→workspace Skill→下一轮读取→回滚。必须记录构建标识、会话 URL、Trace、实际 hash 和审计事件。
+8. **最后才打开运行开关**：验收通过后才在独立窗口打开 `recovery_skill_candidate_enabled`、`case_candidate_promotion` 和 `adoption_enabled`；`publish_enabled` 仍关闭。任何一步失败立即关闭新增开关并保留证据。
+
+执行期间不得把 candidate、Proposal、Draft PR、Case 或 Memory 记录称为正式 Skill；只有 workspace adoption 成功、下一轮 Context 实际读取并且回滚证据完整，才可标记对应路径“已完成”。
+
+截至 2026-10-07，M0～M17 的既有基础设施按各自记录维护；M16/M17 不代表失败 Issue 已能自动变成 Skill。M18/M19 已有部分代码和测试，但不能标记为“产品闭环完成”：成功路径缺正式 workspace 自动采用的真实验收，失败路径缺完整的 Issue→评价→candidate→M15→Skill 链路。M9 的真实私有 Overlay 发布窗口已完成临时验收并回滚，长期运行态已恢复 `publishEnabled=false`。M4/M5 已按用户确认完成加速验收并开启对应运行态：
+
+当前仓库已经存在一部分 M18/M19 代码、迁移和测试，但它们尚未满足本节定义的双闭环：成功路径尚未完成 workspace 自动采用真实验收，失败路径尚未完成 Issue 评价后 candidate→M15→workspace Skill 的完整运行链路。本计划不把“目标被记录”或“candidate 已生成”误写成“Skill 已生效”：M18 保存脱敏的任务目标与有序步骤证据，M19 依据风险策略和 M15 评测生成新 Skill 或已有 Skill 的独立 revision，并在 Gate 通过后按来源路径采用。含高风险步骤的任务不会因为使用过一个高风险工具而整次丢弃，但高风险原始参数、命令和副作用也不会直接进入可执行 Skill。
 
 - 已加入独立的 `shadow_mode`、主动通知、采用和发布开关；当前运行态为 `phase6.enabled=true`、通知开启、采用/发布关闭。
 - 已确认 Proposal 确认码有效期为 12 小时（720 分钟），每群每日主动通知上限为 12 条。
@@ -39,7 +85,7 @@ M18/M19 目前只完成设计规划，尚未修改代码、迁移数据库或打
 - 2026-09-28 M8 隔离实测创建临时 Overlay PR #2，确认 Gate → Proposal → Draft PR 成功，但因 CI 工作流不在 Overlay `main` 而无检查；PR #2 已关闭并清理。随后 CI 基线 PR #3 已合并；新临时 PR #4 的 `validate` 成功，CI 回写和候选通知幂等均已验证，PR #4 已关闭并清理。最后使用长期 Gateway 向真实 QQ 测试群投递临时 `pr_created` Proposal，Delivery 为 `sent`，通知内容正确使用 `/evolve publish`，测试 Proposal/Delivery/审计已清理。
 - 2026-09-27 已完成一次长期 Gateway 的真实只读 WebUI 场景验收：新会话 `#/chat/websocket%3Afe7fdbdc-5367-476a-bb64-ae140fdb5cf7`，Trace `01a0e491-472a-7713-80ee-19f404d9599d`，场景标识 `[M9-REAL-READONLY-20260927-201639Z]`。Agent 仅执行运行态/定时任务/工作区和配置读取，Trace 终态为成功（29 节点、2187 Event；含一次已恢复的读取失败警告），明确返回 `publish_enabled=false`、采用关闭、Overlay 白名单为空，且未创建/批准/发布 Proposal、未外发 QQ、未重启 Gateway。
 
-M0 的目标群、审批管理员、@要求、Proposal 有效期和每日通知上限已确认并写入运行态；真实 openid 不写入 Git。通知时段暂按全天处理（当前还未实现时间窗限制）。公共 `Trees-23/KdmCopilot:main` 只承载通用框架，不作为个人 Skill 进化的发布目标；个人 Skill 发布目标改为独立的私有 Overlay 仓库。M4/M5 已完成加速验收，后续仍不得越过人工门禁。
+M0 的目标群、审批管理员、@要求、Proposal 有效期和每日通知上限已确认并写入运行态；真实 openid 不写入 Git。通知时段暂按全天处理（当前还未实现时间窗限制）。公共 `Trees-23/KdmCopilot:main` 只承载通用框架，不作为个人 Skill 进化的发布目标；个人 Skill 发布目标改为独立的私有 Overlay 仓库。M4/M5 已完成加速验收，后续任何路径都不得越过 M15 安全/质量 Gate；Overlay 另需人工二次发布确认。
 
 ## 1. 决策摘要
 
@@ -54,18 +100,18 @@ M0 的目标群、审批管理员、@要求、Proposal 有效期和每日通知�
         ↓
 持久化 Proposal（只读、待确认）
         ├──────────────────────────────────────────────┐
-        │ workspace Skill                                  │ 私有 Overlay Skill
-        ↓                                                   ↓
-官方 QQ 群通知 + 管理员批准                         自动创建 Draft PR
-        ↓                                                   ↓
-workspace 原子采用/回滚                         CI 通过后 QQ 发布候选通知
+          │ workspace Skill                                  │ 私有 Overlay Skill
+          ↓                                                   ↓
+M15 Gate + workspace allowlist                        自动创建 Draft PR
+          ↓                                                   ↓
+workspace 自动原子采用/回滚                         CI 通过后 QQ 发布候选通知
                                                             ↓
                                                      管理员群内二次确认
                                                             ↓
                                                   合并私有 Overlay + 部署当前 Gateway
 ```
 
-核心结论：自动评审和 Overlay Draft PR 可以自动化；正式 workspace 采用、Overlay 合并和 Gateway 部署不可自动化。Overlay 的自动动作只到 `pr_created`，最终动作必须由管理员在群内执行 `/evolve publish` 二次确认。评测通过不等于当前 Skill 已切换。
+核心结论：成功任务和完成人工评价的失败任务，都可以在 M15 Gate 通过后自动采用为 workspace 正式 Skill；workspace 采用必须受 allowlist、hash/CAS、原子写入、回滚和 kill switch 保护。Overlay 合并和 Gateway 部署仍不可自动化，自动动作只到 `pr_created`，最终动作必须由管理员在群内执行 `/evolve publish` 二次确认。评测通过只有在 workspace 采用动作成功后才等于 Skill 已切换。
 
 M18/M19 的新增决策是：把“是否值得沉淀”与“某一步是否允许复用”拆开。任务级目标、结果和验证结论可以在脱敏后保留；每个工具步骤单独记录工具类别、参数摘要、实际副作用和风险等级。低风险步骤可作为候选证据，高风险步骤只能以边界、人工确认或受控操作摘要出现。混合风险任务可以进入“部分证据/人工复核”队列，但不能凭一次任务直接写入生效 Skill、创建公共 PR 或执行原始高风险动作。
 
@@ -140,31 +186,33 @@ M18/M19 的新增决策是：把“是否值得沉淀”与“某一步是否允
 
 ### 3.1 本期目标
 
-1. 对低风险、重复成功的真实任务自动生成候选，并自动运行已定义的评测流程。
-2. 在评测通过后，向指定 QQ 群主动发送一条可审阅、带证据编号的 Proposal 通知。
-3. 允许指定 QQ 管理员在群内查询、审阅、批准、拒绝和回滚 Proposal。
-4. workspace Skill 经过一次批准后以原子方式写入规范 `SKILL.md`，下一轮 Agent 自动读取。
-5. builtin/shared/entrypoint/MCP Skill 经过批准后只向个人 Skill Overlay 创建 Draft PR；合并与部署需要独立的第二次批准，公共主分支永不作为个人 Skill 发布目标。
-6. 对通知、命令、授权判定、版本 CAS、采用、PR、发布和回滚生成结构化审计证据。
+1. 对达到重复和质量门槛的成功任务自动生成候选，自动运行 M15 评测，Gate 通过后自动原子采用为 workspace 正式 Skill。
+2. 对失败任务保留真实失败，聚合为 M17 Issue；只有管理员提交评价/纠正方向并明确申请 candidate 后，才生成修复 candidate 或已有 Skill revision。
+3. 成功路径不需要逐条人工批准；失败路径必须经过管理员评价，且两条路径都必须通过 M15 A/B、正反例、安全和性能 Gate。
+4. workspace 正式 Skill 采用必须使用 hash/CAS、临时文件、fsync、原子 rename、版本记录和回滚审计；下一轮 Agent Context 自动读取新版本。
+5. builtin/shared/entrypoint/MCP Skill 仍只向个人 Skill Overlay 创建 Draft PR；合并与部署需要独立的第二次批准，公共主分支永不作为个人 Skill 发布目标。
+6. 对通知、命令、授权判定、版本 CAS、候选、采用、PR、发布和回滚生成结构化审计证据，并能在 WebUI Trace 中核对。
 
 ### 3.2 明确不做
 
 - 不读取、保存或总结整个群聊历史作为长期记忆。
 - 不根据模型自然语言回复、点赞、表情或模糊措辞执行采用/发布。
-- 不因评测通过自动修改 `current_revision_id`、覆盖 `SKILL.md`、创建合并提交或部署 Gateway。
+- 不因普通群消息、自然语言“好/通过”或没有 M15 证据而修改 `current_revision_id`、覆盖 `SKILL.md`、创建合并提交或部署 Gateway；只有本节定义的成功自动采用路径或失败人工评价后的受控采用路径可以更新 workspace Skill。
 - 不让普通群成员拥有审批或回滚权限。
 - 不将 QQ AppSecret、GitHub Token、群 openid、管理员 openid 写入 Git、审计正文或群通知。
 - 不把个人 Skill、个人配置或个人运行策略合并到公共 `Trees-23/KdmCopilot:main`。
 - 不在首版实现 QQ 内联按钮；后续可在已有文本状态机稳定后独立增加。
 
-### 3.3 M18/M19 增量范围
+### 3.3 M18/M19 增量范围（最终闭环）
 
-M18/M19 是对已有 M13～M17 失败驱动通道和 M15 评测门禁的增量，不重做已完成的 Issue、Case、通知、人工评论和发布链路：
+M18/M19 是对已有 M13～M17 失败驱动通道和 M15 评测门禁的增量，不重做 Issue、Case、通知和基础人工评论，但必须把两条来源路线真正接通：
 
-1. M18 负责把一次任务拆成脱敏的目标包和有序步骤证据，并为每个步骤计算风险与可复用边界。
-2. M19 负责从已确认 Case 或重复任务证据生成隔离 candidate，区分“新 Skill”和“已有 Skill 的 revision”，再复用 M15 Gate 决定是否创建 Proposal。
-3. 现有 `record_case` 仍是归档动作；它不自动写 Memory、不自动改 Skill。后续若要继续沉淀，必须通过明确的 Case→candidate 晋级动作，并重新经过人工评论、M15 评测和既有采用/发布门禁。
-4. 本增量不打开 `adoption_enabled`、`publish_enabled`，不修改公共 `Trees-23/KdmCopilot:main`，也不把 exec、写文件、消息、调度等原始高风险步骤直接复放到 Skill 中。
+1. M18 负责把一次任务拆成脱敏的目标包和有序步骤证据，并为每个步骤计算风险、实际副作用和可复用边界；不能因为一个高风险工具出现就丢弃整次任务。
+2. M19 必须同时消费两类来源：重复成功任务证据，以及管理员评价后的失败 Issue/Case；两者都要区分“新 Skill”和“已有 Skill 的 revision”。
+3. `record_case` 仍是归档动作；失败路径必须提供 `note` 评价和明确的 `request_candidate`（或等价命令）才能晋级。晋级后复用 M15 Gate，Gate 通过后进入 workspace 自动采用。
+4. 成功路径在达到配置的重复证据和 M15 Gate 后自动采用 workspace Skill；失败路径在人工评价、M15 Gate 后自动采用 workspace Skill。两条路径都必须支持 CAS、回滚和审计。
+5. 本增量不得把 exec、写文件、消息、调度等原始高风险步骤直接复放到 Skill 中；R2/R3 只保留受控抽象或人工确认点，R4 只保留 Case/审计，不能生成可执行候选。
+6. `publish_enabled` 仍不因 M18/M19 实施而自动打开；Overlay 发布是独立路径。`adoption_enabled` 只有在两条 workspace 闭环完成代码、测试和真实 WebUI 验收后才允许进入受控启用窗口。
 
 ## 4. 目标架构
 
@@ -296,7 +344,7 @@ M18 不改变当前 `semantic_task_evidence` 的兼容读取路径，而是新�
 2. 普通群消息默认采用“仅 @机器人或回复机器人”参与策略；`/evolve` 命令允许由指定管理员直接发送。若 QQ 平台没有可靠的 @ 结构字段，则以命令前缀和群白名单作为确定性门槛。
 3. 仅把经红脱敏、任务级摘要、工具类别、结果和 Trace ID 交给候选系统；不将成员昵称、QQ 号、附件路径、完整提示词或密钥写入 Case/Skill。
 4. 对不同群采用独立 `session_key` 与检索 namespace，禁止把 A 群摘要检索到 B 群。
-5. 第一阶段不对“纯闲聊”“敏感关键词”“包含文件/凭据”“发生写操作或网络副作用”的 Trace 生成 Skill 候选。
+5. 纯闲聊、敏感数据、R4 越界/破坏性操作不生成 Skill 候选；包含受控文件写入、网络只读或其他混合步骤的 Trace 不再整次丢弃，而是按步骤隔离，只有脱敏后的安全抽象通过 M15 后才可进入对应候选路径。
 
 ## 6. Proposal 与发布状态机
 
@@ -335,15 +383,15 @@ draft
 | `/evolve status` | 是 | 是 | 无 |
 | `/evolve list [pending\|recent]` | 是 | 是 | 无 |
 | `/evolve review <proposal-id>` | 是 | 是 | 无；只显示脱敏证据摘要 |
-| `/evolve approve <proposal-id> <code>` | 否 | 是 | 仅 workspace Proposal 进入采用；Overlay 不走此命令 |
+| `/evolve approve <proposal-id> <code>` | 否 | 是 | 仅作为兼容/人工兜底的 workspace Proposal 操作；M18/M19 主路径在 M15 Gate 通过后自动采用，Overlay 不走此命令 |
 | `/evolve reject <proposal-id> <reason>` | 否 | 是 | 终止该 Proposal |
 | `/evolve publish <proposal-id> [code]` | 否 | 是 | 第一次签发二次确认码；带码的第二次命令才合并私有 Overlay 并部署当前 Gateway |
 | `/evolve rollback <skill> <revision> <code>` | 否 | 是 | 显式回滚到已有受信 revision |
-| `/evolve recovery promote <case-id> request_candidate` | 否 | 是 | M19 设计中的 Case→candidate 晋级；只创建隔离 candidate，不改 Skill、不建 Proposal/PR |
+| `/evolve recovery accept <issue-id> request_candidate` | 否 | 是 | 先验证管理员 `note`，再将失败 Issue 晋级 M19 隔离 candidate；不绕过 M15，不直接改 Skill |
 
 命令由 `CommandRouter` 直接分派，不能进入模型推理流程。无权限、过期、跨群、状态冲突或错误确认码都返回确定性拒绝信息并写审计。
 
-`/evolve recovery promote` 仅是 M19 的规划命令，当前版本尚未接线；在 M19 实施前，管理员只能使用现有 `record_case`、`record_memory`、`request_candidate`、`note` 和 `reject` 分流。任何文档中的“晋级 candidate”均不表示当前 Gateway 已可执行。
+失败路径固定使用 `note` + `/evolve recovery accept <issue-id> request_candidate`；`record_case` 只归档，不能替代 candidate 申请。当前 Gateway 的 `request_candidate` 仍受 `recovery_skill_candidate_enabled=false` 保护，实施完成并通过真实验收后才可在独立窗口打开。
 
 ### 7.2 通知内容
 
@@ -446,9 +494,9 @@ tests/channels/qq/
 
 ## 9. 采用与发布行为
 
-| Skill 来源 | `approve` 后的动作 | 是否需要重启 | `publish` |
+| Skill 来源 | Gate 通过后的动作 | 是否需要重启 | `publish` |
 |---|---|---:|---|
-| workspace | 校验 hash/CAS 后原子写入 `<workspace>/skills/<name>/SKILL.md`，保留可回滚 revision | 否；下一次 Context 构建生效 | 不需要 |
+| workspace | 校验 allowlist、hash/CAS 后自动原子写入 `<workspace>/skills/<name>/SKILL.md`，保留可回滚 revision；成功任务和人工评价后的失败任务均走此路径 | 否；下一次 Context 构建生效 | 不需要 |
 | builtin/shared | Gate 通过后在个人 Overlay 创建独立分支、中文提交、Draft PR，并附证据链接 | 否；合并后热加载，下一轮 Context 生效 | CI 通过后由 `/evolve publish` 二次确认才允许合并个人 Overlay |
 | entrypoint/MCP | 在个人 Overlay 创建 Draft PR 或对应包的受控发布提案 | 视部署方式而定 | 二次批准、CI 与个人 Gateway 发布检查 |
 
@@ -483,10 +531,10 @@ workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → �
 | M13 | 人工纠正后的恢复案例学习 | 开启（只记录 Case） | 可选摘要通知 | 关闭 | 关闭 | 识别“失败→人工纠正→验证成功”的重复恢复模式；首版只形成可审阅 Case，不自动生成或发布 Skill |
 | M14 | 审批队列与状态分流 | 开启 | 开启 | 按既有质量 Gate | 关闭 | 分开显示待首次审阅、待最终发布、失败/拒绝与历史记录，减少 `pending`/`recent` 歧义 |
 | M15 | 真实能力评测与基线对照 | 开启 | 开启（仅通过 Gate 后） | 自动建私有 Draft PR（仅标准证据等级） | 关闭 | 以隔离 A/B 回放、正反例和独立裁判证明候选相对基线有业务增益；结构检查不再单独放行 |
-| M16 | 失败驱动自进化与人工 Issue 反馈 | 已实施（默认不生成 Skill） | 每天 12:00 有新 Issue 才通知 | 关闭 | 关闭 | 失败 Episode、恢复关联、Issue/12:00 Cron/QQ 评论基础设施 |
-| M17 | 结构化恢复聚合与人工评论驱动修复 | 已实施（候选仍受开关控制） | 有新 Issue 才通知 | 关闭 | 关闭 | 2 次同类恢复生成 Issue；人工评论后才可申请 M15 修复候选 |
-| M18 | 目标级任务与步骤级风险证据 | 设计中，默认关闭 | 关闭/影子 | 关闭 | 关闭 | 不因单个高风险工具丢弃整次任务；按步骤隔离风险，供 M19 生成候选 |
-| M19 | Skill 候选自动评测、已有 Skill 修订与受控采用 | 未实施 | 按 M18 Gate 结果 | 需人工确认 | 关闭/二次确认 | 候选通过 M15 后生成新 Skill 或独立 revision，保留基线、回滚和最终人工门禁 |
+| M16 | 失败驱动自进化与人工 Issue 反馈 | 基础设施已实施，闭环待补 | 每天 12:00 有新 Issue 才通知 | 失败候选关闭 | 关闭 | 失败 Episode、恢复关联、Issue、人工评论基础设施 |
+| M17 | 结构化恢复聚合与人工评论驱动修复 | Issue/评论已实施，Skill 闭环待补 | 有新 Issue 才通知 | `request_candidate` 后进入 M19 | 关闭 | 2 次同类恢复生成 Issue；评价后才能申请修复候选 |
+| M18 | 目标级任务与步骤级风险证据 | 待实施，先 shadow 后 enforced | 影子期关闭 | 关闭 | 关闭 | 不因单个高风险工具丢弃整次任务；按步骤隔离风险 |
+| M19 | 成功/失败候选评测与 workspace 自动采用 | 待实施 | 按 M15 Gate 结果 | workspace 自动采用；Overlay 需人工二次确认 | Overlay 关闭/二次确认 | 两类来源统一生成 candidate，M15 通过后 workspace 原子采用 |
 
 每个阶段都必须有独立验收记录。任何阶段失败都回退到上一阶段的开关状态；不能跳过 M4 直接打开通知、采用或发布。
 
@@ -570,7 +618,7 @@ workspace Skill 采用使用“写临时文件 → fsync → 原子 rename → �
 ### M8：个人 Overlay Draft PR
 
 - [x] 完成本地 Draft PR 适配器：已批准 Proposal 生成专用分支、中文提交和脱敏正文；重复执行幂等，不切换公共仓库版本。
-- [x] 将 Gate 通过的 Overlay Proposal 自动推进到 Draft PR；不再要求管理员先执行 `/evolve approve`，workspace Proposal 仍保留人工批准路径。
+- [x] 将 Gate 通过的 Overlay Proposal 自动推进到 Draft PR；不再要求管理员先执行 `/evolve approve`。workspace 的历史人工批准路径保留兼容，但 M18/M19 主路径改为 Gate 通过后受保护的自动采用。
 - [x] 增加私有 Overlay 远端适配器：强制校验 `origin`、仓库、base `main`、唯一 head 分支和 Draft 状态；远端 PR/CI 投影写入 Proposal 审计动作，普通 Agent 不直接调用 GitHub。
 - [x] 在隔离窗口运行真实远端 `gh pr create --draft`，CI 通过后回写 `ci_passed`，并验证发布候选通知审计动作只发送一次；未通过 CI 不得发送发布确认提示。
 - [x] 在真实 QQ 群内用临时 Proposal 投递一次 CI 通过后的“等待最终发布确认”通知；Delivery 为 `sent`，测试数据已清理。
@@ -798,7 +846,7 @@ M15 解决当前首版 EvalPack 的边界：现有评测能证明候选 Markdown
 2. 本方案默认允许以隔离模型生成脱敏的同义/反例测试变体，并要求独立裁判复核；若完全不用模型，则只使用真实证据与规则反例，评测覆盖会更窄但成本更低。
 3. 当前已确认预算为：`glm-5.3-flash`、`high` 推理强度、每日最多 2 个候选、最多 40 次模型调用；预算耗尽时 QQ 发送系统异常告警，绝不跳过 Gate 放行。
 
-### M16：失败驱动自进化与人工 Issue 反馈（基础设施已实施，真实 QQ 分流验收待补）
+### M16：失败驱动自进化与人工 Issue 反馈（基础设施已实施，闭环修复待补）
 
 M16 将失败场景纳入自进化范围，但与“重复成功任务→Skill”保持独立通道。失败本身不能直接生成 Skill；只有失败后出现可关联的人工纠正、实际验证成功，并得到管理员明确反馈，才允许进入后续恢复 Case、语义记忆或修复 Skill 候选。M16 默认不改变当前生效 Skill、不自动采用、不自动发布。
 
@@ -895,11 +943,11 @@ M16 不能以“代码已写”作为完成条件，必须同时具备自动化�
 
 #### M16 的产品原则
 
-1. 失败是进化信号，但不是 Skill 证据；人工纠正和实际恢复结果才是最小闭环。
+1. 失败是进化信号，但不是 Skill 证据；人工纠正、实际恢复结果和管理员评价才是最小闭环。
 2. 12:00 是失败 Issue 汇总时间，14:00 仍是成功任务候选扫描时间；两条通道互不覆盖。
-3. 人工评论是方向信号，不是直接上线授权；任何 Skill 变化仍必须经过 M15 Gate、私有 Draft PR 和既有群内发布确认。
+3. 人工评论只负责补充失败修复方向，不是直接上线授权；失败候选仍必须经过 M15 Gate。workspace 候选通过 Gate 后按本方案自动原子采用；Overlay 候选仍必须经过私有 Draft PR 和群内二次发布确认。
 
-### M17：结构化恢复聚合与人工评论驱动修复（已实施，待真实 QQ 场景验收）
+### M17：结构化恢复聚合与人工评论驱动修复（Issue/评论基础设施已实施，Skill 闭环待补）
 
 M17 解决 M16 的两个产品问题：不同文件名不应被拆成不同故障类型；一次成功恢复也不应直接变成 Skill。新的闭环固定为：
 
@@ -910,7 +958,9 @@ M17 解决 M16 的两个产品问题：不同文件名不应被拆成不同故�
                                       ↓
                          生成一个脱敏 Issue，通知管理员评论
                                       ↓
-             note 明确修复方向 → 管理员申请候选 → M15 A/B/Gate
+                         note 明确修复方向 → 管理员申请候选 → M19 → M15 A/B/Gate
+                                                     ↓
+                                  workspace candidate 通过后自动采用
 ```
 
 #### M17-A：结构化分类
@@ -929,8 +979,8 @@ M17 解决 M16 的两个产品问题：不同文件名不应被拆成不同故�
 #### M17-C：人工评论是候选前置条件
 
 - [x] `/evolve recovery note <Issue 编号> <修复方向/边界>` 持久化管理员评论，评论不改变当前 Skill。
-- [x] `/evolve recovery accept <Issue 编号> request_candidate` 在没有有效 `note` 时拒绝；有评论后只创建隔离 candidate revision，仍不创建 Proposal、Draft PR 或发布。
-- [x] 候选正文必须包含人工修复方向、适用范围和不适用边界；之后只能由 M15 A/B、反例、安全、性能和独立回放 Gate 决定是否进入 Proposal。
+- [x] `/evolve recovery accept <Issue 编号> request_candidate` 在没有有效 `note` 时拒绝；有评论后创建隔离 candidate revision，仍不直接修改当前 Skill。
+- [x] 候选正文必须包含人工修复方向、适用范围和不适用边界；之后只能由 M15 A/B、反例、安全、性能和独立回放 Gate 决定是否进入 workspace 自动采用或 Overlay Proposal。
 - [x] `record_case`、`record_memory` 和 `reject` 仍是独立分流；任何动作幂等、权限和群隔离规则不变。
 
 #### M17-D：测试、验收与回滚
@@ -938,7 +988,7 @@ M17 解决 M16 的两个产品问题：不同文件名不应被拆成不同故�
 - [x] 新增迁移 `0011_recovery_semantic_families`，旧迁移不可变；覆盖两次同类、单次不足、不同异常不合并、文件名归一化、同会话累计和字段脱敏。
 - [x] 聚焦测试、迁移测试、Issue 状态测试和相关 `ruff` 检查通过；没有人工评论的候选申请会被拒绝。
 - [x] 隔离端到端验证已覆盖“两个不同文件名的 `read_file/file_not_found` 失败→路径纠正→成功→Issue”，未写入长期 Skill、Proposal 或 Overlay。
-- [ ] 长期 Gateway 重建后，在授权 QQ 群发送文末三段无害场景，核对 Issue 通知、`review` 展示、`note` 评论和无评论拒绝；该项需要管理员实际发消息。
+- [ ] 长期 Gateway 重建后，在授权 QQ 群发送文末三段无害场景，核对 Issue 通知、`review` 展示、`note` 评论、无评论拒绝、candidate、M15 结果和 workspace Skill 原子采用；该项需要管理员实际发消息。
 - [x] 回滚只需关闭 `recovery_review_enabled` 或 `recovery_skill_candidate_enabled`；已有 Issue、评论和审计保留，当前生效 Skill 不变。
 
 **M17 完成判定（Definition of Done）**
@@ -974,11 +1024,11 @@ M17 解决 M16 的两个产品问题：不同文件名不应被拆成不同故�
 @小肯肯 /evolve recovery accept <Issue编号> request_candidate
 ```
 
-预期：当前运行态因 `recovery_skill_candidate_enabled=false` 会明确提示候选开关关闭；若后续按独立变更打开该开关，则只进入隔离修复候选队列并等待 M15 A/B/Gate。两种情况都不会直接创建 Proposal，当前生效 Skill、公共 main、私有 Overlay 和 Gateway 均不改变。
+预期：当前运行态因 `recovery_skill_candidate_enabled=false` 会明确提示候选开关关闭；实施本方案后打开该开关时，第二条命令只进入隔离修复候选队列，随后由 M15 A/B/Gate 决定是否自动采用 workspace Skill。Gate 失败不创建 Proposal/PR、不改当前 Skill；Gate 通过后必须核对 candidate→adoption、当前 Skill hash、下一轮 Context 读取和回滚证据。Overlay 路径仍另行创建 Proposal/Draft PR，不自动发布。
 
-### M18：目标级任务与步骤级风险证据（设计阶段，默认关闭）
+### M18：目标级任务与步骤级风险证据（待实施；完成后才允许 M19 消费）
 
-M18 解决当前“一个高风险工具拖累整次任务”的一刀切问题，但不通过扩大工具白名单来解决。它把一次任务拆成“目标包 + 有序步骤”，先分别判断证据能否保留，再决定哪些步骤可以进入候选。M18 只负责证据建模和资格判定，不生成生效 Skill、不创建 Proposal、不创建 PR。
+M18 解决当前“一个高风险工具拖累整次任务”的一刀切问题，但不通过扩大工具白名单来解决。它把一次任务拆成“目标包 + 有序步骤”，先分别判断证据能否保留，再决定哪些步骤可以进入候选。M18 不直接生成生效 Skill；它只负责证据建模和资格判定，并把合格证据交给 M19。
 
 #### M18-A：目标包与步骤证据模型
 
@@ -1031,11 +1081,11 @@ M18 的影子期必须同时写入旧门禁结果和新步骤结果，用于测�
 - [ ] 验证同一任务跨多个 turn 的顺序、失败→纠正→成功关联、Trace/Event/Case 反查和重复写入幂等。
 - [ ] 验证高风险步骤只保存摘要/前后 hash/确认边界，不保存原始命令、完整参数、文件内容或凭据。
 - [ ] 影子期至少完成一轮隔离数据抽样；旧全量白名单和新步骤级判定不一致时，默认按更保守结果处理。
-- [ ] M18 默认开关关闭；关闭或回滚后保留已写证据，但停止后续扫描和候选消费，不影响普通 QQ 对话。
+- [ ] M18 默认先以 shadow 运行；完成影子证据、风险分级、脱敏和真实 WebUI 验收后，才允许切换 enforced。关闭或回滚后保留已写证据，但停止后续扫描和候选消费，不影响普通 QQ 对话。
 
-### M19：Skill 候选自动评测、已有 Skill 修订与受控采用（设计阶段，未实施）
+### M19：Skill 候选自动评测、已有 Skill 修订与 workspace 自动采用（待实施）
 
-M19 才把 M18 的合格目标/步骤证据转换为 Skill candidate。这里的“自动”只表示自动生成隔离草稿和启动评测，不表示自动上线。任何候选都必须经过人工评论（M17/M16 路径适用时）、M15 A/B/正反例/安全/性能 Gate、Proposal 状态机以及既有采用/发布门禁。
+M19 把 M18 的合格目标/步骤证据转换为 Skill candidate，并把 M17 的人工评价 Issue 接入同一条候选评测链。这里的“自动”包括自动生成隔离候选、启动 M15 和在 workspace 路径原子采用；不包括 Overlay 合并和 Gateway 发布。失败路径必须先有人工 `note` 和明确 `request_candidate`，成功路径不需要逐条人工批准，但两者都必须通过 M15 A/B/正反例/安全/性能 Gate。
 
 #### M19-A：从 Case/任务证据生成候选
 
@@ -1063,11 +1113,9 @@ evaluating
       ├─ rejected_by_quality_gate
       ├─ insufficient_evidence
       ├─ unsafe_for_skill
-      └─ proposal_eligible
-             ↓
-        Proposal / Draft PR
-             ↓
-        既有 approve / publish / adoption 门禁
+      └─ M15 evaluating
+             ├─ adoption_eligible → workspace 自动原子采用
+             └─ proposal_eligible → Overlay Proposal / Draft PR → approve / publish 二次确认
 ```
 
 candidate 状态、Proposal 状态和 Skill 生效 revision 必须分开保存。管理员的 `note` 只补充方向、适用范围和不适用边界；它不能跳过 M15，也不能把 R3/R4 步骤升级为自动可执行步骤。`record_case` 仍可作为终止分流；如需继续沉淀，必须显式执行 Case→candidate 晋级并生成新的 candidate ID、版本和审计事件。
@@ -1077,7 +1125,7 @@ candidate 状态、Proposal 状态和 Skill 生效 revision 必须分开保存�
 1. 用稳定的任务语义、Skill 名称/能力声明和 operation signature 做候选匹配；不能仅按文件名或聊天中出现的 Skill 名称自动覆盖。
 2. 修订候选保存 `baseline_revision_id`、`baseline_hash`、`candidate_revision_id`、`candidate_hash`、来源 Issue/Case/Trace、差异摘要、风险结论和回滚点。
 3. 评测以当前 baseline 为对照；必须证明候选在适用任务上有改善或补足明确缺口，同时不降低不适用反例、安全和性能指标。
-4. 评测失败只关闭 candidate 或保留 Case/记忆，不改变当前 Skill。评测成功也只进入 Proposal/私有 Draft PR，不能直接采用或发布。
+4. 评测失败只关闭 candidate 或保留 Case/记忆，不改变当前 Skill。workspace 评测成功后自动执行受保护的原子采用；Overlay 评测成功仍只进入 Proposal/私有 Draft PR，不能自动合并或发布。
 
 #### M19-D：M15 评测适配
 
@@ -1091,14 +1139,14 @@ M19 复用 M15 的数据切分、模型/预算、A/B 回放、独立裁判和放
 
 #### M19-E：M19 实施与验收条件
 
-- [ ] 新增 candidate staging/repository、Case→candidate 晋级动作和新 Skill/已有 Skill revision 两类数据模型；不改变现有 Proposal/Overlay 合同。
+- [ ] 新增 candidate staging/repository、Case→candidate 晋级动作和新 Skill/已有 Skill revision 两类数据模型；成功任务和失败 Issue 使用同一 M19 状态机，不改变现有 Proposal/Overlay 合同。
 - [ ] 候选正文、审阅界面和 QQ 通知只展示脱敏目标、步骤摘要、风险结论、评测结果和下一步命令；不展示完整命令、文件内容、凭据或隐藏推理。
 - [ ] 用混合任务 fixture 验证：目标和 R0/R1 证据保留；R2 被隔离/可回滚；R3 被 mock/人工确认；R4 只归档 Case。
 - [ ] 验证“无匹配→新 Skill candidate”“匹配已有 Skill→独立 revision”“匹配不确定→人工审阅”三条路径，当前生效 Skill hash 均不变。
-- [ ] 验证 M15 通过才生成 Proposal/Draft PR；Gate 失败、预算耗尽、裁判异常或安全反例失败均零 Proposal/PR。
-- [ ] 验证候选、Proposal、Draft PR、采用、发布和回滚的 CAS、幂等、群隔离与审计链路；不打开 `adoption_enabled`/`publish_enabled` 做默认验收。
+- [ ] 验证 M15 通过才允许 workspace 自动采用或生成 Overlay Proposal/Draft PR；Gate 失败、预算耗尽、裁判异常或安全反例失败均零 Skill 写入、Proposal 和 PR。
+- [ ] 验证候选、Proposal、Draft PR、workspace 自动采用、发布和回滚的 CAS、幂等、群隔离与审计链路；只在隔离验收窗口打开 `adoption_enabled`，不打开 `publish_enabled` 做默认验收。
 
-**M18/M19 的阶段结论**：先实现“目标可记录、步骤可分级、高风险可隔离”，再实现“候选可评测、已有 Skill 可生成独立修订”。只有 M19 通过 M15 并进入既有人工门禁后，才讨论是否在单独窗口打开采用或发布；本计划不把 Case 自动变成 Skill。
+**M18/M19 的阶段结论**：先实现“目标可记录、步骤可分级、高风险可隔离”，再实现“成功任务和人工评价后的失败 Issue 都能生成候选、通过 M15 并自动采用 workspace Skill”。Case 不是 Skill；`record_case` 只是归档，失败必须显式 `request_candidate`。Overlay 仍按私有 Draft PR 和二次发布确认单独处理。
 
 #### M18/M19 需要用户确认的产品取舍
 
@@ -1117,11 +1165,11 @@ M19 复用 M15 的数据切分、模型/预算、A/B 回放、独立裁判和放
 | 场景 | 预期结果 | 必须证据 |
 |---|---|---|
 | Phase 6 关闭 | 不扫描、不写 Proposal、不发 QQ 消息 | 状态、数据库、投递队列为空 |
-| 低风险重复成功 Trace | 生成候选并通过评测后得到待通知 Proposal | Trace/Case/EvalRun/Proposal 关联 |
-| 重复的失败→人工纠正→成功 | 只形成脱敏恢复 Case；未满足 M13 门禁时不生成 Skill/PR | 失败、纠正、成功 Trace 关联；恢复类别、验证和排除理由 |
+| 低风险重复成功 Trace | 生成 candidate；M15 通过后自动原子采用 workspace Skill，下一轮 Context 能读取；Overlay 仅得到待通知 Proposal | Trace/Case/EvalRun/candidate/Skill revision/采用审计关联 |
+| 重复的失败→人工纠正→成功 | 先形成脱敏 Issue；管理员 `note` + `request_candidate` 后进入 M19，M15 通过后自动原子采用 workspace Skill | 失败、纠正、成功 Trace 关联；Issue、人工动作、candidate、M15、Skill hash 和回滚证据 |
 | M16 12:00 失败汇总无新增 Issue | 定时任务成功结束但不发送空通知 | Cron 执行记录、汇总游标、无新增 Delivery |
 | M16 新增失败 Issue | QQ 主动发送一条脱敏 Issue 摘要，可用 `recovery review/list` 查看 | Issue、Delivery、群范围和通知幂等记录 |
-| M16 管理员评论“仅记录/记忆/修复候选” | 按分流状态落库；只有“修复候选”继续进入 M15，不直接改生效 Skill | 管理员动作、理由、状态转移、审计 |
+| M16 管理员评论“仅记录/记忆/修复候选” | 按分流状态落库；只有“修复候选”继续进入 M15，Gate 通过后才自动改生效 workspace Skill | 管理员动作、理由、状态转移、candidate、M15、采用审计 |
 | M16 失败证据不足或偶发外部故障 | 标记 `证据不足`/`仅记录 Case`，不生成 Skill、Proposal 或 PR | 排除原因、来源 Episode、零新增 Proposal |
 | M16 非管理员评论或跨群 Issue | 拒绝状态变更，不泄露 Issue 内容 | 权限拒绝、群 scope 和审计 |
 | M18 纯 R0/R1 任务 | 生成有序步骤证据，任务资格为 `candidate_eligible`；仍只在影子区保存 | 任务包、步骤序列、风险判定、脱敏/资源指纹、旧规则对照 |
@@ -1130,13 +1178,13 @@ M19 复用 M15 的数据切分、模型/预算、A/B 回放、独立裁判和放
 | M18 事件缺失或脱敏失败 | 不猜测补全；任务可保留但相关步骤标记 `unverified`，默认不进入候选 | 缺失字段、脱敏失败原因、兼容旧门禁结果 |
 | M18 跨 turn / 失败→纠正→验证 | 步骤序号和 Trace/Event/Case 关联稳定，重复写入幂等 | task/step/link 记录、关联 ID、重放结果 |
 | 框架事件或 JSON 指纹重复 | 被语义质量门禁拒绝；不生成 Skill、EvalPack、Draft PR 或 QQ 通知 | `rejected_by_quality_gate` 原因、零新增 Proposal/PR/Delivery |
-| 重复的可解释业务任务 | 影子期仅产生结构化候选说明和质量结论；恢复开关后才可进入 Proposal | 脱敏语义投影、跨 turn 证据、质量评分、人工抽查记录 |
+| 重复的可解释业务任务 | 影子期仅产生结构化候选说明和质量结论；正式开关后进入 M15，Gate 通过自动采用 workspace Skill | 脱敏语义投影、跨 turn 证据、质量评分、Skill revision/采用记录 |
 | M15 真实能力评测 | 在相同隔离环境中候选相对基线有可复核改善，且反例不误套用、安全/性能不退化 | 数据集分割 hash、三次 A/B 回放、独立裁判、聚合指标与拒绝理由 |
 | M19 无匹配 Skill 的候选 | 进入隔离新 Skill candidate，不进入生效目录 | candidate hash、生成器版本、来源证据、M15 结果 |
 | M19 匹配已有 Skill | 生成独立 revision，baseline/current hash 不变；失败可回滚 | baseline/candidate revision、差异摘要、来源 Issue/Case、回滚点 |
 | M19 匹配不确定 | 转人工审阅，不自动覆盖或合并已有 Skill | 匹配候选、置信/冲突原因、人工动作审计 |
 | M19 高风险步骤评测 | R2 只在临时工作区回放；R3 用 mock/阻断器；R4 只验证拒绝/转人工 | 隔离环境、mock/阻断证据、无真实外部副作用 |
-| M19 Gate 失败、预算耗尽或裁判异常 | 关闭 candidate 或保留 Case/记忆，零 Proposal/PR，不改变当前 Skill | Gate 拒绝原因、候选状态、当前 Skill hash |
+| M19 Gate 失败、预算耗尽或裁判异常 | 关闭 candidate 或保留 Case/记忆，零 Skill 写入、Proposal 和 PR，不改变当前 Skill | Gate 拒绝原因、候选状态、当前 Skill hash |
 | 泛化只读模板 | 因无具体行为增量被拒绝，不能靠安全 Gate 单独通过 | 候选内容检查、质量 Gate 理由、无 Draft PR |
 | Gate 失败或证据不足 | Proposal 不可批准、不通知或标记失败原因 | Gate 结果与状态 |
 | 通知投递暂时失败 | 重试且不重复发送；超过上限 dead-letter | Delivery 记录与审计 |
@@ -1144,7 +1192,7 @@ M19 复用 M15 的数据切分、模型/预算、A/B 回放、独立裁判和放
 | 管理员错误码/过期码 | 拒绝，无状态修改 | Action 审计 |
 | 管理员重复确认 | 返回幂等结果，不重复写 Skill/建 PR | 文件 hash/PR 数量/动作日志 |
 | 审批队列查询 | `review`、`publish`、`rejected`、`failed` 和 `recent` 按状态正确分流；`pending` 给出待动作总览 | 列表内容、北京时间、下一步命令、群范围审计 |
-| workspace 采用 | 下一独立 turn 加载新 Skill | 新旧 hash、Trace、`SkillsLoader` 结果 |
+| workspace 自动采用 | M15 通过且 allowlist 命中后下一独立 turn 加载新 Skill；未命中或 CAS 冲突则不写入 | 新旧 hash、Trace、`SkillsLoader` 结果、采用审计 |
 | workspace 回滚 | 恢复已知 revision，下一 turn 生效 | CAS、落盘 hash、审计 |
 | shared Skill 批准 | 仅创建 Draft PR | PR 状态，无合并/部署 |
 | 发布确认 | CI 成功后按既有流程部署 | Git、PR、Gateway build、真实群场景 Trace |
@@ -1178,9 +1226,9 @@ phase6.evolution.case_candidate_promotion     # 是否允许已确认 Case 晋�
 phase6.kill_switch                      # 立即禁止所有自动化写路径
 ```
 
-开关的实际启用顺序必须遵循 M4～M9，并增加 M18→M19 顺序：先只开 `phase6.enabled` 做影子评审，再开通知；M18 先 `stepwise_evidence_mode=shadow`，确认步骤证据和风险分类稳定后才考虑 `enforced`；随后才可打开 `stepwise_candidate_enabled` 和 `case_candidate_promotion` 生成隔离 candidate；候选通过 M15 后才沿用 workspace 采用或个人 Overlay Draft PR，最后才允许二次确认后的个人 Gateway 发布。单独打开任何一个开关都不会授予 Agent 自己修改正式 Skill、合并公共 PR 或部署的权限。
+开关的实际启用顺序必须遵循 M4～M9，并增加 M18→M19 顺序：先只开 `phase6.enabled` 做影子评审，再开通知；M18 先 `stepwise_evidence_mode=shadow`，确认步骤证据和风险分类稳定后才切换 `enforced`；随后打开 `stepwise_candidate_enabled` 生成成功任务隔离 candidate，并在失败 Issue 的 `note` + `request_candidate` 门禁稳定后打开 `recovery_skill_candidate_enabled`/`case_candidate_promotion`；候选通过 M15 后，workspace 路径自动原子采用，Overlay 路径进入 Draft PR，最后才允许二次确认后的个人 Gateway 发布。单独打开任何一个开关都不会授予 Agent 绕过 M15、修改未 allowlist Skill、合并公共 PR 或部署的权限。
 
-当前运行态为：`phase6.enabled=true`、`shadow_mode=false`、`notifications_enabled=true`、`adoption_enabled=false`、`draftPrEnabled=true`、`publish_enabled=false`；M18/M19 新开关尚未实施，按设计默认 `stepwise_evidence_enabled=false`、`stepwise_evidence_mode=shadow`、`stepwise_candidate_enabled=false`、`mixed_risk_policy=manual`、`case_candidate_promotion=false`。在这些开关保持默认时，现有 M17/M15 规则不变。
+当前运行态为：`phase6.enabled=true`、`shadow_mode=false`、`notifications_enabled=true`、`adoption_enabled=false`、`draftPrEnabled=true`、`publish_enabled=false`；M18/M19 的部分基础设施已经存在，但正式闭环开关仍按保守值运行：`stepwise_evidence_enabled=true`、`stepwise_evidence_mode=enforced`、`stepwise_candidate_enabled=true`、`recovery_skill_candidate_enabled=false`、`case_candidate_promotion=false`、`adoption_enabled=false`。因此当前只能观察/暂存成功任务候选和失败 Issue，不能宣称任何正式 Skill 已自动采用。实施时必须先完成代码与测试，再在隔离验收窗口逐项打开失败候选和 workspace 采用。
 
 当 `overlayRepository` 已配置时，Gateway 会在启动时注入受控的 GitHub Overlay
 校验、合并和热加载回调；未配置时 `/evolve publish` 会安全地返回“发布回调尚未配置”，
@@ -1247,14 +1295,14 @@ WebUI 的 `NanobotClient` 已有指数退避和 token 刷新重连；真实观�
 5. 在群内完成 `/evolve publish` 两次确认、私有 PR 合并和热加载。（已完成）
 6. 验证下一轮 Context 读取、临时 Skill 回滚和审计记录。（已完成）
 7. 关闭发布开关并清理临时 Proposal/Skill/分支。（已完成）
-8. M16/M17 代码、迁移、聚焦测试和隔离链路已完成；默认保持 `recovery_skill_candidate_enabled=false`，由管理员按文末场景完成真实 QQ 只读验收后再决定是否开放修复 Skill 候选。
-9. **M18-A：先做只读调研与 schema 评审。** 固化任务/步骤字段、脱敏边界、Trace/Event/Case 关联和 R0～R4 判定表；不改代码、不迁移、不打开开关。
-10. **M18-B：实现影子证据链。** 在旧全量白名单旁记录新步骤证据和资格状态，先用 fixture 验证纯读、混合、高风险、脱敏失败和跨 turn 关联；影子期间零 Proposal/PR/Skill 写入。
-11. **M18-C：真实只读观察。** 在长期 Gateway 的全新 WebUI/授权 QQ 测试群完成唯一场景链，核对目标包、步骤顺序、风险升级、脱敏和回滚证据；若旧规则与新规则冲突，采用更保守结果。
-12. **M19-A：建立隔离 candidate staging。** 仅允许 `candidate_eligible`，以及管理员明确补充边界后批准的 `partial_evidence`；支持新 Skill candidate 和已有 Skill 独立 revision，不改变生效目录。
-13. **M19-B：接入 M15 评测。** 为 R2 使用临时工作区/回滚快照，为 R3 使用 mock/阻断器，为 R4 只测拒绝/转人工；Gate 失败不生成 Proposal/PR。
-14. **M19-C：小范围影子候选与人工审阅。** 验证候选摘要、正反例、安全/性能、匹配不确定分流、baseline/current hash 不变和群通知脱敏；完成后再由用户决定是否为单独窗口打开候选或采用开关。
-15. **最后才讨论采用/发布。** M19 通过 M15 且人工确认后，沿用现有 workspace 原子采用或 Overlay Draft PR/二次发布流程；不得把 M18/M19 的实施完成误报为 Skill 已上线。
+8. M16/M17 代码、迁移、聚焦测试和隔离链路已完成基础设施部分；失败候选和 workspace 采用仍保持关闭，不能把 Case 当作 Skill。
+9. **M18-A：冻结 schema 与风险合同。** 固化任务/步骤字段、脱敏边界、Trace/Event/Case 关联和 R0～R4 判定表；方案确认后再改代码或迁移。
+10. **M18-B：完成步骤证据链。** 记录纯读、混合、高风险、脱敏失败和跨 turn 关联；用 fixture 验证风险隔离，影子期间零 Proposal、PR 和 Skill 写入。
+11. **M18-C：真实只读观察。** 在长期 Gateway 的全新 WebUI/授权 QQ 测试群核对目标包、步骤顺序、风险升级、脱敏和回滚证据；若旧规则与新规则冲突，采用更保守结果。
+12. **M19-A：接通双来源 candidate staging。** 成功任务从 M18 `candidate_eligible` 进入候选；失败任务必须经过 Issue `note` 和 `request_candidate`，再进入同一候选状态机；支持新 Skill candidate 和已有 Skill 独立 revision。
+13. **M19-B：接入 M15 评测和 workspace 自动采用。** 为 R2 使用临时工作区/回滚快照，为 R3 使用 mock/阻断器，为 R4 只测拒绝/转人工；Gate 失败零 Skill 写入，Gate 通过后按 allowlist 自动原子采用 workspace Skill。
+14. **M19-C：双路径真实验收。** 在 WebUI 完成一次成功任务候选→M15→workspace Skill→下一轮读取→回滚；再完成一次失败 Issue→人工 note→request_candidate→M15→workspace Skill→下一轮读取→回滚。Overlay 只验证 Draft PR，不执行发布。
+15. **最后才打开长期运行开关。** 只有上述代码、迁移、聚焦测试、全量测试和两条 WebUI 真实链路均有证据，才允许在独立窗口打开失败候选和 `adoption_enabled`；不得把 M18/M19 基础设施完成误报为 Skill 已上线。
 
 ### 13.3 在你配合前明确不做的事情
 
@@ -1273,9 +1321,12 @@ WebUI 的 `NanobotClient` 已有指数退避和 token 刷新重连；真实观�
 当前唯一主线是：
 
 ```text
-M18 schema/风险表 → M18 影子步骤证据 → M18 强制分级
-        → M19 隔离 candidate（新 Skill/已有 Skill revision）
-        → M15 混合风险评测 → 人工审阅 → 再决定采用/发布
+M18 schema/风险表 → M18 影子/强制步骤证据
+        → 成功任务 candidate
+        → 失败 Issue note + request_candidate
+        → M19 统一 candidate（新 Skill/已有 Skill revision）
+        → M15 混合风险评测
+        → workspace 自动原子采用 / Overlay Draft PR + 二次发布
 ```
 
 在这条主线完成前，不另开“把所有工具加入白名单”“让 `record_case` 自动写 Skill”“直接打开 `adoption_enabled`/`publish_enabled`”等旁路。出现以下任一情况立即暂停后续 candidate 消费，并退回影子模式：步骤顺序或任务关联错误、原始命令/参数/文件内容泄露、实际副作用等级低估、跨群证据串联、当前生效 Skill hash 非预期变化、R4 操作进入候选执行路径。
@@ -1285,17 +1336,17 @@ M18 schema/风险表 → M18 影子步骤证据 → M18 强制分级
 以下条件全部满足才可称为“QQ 群内受控 Skill 进化上线”：
 
 1. M0～M3 已完成并验收；M4 作为独立变更打开 `phase6.enabled` 进入影子模式，且所有新增自动化都有独立 feature flag 和立即 kill switch。
-2. 自动评测通过只会产生可追溯、可过期的 Proposal，不会自动升级或发布。
+2. 成功任务或人工评价后的失败 Issue 通过 M15 后，workspace 路径自动原子采用为正式 Skill；Overlay 路径只产生可追溯、可过期的 Proposal/Draft PR，不自动合并或发布。
 3. 指定群能收到一次、脱敏、可审阅的通知；投递可重试、可查、可去重。
 4. 群命令是确定性路由，管理员、群、确认码、Proposal 状态和基线版本均经过校验。
 5. 普通成员、错误群、重放请求、过期确认和版本冲突无法造成状态改变。
-6. workspace Skill 能原子采用、下一轮生效、可审计、可回滚，且通常不需要重启 Gateway。
+6. workspace Skill 能在 M15 Gate 通过后按 allowlist 自动原子采用，下一轮生效、可审计、可回滚，且通常不需要重启 Gateway。
 7. 个人 Skill 只在私有 Overlay 创建 Draft PR；合并和部署需要独立 `publish` 确认与 CI 验收，发布后热加载当前 Gateway，公共 `Trees-23/KdmCopilot:main` 不发生个人 Skill 变更。
 8. 自动化暂停、失败恢复、通知 dead-letter、回滚和跨群隔离均有单元、集成和真实 Gateway 场景证据。
 9. 自动候选必须有脱敏、可读的业务任务语义与可验证的行为增量；框架事件、空壳模板和仅因“重复成功”形成的候选不得创建 Draft PR 或通知管理员。
-10. M16/M17 失败驱动通道必须同时完成 12:00 汇总、结构化两次恢复聚合、Issue 通知、管理员评论分流、失败恢复 A/B 评测和真实 QQ 验收；只有满足 M17 Definition of Done 才能宣称失败场景已纳入自进化闭环。
+10. M16/M17 失败驱动通道必须同时完成 12:00 汇总、结构化两次恢复聚合、Issue 通知、管理员 `note`、`request_candidate`、失败恢复 M15 A/B 评测、workspace 自动采用和真实 WebUI/QQ 验收；只有满足 M17/M19 Definition of Done 才能宣称失败场景已纳入自进化闭环。
 11. M18 已持久化脱敏任务包和有序步骤证据，风险按 R0～R4 与实际副作用判定；混合任务不会因单个高风险工具丢失全部目标证据，R4 任务不会生成可执行候选。
 12. M18 影子/强制模式均有步骤缺失、脱敏失败、跨 turn、失败恢复、R2 隔离、R3 mock 和 R4 拒绝证据；关闭开关后不产生 Proposal、PR 或 Skill 写入。
-13. M19 能区分新 Skill candidate 与已有 Skill 独立 revision，候选拥有来源、baseline、hash、差异和回滚信息；当前生效 Skill 在候选阶段保持不变。
+13. M19 能区分新 Skill candidate 与已有 Skill 独立 revision，候选拥有来源、baseline、hash、差异和回滚信息；candidate 阶段当前生效 Skill 保持不变，Gate 通过后只允许受保护的 workspace 原子采用改变生效 revision。
 14. M19 的混合风险候选通过 M15 A/B、正反例、安全、性能和稳定性 Gate 后才可进入 Proposal/Draft PR；Gate 失败、预算耗尽或评测异常均不会进入采用/发布。
-15. M18/M19 的正式采用和发布仍分别受 workspace 原子采用、私有 Overlay、CI、管理员确认、CAS、kill switch 和回滚门禁约束；“Case 已确认”或“candidate 已生成”不等于“Skill 已生效”。
+15. M18/M19 的正式采用和发布仍分别受 workspace allowlist、原子采用、私有 Overlay、CI、Overlay 管理员二次确认、CAS、kill switch 和回滚门禁约束；“Case 已确认”或“candidate 已生成”不等于“Skill 已生效”，只有 M15 通过并完成 workspace adoption 后才算生效。
