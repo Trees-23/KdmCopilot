@@ -138,6 +138,11 @@ class Session:
     last_consolidated: int = 0  # Number of messages already consolidated to files
 
     def __post_init__(self) -> None:
+        # Persisted metadata can be created from two nearly simultaneous
+        # clock reads. Keep the session lifecycle timestamps monotonic so a
+        # freshly written session can never appear older than its creation.
+        if self.updated_at < self.created_at:
+            self.updated_at = self.created_at
         # An out-of-range offset (corrupt metadata) would hide all history; reset it.
         if (
             isinstance(self.last_consolidated, bool)
