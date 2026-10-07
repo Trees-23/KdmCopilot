@@ -133,15 +133,15 @@ class Session:
     key: str  # channel:chat_id
     messages: list[dict[str, Any]] = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.now)
-    updated_at: datetime = field(default_factory=datetime.now)
+    updated_at: datetime | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     last_consolidated: int = 0  # Number of messages already consolidated to files
 
     def __post_init__(self) -> None:
-        # Persisted metadata can be created from two nearly simultaneous
-        # clock reads. Keep the session lifecycle timestamps monotonic so a
-        # freshly written session can never appear older than its creation.
-        if self.updated_at < self.created_at:
+        # Use the creation timestamp when no update timestamp was supplied.
+        # This avoids two independent clock reads making a fresh session look
+        # older, while preserving explicitly stored historical timestamps.
+        if self.updated_at is None:
             self.updated_at = self.created_at
         # An out-of-range offset (corrupt metadata) would hide all history; reset it.
         if (
