@@ -5,8 +5,8 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-MIGRATION_VERSION = 13
-MIGRATION_ID = "0013_evolution_candidate_staging"
+MIGRATION_VERSION = 15
+MIGRATION_ID = "0015_candidate_adoption_states"
 APP_BUILD = "memory-phase1"
 
 MIGRATIONS_DIR = Path(__file__).with_name("migrations")
@@ -23,10 +23,30 @@ FAILURE_ISSUE_CANDIDATES_MIGRATION_PATH = MIGRATIONS_DIR / "0010_failure_issue_c
 RECOVERY_SEMANTIC_FAMILIES_MIGRATION_PATH = MIGRATIONS_DIR / "0011_recovery_semantic_families.sql"
 STEPWISE_EVOLUTION_EVIDENCE_MIGRATION_PATH = MIGRATIONS_DIR / "0012_stepwise_evolution_evidence.sql"
 CANDIDATE_STAGING_MIGRATION_PATH = MIGRATIONS_DIR / "0013_evolution_candidate_staging.sql"
+RECOVERY_REVIEW_ATOMIC_ACTIONS_MIGRATION_PATH = MIGRATIONS_DIR / "0014_recovery_review_atomic_actions.sql"
+CANDIDATE_ADOPTION_STATES_MIGRATION_PATH = MIGRATIONS_DIR / "0015_candidate_adoption_states.sql"
 
 
 def migration_sql() -> str:
     """Return the checked-in latest migration SQL."""
+
+    return CANDIDATE_ADOPTION_STATES_MIGRATION_PATH.read_text(encoding="utf-8")
+
+
+def latest_migration_sql() -> str:
+    """Return the checked-in latest append-only migration SQL."""
+
+    return migration_sql()
+
+
+def recovery_review_atomic_actions_migration_sql() -> str:
+    """Return the immutable v14 migration SQL for the migration runner."""
+
+    return RECOVERY_REVIEW_ATOMIC_ACTIONS_MIGRATION_PATH.read_text(encoding="utf-8")
+
+
+def candidate_staging_migration_sql() -> str:
+    """Return the immutable M19 candidate-staging migration SQL."""
 
     return CANDIDATE_STAGING_MIGRATION_PATH.read_text(encoding="utf-8")
 

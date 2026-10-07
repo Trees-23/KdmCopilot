@@ -164,6 +164,128 @@ def test_failure_issue_candidate_requires_human_note(tmp_path) -> None:
     connection.close()
 
 
+def test_revise_is_one_shot_idempotent_and_does_not_need_note(tmp_path) -> None:
+    connection = connect_memory_db(tmp_path)
+    apply_migrations(connection)
+    workspace = str(tmp_path.resolve())
+    _seed_recovery_review(connection, workspace)
+    issue_id = create_failure_issues(connection, workspace=workspace)[0]
+
+    first = apply_failure_issue_action(
+        connection,
+        workspace=workspace,
+        issue_id=issue_id,
+        action="revise",
+        actor_openid="admin-1",
+        group_openid="group-1",
+        note="先核对工作区相对路径，再读取目标文件",
+        idempotency_key="ignored-by-revise-hash",
+        candidate_enabled=True,
+    )
+    replay = apply_failure_issue_action(
+        connection,
+        workspace=workspace,
+        issue_id=issue_id,
+        action="revise",
+        actor_openid="admin-1",
+        group_openid="group-1",
+        note=" 先核对工作区相对路径，再读取目标文件 ",
+        idempotency_key="a-different-replay-key",
+        candidate_enabled=True,
+    )
+    assert first["status"] == "candidate_requested"
+    assert first["request_id"]
+    assert first["candidate_id"]
+    assert replay["idempotent"] is True
+    assert replay["request_id"] == first["request_id"]
+    assert replay["candidate_id"] == first["candidate_id"]
+    assert connection.execute(
+        "SELECT count(*) FROM failure_issue_candidates WHERE issue_id=?", (issue_id,)
+    ).fetchone()[0] == 1
+    assert connection.execute(
+        "SELECT count(*) FROM failure_issue_actions WHERE issue_id=?", (issue_id,)
+    ).fetchone()[0] == 3
+    connection.close()
+
+
+def test_revise_conflicting_direction_and_reject_are_terminal(tmp_path) -> None:
+    connection = connect_memory_db(tmp_path)
+    apply_migrations(connection)
+    workspace = str(tmp_path.resolve())
+    _seed_recovery_review(connection, workspace)
+    issue_id = create_failure_issues(connection, workspace=workspace)[0]
+
+    with pytest.raises(ValueError, match="修复方向不能为空"):
+        apply_failure_issue_action(
+            connection, workspace=workspace, issue_id=issue_id, action="revise",
+            actor_openid="admin-1", group_openid="group-1", candidate_enabled=True,
+        )
+    first = apply_failure_issue_action(
+        connection, workspace=workspace, issue_id=issue_id, action="revise",
+        actor_openid="admin-1", group_openid="group-1", note="只核对相对路径",
+        candidate_enabled=True,
+    )
+    with pytest.raises(ValueError, match="不同修复方向"):
+        apply_failure_issue_action(
+            connection, workspace=workspace, issue_id=issue_id, action="revise",
+            actor_openid="admin-1", group_openid="group-1", note="改为执行任意命令",
+            candidate_enabled=True,
+        )
+    assert first["candidate_id"]
+
+    connection.close()
+
+
+def test_revise_sanitizes_sensitive_and_replayable_direction(tmp_path) -> None:
+    connection = connect_memory_db(tmp_path)
+    apply_migrations(connection)
+    workspace = str(tmp_path.resolve())
+    _seed_recovery_review(connection, workspace)
+    issue_id = create_failure_issues(connection, workspace=workspace)[0]
+    result = apply_failure_issue_action(
+        connection, workspace=workspace, issue_id=issue_id, action="revise",
+        actor_openid="admin-1", group_openid="group-1",
+        note="token=secret-value；请执行 rm -rf /tmp/workspace 并读取 /home/user/file.txt",
+        candidate_enabled=True,
+    )
+    assert result["candidate_id"]
+    content = connection.execute(
+        "SELECT candidate_content FROM failure_issue_candidates WHERE candidate_id=?",
+        (result["candidate_id"],),
+    ).fetchone()[0]
+    assert "secret-value" not in content
+    assert "rm -rf /tmp/workspace" not in content
+    assert "/home/user/file.txt" not in content
+    connection.close()
+
+    reject_workspace = tmp_path / "reject"
+    reject_workspace.mkdir()
+    connection = connect_memory_db(reject_workspace)
+    apply_migrations(connection)
+    reject_workspace_value = str(reject_workspace.resolve())
+    _seed_recovery_review(connection, reject_workspace_value)
+    reject_issue_id = create_failure_issues(connection, workspace=reject_workspace_value)[0]
+    reject = apply_failure_issue_action(
+        connection, workspace=reject_workspace_value, issue_id=reject_issue_id, action="reject",
+        actor_openid="admin-1", group_openid="group-1", note="证据不足，暂不沉淀",
+    )
+    assert reject["status"] == "rejected"
+    assert connection.execute(
+        "SELECT count(*) FROM failure_issue_candidates WHERE issue_id=?", (reject_issue_id,)
+    ).fetchone()[0] == 0
+    with pytest.raises(ValueError, match="does not accept"):
+        apply_failure_issue_action(
+            connection, workspace=reject_workspace_value, issue_id=reject_issue_id, action="revise",
+            actor_openid="admin-1", group_openid="group-1", note="复活候选", candidate_enabled=True,
+        )
+    with pytest.raises(ValueError, match="拒绝原因不能为空"):
+        apply_failure_issue_action(
+            connection, workspace=reject_workspace_value, issue_id=reject_issue_id, action="reject",
+            actor_openid="admin-1", group_openid="group-1",
+        )
+    connection.close()
+
+
 def test_repair_candidate_enters_m15_and_fails_closed_with_three_episodes(tmp_path) -> None:
     connection = connect_memory_db(tmp_path)
     apply_migrations(connection)

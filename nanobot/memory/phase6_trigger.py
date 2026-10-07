@@ -148,7 +148,8 @@ def _load_repair_candidates(connection: Any, workspace: str) -> tuple[tuple[Any,
     rows = connection.execute(
         """SELECT c.candidate_id,c.issue_id,c.skill_id,c.skill_name,c.baseline_revision_id,
                   c.candidate_revision_id,c.candidate_hash,c.candidate_content,
-                  i.task_goal,i.failure_class,i.correction_goal,i.episode_ids_json
+                  i.task_goal,i.failure_class,i.correction_goal,i.episode_ids_json,
+                  i.recommendation,i.review_reason
            FROM failure_issue_candidates c JOIN failure_issues i ON i.issue_id=c.issue_id
            WHERE c.workspace=? AND c.status='queued' ORDER BY c.created_at LIMIT 20""",
         (workspace,),
@@ -156,6 +157,8 @@ def _load_repair_candidates(connection: Any, workspace: str) -> tuple[tuple[Any,
     specs: list[Any] = []
     records: list[dict[str, Any]] = []
     for row in rows:
+        if str(row[12] or "").startswith("证据不足"):
+            continue
         try:
             episode_ids = tuple(str(item) for item in json.loads(row[11] or "[]") if str(item))
         except (TypeError, ValueError, json.JSONDecodeError):
@@ -169,23 +172,29 @@ def _load_repair_candidates(connection: Any, workspace: str) -> tuple[tuple[Any,
         cases = tuple({
             "case_id": f"recovery-case:{episode_id}",
             "prompt": str(row[8] or "").strip(),
-            "expected": str(row[10] or "恢复成功并遵守范围边界").strip(),
+            "expected": str(row[13] or row[10] or "恢复成功并遵守范围边界").strip(),
         } for episode_id in episode_ids)
         if not trace_ids or not cases:
             continue
         task_key = f"recovery:{row[0]}"
+        baseline_revision = str(row[4])
+        baseline_row = connection.execute(
+            "SELECT content_hash FROM skill_revisions WHERE revision_id=?", (baseline_revision,)
+        ).fetchone()
+        baseline_hash = str(baseline_row[0]) if baseline_row else digest("")
         specs.append(CandidateSpec(
-            task_key=task_key, skill_id=str(row[2]), skill_name=str(row[3]), source_kind="shared",
+            task_key=task_key, skill_id=str(row[2]), skill_name=str(row[3]), source_kind="workspace",
             baseline_revision_id=str(row[4]), candidate_revision_id=str(row[5]),
-            baseline_hash=digest(""), candidate_hash=str(row[6]), cases=cases,
+            baseline_hash=baseline_hash, candidate_hash=str(row[6]), cases=cases,
             fixture_hash="sha256:" + str(row[0]).replace("failure-candidate:", ""),
             case_ids=tuple(item["case_id"] for item in cases), candidate_content=str(row[7]),
             holdout_case_ids=tuple(item["case_id"] for item in cases[-max(2, len(cases) // 5):]),
+            origin_candidate_id=str(row[0]),
         ))
         records.extend({
             "trace_id": trace_id, "summary": str(row[8] or "恢复失败任务"), "intent": "排查问题",
             "input_scope": str(row[8] or "恢复失败任务"),
-            "expected_outcome": str(row[10] or "恢复成功并遵守范围边界"),
+            "expected_outcome": str(row[13] or row[10] or "恢复成功并遵守范围边界"),
             "tools": ("skill_read",), "outcome": "success", "task_key": task_key,
             "evidence_id": f"recovery-evidence:{episode_id}",
         } for episode_id, trace_id in zip(episode_ids, trace_ids))
@@ -268,7 +277,11 @@ async def run_phase6_review_scan_async(
         if runtime.stepwise_evidence_enabled and runtime.stepwise_evidence_mode == "enforced":
             from nanobot.memory.stepwise_evidence import load_stepwise_candidate_records
 
-            semantic_records = load_stepwise_candidate_records(connection, str(root))
+            semantic_records = load_stepwise_candidate_records(
+                connection,
+                str(root),
+                include_partial=runtime.mixed_risk_policy == "partial",
+            )
         else:
             semantic_records = load_semantic_candidate_records(connection, str(root))
         # Recovery lessons are a separate M13 path.  They create only
@@ -309,7 +322,12 @@ async def run_phase6_review_scan_async(
                     if task is None:
                         continue
                     try:
-                        staged_record = stage_task_candidate(connection, task=task, workspace=str(root))
+                        staged_record = stage_task_candidate(
+                            connection,
+                            task=task,
+                            workspace=str(root),
+                            allow_partial=runtime.mixed_risk_policy == "partial",
+                        )
                         staged_candidate_ids.append(staged_record.candidate_id)
                         mark_candidate_status(
                             connection,
@@ -413,7 +431,10 @@ async def run_phase6_review_scan_async(
             if staged_candidate_ids:
                 from nanobot.memory.candidate_staging import mark_candidate_status
 
-                if result.proposal_ids:
+                adopted = set(result.adopted_candidate_ids)
+                if adopted:
+                    status, reason = "adopted", "M15 通过并完成 workspace 原子采用"
+                elif result.proposal_ids:
                     status, reason = "proposal_eligible", "M15 评测与 Proposal 门禁通过"
                 elif ab_result.status == "budget_exhausted":
                     status, reason = "insufficient_evidence", "M15 评测预算耗尽，未创建 Proposal"
@@ -453,9 +474,13 @@ async def run_phase6_review_scan_async(
                     )
                     repair_proposal_ids = tuple(repair_cycle.proposal_ids)
                     for spec in repair_ab.approved_specs:
-                        _mark_repair_candidate(connection, spec.candidate_hash, status=(
-                            "passed" if spec.task_key in set(repair_cycle.proposal_ids) else "passed"
-                        ), reason="M15 A/B 与 Proposal 门禁通过")
+                        adopted = spec.origin_candidate_id in set(repair_cycle.adopted_candidate_ids)
+                        _mark_repair_candidate(
+                            connection,
+                            spec.candidate_hash,
+                            status="adopted" if adopted else "passed",
+                            reason="M15 通过并完成 workspace 原子采用" if adopted else "M15 A/B 与 Proposal 门禁通过",
+                        )
         if overlay_pipeline is not None:
             overlay_pipeline.retry_failed_handoffs(connection, config)
             # Draft PR creation and CI are separate phases. Poll existing

@@ -159,6 +159,11 @@ def _ensure_revisions(connection: Any, candidate: TraceCandidate, skill_name: st
            VALUES(?,?,?,?,?,'[]','phase6-candidate','staging',?)""",
         (candidate_id, skill_id, "candidate", content_hash, content, now),
     )
+    connection.execute(
+        "UPDATE skills SET current_revision_id=?,current_version='0' "
+        "WHERE skill_id=? AND current_revision_id IS NULL",
+        (baseline_id, skill_id),
+    )
     connection.commit()
     return skill_id, baseline_id, candidate_id, baseline_hash
 
@@ -198,7 +203,14 @@ def build_candidate_specs(
                       ORDER BY created_at DESC LIMIT 1""", (task_id,)
                 ).fetchone()
         if staged_row is not None:
-            _, skill_id, name, baseline_id, candidate_id, baseline_hash, candidate_hash, content = staged_row
+            staged_candidate_id, skill_id, name, baseline_id, candidate_id, baseline_hash, candidate_hash, content = staged_row
+            candidate_source_kind = "workspace"
+        elif candidate.stepwise:
+            # Stepwise tasks must have a persisted M19 candidate. Falling
+            # back to a legacy Trace candidate would discard per-step risk
+            # evidence and could bypass mixed-risk isolation.
+            skipped.append(candidate.task_key)
+            continue
         else:
             name = _skill_name(candidate)
             content = _skill_content(candidate, name)
@@ -206,6 +218,8 @@ def build_candidate_specs(
                 connection, candidate, name, content
             )
             candidate_hash = _content_hash(content)
+            staged_candidate_id = None
+            candidate_source_kind = "shared"
         cases = tuple(
             {
                 "case_id": f"case:{trace_id}",
@@ -219,7 +233,7 @@ def build_candidate_specs(
                 task_key=candidate.task_key,
                 skill_id=skill_id,
                 skill_name=name,
-                source_kind="shared",
+                source_kind=candidate_source_kind,
                 baseline_revision_id=baseline_id,
                 candidate_revision_id=candidate_id,
                 baseline_hash=baseline_hash,
@@ -235,6 +249,7 @@ def build_candidate_specs(
                         -max(2, (len(candidate.trace_ids) + 4) // 5):
                     ]
                 ),
+                origin_candidate_id=staged_candidate_id,
             )
         )
     return CandidateBuildResult(tuple(specs), tuple(skipped))

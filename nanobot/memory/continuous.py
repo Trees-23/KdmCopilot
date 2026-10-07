@@ -56,6 +56,8 @@ class Phase6RuntimeConfig:
     ab_evaluation_reasoning_effort: str = "high"
     ab_evaluation_max_candidates_per_day: int = 2
     ab_evaluation_max_model_calls_per_day: int = 40
+    adoption_enabled: bool = False
+    workspace_skill_allowlist: tuple[str, ...] = ()
     stepwise_evidence_enabled: bool = False
     stepwise_evidence_mode: str = "shadow"
     mixed_risk_policy: str = "manual"
@@ -76,6 +78,7 @@ class Phase6RuntimeConfig:
                     "draft_pr_enabled", "ab_evaluation_mode", "ab_evaluation_model",
                     "ab_evaluation_reasoning_effort", "ab_evaluation_max_candidates_per_day",
                     "ab_evaluation_max_model_calls_per_day",
+                    "adoption_enabled", "workspace_skill_allowlist",
                     "stepwise_evidence_enabled", "stepwise_evidence_mode", "mixed_risk_policy",
                     "stepwise_candidate_enabled", "case_candidate_promotion",
                 ):

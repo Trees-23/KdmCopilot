@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import os
 import re
+import secrets
 import sqlite3
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any
+from uuid import uuid4
 
 from nanobot.memory.continuous import phase6_active
 
@@ -27,12 +30,25 @@ class AdoptionResult:
     reason: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class RollbackConfirmation:
+    status: str
+    proposal_id: str
+    code: str | None = None
+    expires_at: str | None = None
+    reason: str | None = None
+
+
 def _iso() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def _digest(content: str) -> str:
     return "sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def _hash_code(code: str) -> str:
+    return "sha256:" + hashlib.sha256(code.encode("utf-8")).hexdigest()
 
 
 def _evolution(config: Any) -> Any:
@@ -98,6 +114,93 @@ def _restore(path: Path, old_bytes: bytes | None, old_mode: int | None) -> None:
         path.chmod(old_mode)
 
 
+def _record_action(
+    connection: sqlite3.Connection,
+    *,
+    proposal_id: str,
+    workspace: str,
+    action: str,
+    actor: str,
+    idempotency_key: str,
+    result_status: str,
+    result: dict[str, Any],
+) -> None:
+    """Write adoption audit data without opening a nested transaction."""
+
+    try:
+        connection.execute(
+            "INSERT INTO proposal_actions(action_id,proposal_id,workspace,action,actor_openid,"
+            "group_openid,idempotency_key,request_digest,result_status,result_json,created_at) "
+            "VALUES(?,?,?,?,?,NULL,?,?,?, ?,?)",
+            (
+                f"action-{uuid4()}", proposal_id, workspace, action, actor, idempotency_key,
+                "sha256:" + hashlib.sha256(idempotency_key.encode()).hexdigest(), result_status,
+                json.dumps(result, ensure_ascii=False, sort_keys=True), _iso(),
+            ),
+        )
+    except sqlite3.IntegrityError:
+        # A durable adoption replay may already have the same action.  The
+        # caller has verified the corresponding CAS state before reaching us.
+        if connection.execute(
+            "SELECT 1 FROM proposal_actions WHERE idempotency_key=?", (idempotency_key,)
+        ).fetchone() is None:
+            raise
+
+
+def issue_rollback_confirmation(
+    connection: sqlite3.Connection,
+    proposal_id: str,
+    *,
+    actor: str,
+    config: Any,
+) -> RollbackConfirmation:
+    """Issue a short-lived administrator code for an adopted workspace Skill."""
+
+    if not actor.strip():
+        raise ValueError("rollback actor is required")
+    if not _enabled(config):
+        return RollbackConfirmation("disabled", proposal_id, reason="workspace adoption is disabled")
+    row = connection.execute(
+        "SELECT workspace,status,confirmation_code_hash,confirmation_expires_at FROM skill_proposals "
+        "WHERE proposal_id=?", (proposal_id,)
+    ).fetchone()
+    if row is None:
+        return RollbackConfirmation("not_found", proposal_id)
+    workspace, status, existing_hash, existing_expires = row
+    if status != "adopted":
+        return RollbackConfirmation("conflict", proposal_id, reason=f"status={status}")
+    now = datetime.now(UTC)
+    rollback_action = connection.execute(
+        "SELECT 1 FROM proposal_actions WHERE proposal_id=? AND action='issue_rollback_confirmation' "
+        "AND result_status='issued' ORDER BY created_at DESC LIMIT 1",
+        (proposal_id,),
+    ).fetchone()
+    if rollback_action and existing_hash and existing_expires and str(existing_expires) > now.isoformat(timespec="seconds"):
+        return RollbackConfirmation("idempotent", proposal_id, expires_at=str(existing_expires))
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    expires = (now + timedelta(minutes=int(getattr(_evolution(config), "proposal_ttl_minutes", 720)))).isoformat(timespec="seconds")
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        updated = connection.execute(
+            "UPDATE skill_proposals SET confirmation_code_hash=?,confirmation_expires_at=?,"
+            "version_epoch=version_epoch+1,updated_at=? WHERE proposal_id=? AND status='adopted'",
+            (_hash_code(code), expires, _iso(), proposal_id),
+        ).rowcount
+        if updated != 1:
+            connection.rollback()
+            return RollbackConfirmation("conflict", proposal_id, reason="Proposal changed")
+        _record_action(
+            connection, proposal_id=proposal_id, workspace=str(workspace), action="issue_rollback_confirmation",
+            actor=actor, idempotency_key=f"rollback-confirmation:{proposal_id}:{expires}",
+            result_status="issued", result={"expires_at": expires},
+        )
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    return RollbackConfirmation("issued", proposal_id, code=code, expires_at=expires)
+
+
 def adopt_workspace_proposal(
     connection: sqlite3.Connection,
     workspace: str | Path,
@@ -131,6 +234,8 @@ def adopt_workspace_proposal(
         return AdoptionResult("not_workspace_proposal", proposal_id)
     if not _allowed_skill(config, str(skill_name)):
         return AdoptionResult("not_allowed", proposal_id, reason="Skill is not in workspace adoption allowlist")
+    if status == "adopted" and current_revision == candidate_revision:
+        return AdoptionResult("adopted", proposal_id, candidate_revision, str(_skill_path(workspace, str(skill_name))))
     if status != "approved":
         return AdoptionResult("conflict", proposal_id, reason=f"status={status}")
     if not skill_id or not candidate_revision or content is None:
@@ -165,6 +270,34 @@ def adopt_workspace_proposal(
             raise RuntimeError("Skill pointer CAS failed")
         connection.execute(
             "UPDATE skill_revisions SET status='active' WHERE revision_id=?", (candidate_revision,)
+        )
+        connection.execute(
+            "UPDATE skills SET status='active',updated_at=? WHERE skill_id=?", (timestamp, skill_id)
+        )
+        connection.execute(
+            "UPDATE evolution_candidate_staging SET status='adopted',reason=?,updated_at=? "
+            "WHERE candidate_revision_id=? AND workspace=?",
+            ("M15 通过并完成 workspace 原子采用", timestamp, candidate_revision, str(proposal_workspace)),
+        )
+        connection.execute(
+            "UPDATE failure_issue_candidates SET status='adopted',reason=?,updated_at=? "
+            "WHERE candidate_revision_id=? AND workspace=?",
+            ("M15 通过并完成 workspace 原子采用", timestamp, candidate_revision, str(proposal_workspace)),
+        )
+        _record_action(
+            connection,
+            proposal_id=proposal_id,
+            workspace=str(proposal_workspace),
+            action="workspace_adoption",
+            actor=actor,
+            idempotency_key=f"workspace-adoption:{proposal_id}:{epoch}",
+            result_status="adopted",
+            result={
+                "baseline_hash": baseline_hash,
+                "candidate_hash": candidate_hash,
+                "revision_id": candidate_revision,
+                "path": str(path),
+            },
         )
         connection.execute(
             "UPDATE skill_proposals SET status='adopted',version_epoch=version_epoch+1,updated_at=? "
@@ -233,6 +366,39 @@ def rollback_workspace_proposal(
         if connection.execute("SELECT changes()").fetchone()[0] != 1:
             raise RuntimeError("rollback Skill pointer CAS failed")
         connection.execute(
+            "UPDATE skill_revisions SET status='active' WHERE revision_id=?", (baseline_revision,)
+        )
+        connection.execute(
+            "UPDATE skills SET status='active',updated_at=? WHERE skill_id=?", (timestamp, skill_id)
+        )
+        connection.execute(
+            "UPDATE skill_revisions SET status='rolled_back' WHERE revision_id=?", (candidate_revision,)
+        )
+        connection.execute(
+            "UPDATE evolution_candidate_staging SET status='closed',reason=?,updated_at=? "
+            "WHERE candidate_revision_id=? AND workspace=?",
+            ("workspace Skill 已回滚到 baseline", timestamp, candidate_revision, str(proposal_workspace)),
+        )
+        connection.execute(
+            "UPDATE failure_issue_candidates SET status='failed',reason=?,updated_at=? "
+            "WHERE candidate_revision_id=? AND workspace=?",
+            ("workspace Skill 已回滚到 baseline", timestamp, candidate_revision, str(proposal_workspace)),
+        )
+        _record_action(
+            connection,
+            proposal_id=proposal_id,
+            workspace=str(proposal_workspace),
+            action="workspace_rollback",
+            actor=actor,
+            idempotency_key=f"workspace-rollback:{proposal_id}:{epoch}",
+            result_status="rolled_back",
+            result={
+                "baseline_hash": baseline_hash,
+                "revision_id": baseline_revision,
+                "path": str(path),
+            },
+        )
+        connection.execute(
             "UPDATE skill_proposals SET status='rolled_back',version_epoch=version_epoch+1,updated_at=? "
             "WHERE proposal_id=? AND status='adopted' AND version_epoch=?",
             (timestamp, proposal_id, epoch),
@@ -247,4 +413,7 @@ def rollback_workspace_proposal(
     return AdoptionResult("rolled_back", proposal_id, baseline_revision, str(path))
 
 
-__all__ = ["AdoptionResult", "adopt_workspace_proposal", "rollback_workspace_proposal"]
+__all__ = [
+    "AdoptionResult", "RollbackConfirmation", "adopt_workspace_proposal",
+    "issue_rollback_confirmation", "rollback_workspace_proposal",
+]

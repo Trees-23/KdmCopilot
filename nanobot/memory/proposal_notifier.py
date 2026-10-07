@@ -156,8 +156,8 @@ class ProposalNotifier:
             f"状态：{issue['status']}\n"
             f"建议：{issue['recommendation']}\n\n"
             f"查看：/evolve recovery review {issue['issue_id']}\n"
-            f"处理：/evolve recovery accept {issue['issue_id']} record_case\n"
-            f"拒绝：/evolve recovery reject {issue['issue_id']} 原因"
+            f"修复评价：/evolve recovery revise {issue['issue_id']} 修复方向\n"
+            f"拒绝归档：/evolve recovery reject {issue['issue_id']} 原因"
         )
 
     def enqueue_failure_issue(self, issue_id: str, *, group_openid: str) -> int:

@@ -21,7 +21,7 @@ from nanobot.memory.stepwise_evidence import TaskEvidence
 _NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 _CANDIDATE_STATUSES = frozenset({
     "candidate_staged", "manual_review_required", "evaluating", "rejected_by_quality_gate",
-    "insufficient_evidence", "proposal_eligible", "closed",
+    "insufficient_evidence", "proposal_eligible", "adopted", "closed",
 })
 
 
@@ -144,6 +144,11 @@ def stage_task_candidate(
         raise ValueError("task evidence is not eligible for candidate staging")
     if any(step.risk_level == "R4" for step in task.steps):
         raise ValueError("R4 evidence cannot be staged as a Skill candidate")
+    if any(
+        step.risk_level in {"R2", "R3"} and step.candidate_use != "abstract_only"
+        for step in task.steps
+    ):
+        raise ValueError("R2/R3 steps must be represented only as controlled abstractions")
     if match_confidence is not None and not 0 <= match_confidence <= 1:
         raise ValueError("match_confidence must be between 0 and 1")
     if match_confidence is not None and 0.4 < match_confidence < 0.8:
@@ -201,6 +206,11 @@ def stage_task_candidate(
                VALUES(?,?,?,?,?,'m19-staging','staging',?)""",
             (baseline_revision_id, skill_id, "0", baseline_hash, "", _now()),
         )
+    connection.execute(
+        "UPDATE skills SET current_revision_id=?,current_version='0' "
+        "WHERE skill_id=? AND current_revision_id IS NULL",
+        (baseline_revision_id, skill_id),
+    )
     candidate_revision_id = f"m19-revision:{candidate_hash[7:31]}"
     now = _now()
     connection.execute(

@@ -10,7 +10,7 @@ from nanobot.memory.schema import (
     ALERT_DELIVERY_MIGRATION_PATH,
     APP_BUILD,
     BASE_REQUIRED_TABLES,
-    CANDIDATE_STAGING_MIGRATION_PATH,
+    CANDIDATE_ADOPTION_STATES_MIGRATION_PATH,
     CANDIDATE_STAGING_TABLES,
     DELIVERY_PAYLOAD_MIGRATION_PATH,
     FAILURE_ISSUE_CANDIDATES_MIGRATION_PATH,
@@ -19,13 +19,15 @@ from nanobot.memory.schema import (
     MIGRATION_VERSION,
     PROPOSAL_REVIEW_MIGRATION_PATH,
     RECOVERY_CASES_MIGRATION_PATH,
+    RECOVERY_REVIEW_ATOMIC_ACTIONS_MIGRATION_PATH,
     RECOVERY_SEMANTIC_FAMILIES_MIGRATION_PATH,
     REQUIRED_TABLES,
     SEMANTIC_QUALITY_MIGRATION_PATH,
     STEPWISE_EVOLUTION_EVIDENCE_MIGRATION_PATH,
     STEPWISE_EVOLUTION_TABLES,
     base_migration_sql,
-    migration_sql,
+    candidate_staging_migration_sql,
+    latest_migration_sql,
     phase6_migration_sql,
     schema_hash,
 )
@@ -185,8 +187,20 @@ def apply_migrations(
     apply_one(10, "0010_failure_issue_candidates", FAILURE_ISSUE_CANDIDATES_MIGRATION_PATH.read_text(encoding="utf-8"), REQUIRED_TABLES - (STEPWISE_EVOLUTION_TABLES | CANDIDATE_STAGING_TABLES))
     apply_one(11, "0011_recovery_semantic_families", RECOVERY_SEMANTIC_FAMILIES_MIGRATION_PATH.read_text(encoding="utf-8"), REQUIRED_TABLES - (STEPWISE_EVOLUTION_TABLES | CANDIDATE_STAGING_TABLES))
     apply_one(12, "0012_stepwise_evolution_evidence", STEPWISE_EVOLUTION_EVIDENCE_MIGRATION_PATH.read_text(encoding="utf-8"), REQUIRED_TABLES - CANDIDATE_STAGING_TABLES)
-    apply_one(MIGRATION_VERSION, MIGRATION_ID, migration_sql(), REQUIRED_TABLES)
-    verify_schema(connection, schema_hash(migration_sql()))
+    apply_one(13, "0013_evolution_candidate_staging", candidate_staging_migration_sql(), REQUIRED_TABLES)
+    apply_one(
+        14,
+        "0014_recovery_review_atomic_actions",
+        RECOVERY_REVIEW_ATOMIC_ACTIONS_MIGRATION_PATH.read_text(encoding="utf-8"),
+        REQUIRED_TABLES,
+    )
+    apply_one(
+        MIGRATION_VERSION,
+        MIGRATION_ID,
+        CANDIDATE_ADOPTION_STATES_MIGRATION_PATH.read_text(encoding="utf-8"),
+        REQUIRED_TABLES,
+    )
+    verify_schema(connection, schema_hash(latest_migration_sql()))
 
 
 def _record_failed_version(
@@ -217,4 +231,4 @@ def _record_failed_version(
 def migration_file_path() -> str:
     """Expose the latest checked-in migration path for evidence and diagnostics."""
 
-    return str(CANDIDATE_STAGING_MIGRATION_PATH)
+    return str(CANDIDATE_ADOPTION_STATES_MIGRATION_PATH)

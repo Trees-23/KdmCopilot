@@ -2,7 +2,11 @@ from types import SimpleNamespace
 
 from nanobot.memory.maintenance import open_maintenance_db
 from nanobot.memory.proposal_repository import ProposalRepository
-from nanobot.memory.skill_adoption import adopt_workspace_proposal, rollback_workspace_proposal
+from nanobot.memory.skill_adoption import (
+    adopt_workspace_proposal,
+    issue_rollback_confirmation,
+    rollback_workspace_proposal,
+)
 
 
 def _config(enabled=True, adoption=True):
@@ -75,6 +79,7 @@ def test_workspace_adoption_is_atomic_and_rolls_back(tmp_path):
     assert adopted.status == "adopted"
     assert (workspace / "skills/demo/SKILL.md").read_text() == "# Demo\n\nnew\n"
     assert connection.execute("SELECT current_revision_id FROM skills WHERE skill_id='skill-1'").fetchone()[0] == "candidate-1"
+    assert connection.execute("SELECT status FROM skills WHERE skill_id='skill-1'").fetchone()[0] == "active"
 
     rolled_back = rollback_workspace_proposal(
         connection, workspace, "prop-adopt-test", actor="admin", code=code, config=_config()
@@ -82,6 +87,7 @@ def test_workspace_adoption_is_atomic_and_rolls_back(tmp_path):
     assert rolled_back.status == "rolled_back"
     assert (workspace / "skills/demo/SKILL.md").read_text() == "# Demo\n\nold\n"
     assert connection.execute("SELECT current_revision_id FROM skills WHERE skill_id='skill-1'").fetchone()[0] == "base-1"
+    assert connection.execute("SELECT status FROM skills WHERE skill_id='skill-1'").fetchone()[0] == "active"
     connection.close()
 
 
@@ -102,4 +108,43 @@ def test_adoption_rejects_changed_workspace_file(tmp_path):
         connection, workspace, "prop-adopt-test", actor="admin", config=_config()
     )
     assert result.status == "stale"
+    connection.close()
+
+
+def test_rollback_confirmation_is_durable_and_adoption_audit_is_written(tmp_path):
+    workspace, connection, _code = _setup(tmp_path)
+    adopted = adopt_workspace_proposal(
+        connection, workspace, "prop-adopt-test", actor="system", config=_config()
+    )
+    assert adopted.status == "adopted"
+    actions = {
+        row[0] for row in connection.execute(
+            "SELECT action FROM proposal_actions WHERE proposal_id='prop-adopt-test'"
+        )
+    }
+    assert "workspace_adoption" in actions
+
+    challenge = issue_rollback_confirmation(
+        connection, "prop-adopt-test", actor="admin", config=_config()
+    )
+    assert challenge.status == "issued"
+    replay = issue_rollback_confirmation(
+        connection, "prop-adopt-test", actor="admin", config=_config()
+    )
+    assert replay.status == "idempotent"
+    assert replay.expires_at == challenge.expires_at
+    rolled_back = rollback_workspace_proposal(
+        connection,
+        workspace,
+        "prop-adopt-test",
+        actor="admin",
+        code=challenge.code or "",
+        config=_config(),
+    )
+    assert rolled_back.status == "rolled_back"
+    assert "workspace_rollback" in {
+        row[0] for row in connection.execute(
+            "SELECT action FROM proposal_actions WHERE proposal_id='prop-adopt-test'"
+        )
+    }
     connection.close()

@@ -61,6 +61,7 @@ class CandidateSpec:
     case_ids: tuple[str, ...] = ()
     candidate_content: str = ""
     holdout_case_ids: tuple[str, ...] = ()
+    origin_candidate_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +74,8 @@ class EvolutionCycleResult:
     rejected_task_keys: tuple[str, ...] = ()
     deduplicated_task_keys: tuple[str, ...] = ()
     overlay_handoff_statuses: tuple[str, ...] = ()
+    adopted_proposal_ids: tuple[str, ...] = ()
+    adopted_candidate_ids: tuple[str, ...] = ()
     reason: str | None = None
 
 
@@ -133,6 +136,8 @@ def run_fixture_review_cycle(
         eval_run_ids: list[str] = []
         proposal_ids: list[str] = []
         overlay_handoffs: list[str] = []
+        adopted_proposals: list[str] = []
+        adopted_candidates: list[str] = []
         rejected: list[str] = []
         deduped: list[str] = []
         for spec in candidate_specs:
@@ -210,6 +215,46 @@ def run_fixture_review_cycle(
                     gate_snapshot={"holdout_passed": gate.holdout_passed, "security_clean": gate.security_clean},
                 )
                 proposal_ids.append(proposal.proposal_id)
+                if (
+                    spec.source_kind == "workspace"
+                    and config.adoption_enabled
+                    and spec.skill_name in set(config.workspace_skill_allowlist)
+                ):
+                    from nanobot.memory.proposal_repository import ProposalRepository
+                    from nanobot.memory.skill_adoption import adopt_workspace_proposal
+
+                    repository = ProposalRepository(connection)
+                    repository.approve_after_gate(
+                        proposal.proposal_id,
+                        workspace=str(root),
+                        actor="m19-auto-gate",
+                        reason="M15 评测通过，进入 workspace 自动采用",
+                    )
+                    adopted = adopt_workspace_proposal(
+                        connection,
+                        root,
+                        proposal.proposal_id,
+                        actor="m19-auto-adoption",
+                        config=config,
+                    )
+                    if adopted.status == "adopted":
+                        adopted_proposals.append(proposal.proposal_id)
+                        if spec.origin_candidate_id:
+                            adopted_candidates.append(spec.origin_candidate_id)
+                    else:
+                        current = repository.get(proposal.proposal_id)
+                        if current is not None and current.status == "approved":
+                            repository.transition(
+                                proposal.proposal_id,
+                                expected_status="approved",
+                                new_status="failed",
+                                reason=adopted.reason or adopted.status,
+                            )
+                elif spec.source_kind == "workspace":
+                    # A workspace candidate is never sent to an Overlay PR.
+                    # It remains a Proposal until the explicit adoption gate
+                    # is enabled and the allowlist matches.
+                    pass
                 if proposal.target == "git_pr_proposal" and overlay_pipeline is not None:
                     handoff = overlay_pipeline.handoff(connection, proposal.proposal_id, config)
                     overlay_handoffs.append(handoff.status)
@@ -230,6 +275,7 @@ def run_fixture_review_cycle(
         return EvolutionCycleResult(
             "completed", len(selected), tuple(staged_cases), tuple(eval_run_ids), tuple(proposal_ids),
             tuple(rejected), tuple(deduped), tuple(overlay_handoffs),
+            tuple(adopted_proposals), tuple(adopted_candidates),
         )
     finally:
         release_lock(connection, lease)

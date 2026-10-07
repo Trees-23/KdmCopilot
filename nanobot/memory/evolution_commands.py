@@ -25,7 +25,11 @@ from nanobot.memory.proposal_repository import (
     ProposalRepository,
 )
 from nanobot.memory.publish_gate import issue_publish_confirmation, publish_proposal
-from nanobot.memory.skill_adoption import adopt_workspace_proposal, rollback_workspace_proposal
+from nanobot.memory.skill_adoption import (
+    adopt_workspace_proposal,
+    issue_rollback_confirmation,
+    rollback_workspace_proposal,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,9 +90,10 @@ class EvolutionCommandService:
         if not group or group not in self._groups():
             raise PermissionError("当前 QQ 群不在进化通知白名单中")
         require_mention = bool(getattr(getattr(self.config, "evolution", self.config), "command_require_mention", True))
-        # QQ's group-at callback is the reliable mention signal.  Older
-        # adapters may omit it; in that case the command remains compatible.
-        if require_mention and metadata.get("qq_mentioned_bot") is False:
+        # A mutating command must carry an explicit, positive mention signal.
+        # Treating a missing field as success would let an incomplete adapter
+        # bypass the frozen QQ command contract.
+        if require_mention and metadata.get("qq_mentioned_bot") is not True:
             raise PermissionError("请先 @机器人后再执行 /evolve 命令")
         actor = str(metadata.get("sender_openid") or metadata.get("sender_id") or "") or None
         if mutating and actor not in self._admins():
@@ -214,8 +219,9 @@ class EvolutionCommandService:
             "/evolve recovery\n查看已通过质量门禁的恢复案例（不会自动生成 Skill）\n\n"
             "/evolve recovery list pending|all\n查看失败改进 Issue\n\n"
             "/evolve recovery review <Issue 编号>\n查看失败改进 Issue 详情\n\n"
-            "/evolve recovery accept <Issue 编号> record_case|record_memory|request_candidate\n处理 Issue\n\n"
-            "/evolve recovery reject <Issue 编号> 原因\n拒绝失败改进 Issue\n\n"
+            "/evolve recovery revise <Issue 编号> 修复方向\n一次完成修复评价与候选申请\n\n"
+            "/evolve recovery reject <Issue 编号> 原因\n保存拒绝原因并归档\n\n"
+            "/evolve recovery accept <Issue 编号> record_case|record_memory|request_candidate\n兼容旧入口\n\n"
             "/evolve recovery note <Issue 编号> 补充\n补充人工纠正方向\n\n"
             "/evolve list recent\n查看最近的 Proposal\n\n"
             "/evolve overlay\n查看私有 Overlay 中的候选 Skill\n\n"
@@ -435,7 +441,11 @@ class EvolutionCommandService:
         if subaction == "list":
             mode = tokens[2].lower() if len(tokens) > 2 else "pending"
             statuses = ("pending_review",) if mode == "pending" else None
-            issues = list_failure_issues(connection, workspace=self.workspace, statuses=statuses)
+            issues = tuple(
+                issue for issue in list_failure_issues(connection, workspace=self.workspace, statuses=statuses)
+                if issue.get("group_openid") == group
+                or (not issue.get("group_openid") and len(self._groups()) == 1 and group in self._groups())
+            )
             if not issues:
                 return EvolutionCommandResult("失败改进 Issue：当前没有可显示的记录。")
             labels = {
@@ -453,9 +463,10 @@ class EvolutionCommandService:
                     f"  查看：/evolve recovery review {issue['issue_id']}",
                 ])
             return EvolutionCommandResult("\n".join(lines))
-        if len(tokens) < 3:
-            return EvolutionCommandResult(
+            if len(tokens) < 3:
+                return EvolutionCommandResult(
                 "用法：/evolve recovery list pending|all | review <Issue 编号> | "
+                "revise <Issue 编号> 修复方向 | "
                 "accept <Issue 编号> record_case|record_memory|request_candidate | "
                 "reject <Issue 编号> 原因 | note <Issue 编号> 补充"
             )
@@ -465,6 +476,10 @@ class EvolutionCommandService:
         issue = get_failure_issue(connection, workspace=self.workspace, issue_id=issue_id)
         if issue is None:
             return EvolutionCommandResult("未找到该失败改进 Issue，或它不属于当前工作区。")
+        if issue.get("group_openid") not in {None, group} or (
+            issue.get("group_openid") is None and len(self._groups()) != 1
+        ):
+            return EvolutionCommandResult("拒绝：该 Issue 不属于当前 QQ 群。")
         if subaction == "review":
             return EvolutionCommandResult(
                 "【失败改进 Issue】\n"
@@ -479,31 +494,62 @@ class EvolutionCommandService:
                 f"状态：{issue['status']}\n"
                 f"摘要：{issue['summary']}\n"
                 f"建议：{issue['recommendation']}\n"
-                f"人工评论：{issue.get('review_reason') or '尚未提交；申请修复候选前请先使用 note'}"
+                f"人工评论：{issue.get('review_reason') or '尚未提交；可使用 revise 或 reject'}"
             )
         if actor is None:
             return EvolutionCommandResult("拒绝：只有审批管理员可以处理失败改进 Issue。")
-        action_map = {"accept": tokens[3] if len(tokens) > 3 else "record_case", "reject": "reject", "note": "note"}
+        action_map = {
+            "accept": tokens[3] if len(tokens) > 3 else "record_case",
+            "revise": "revise",
+            "reject": "reject",
+            "note": "note",
+        }
         if subaction not in action_map:
-            return EvolutionCommandResult("用法：review | accept | reject | note")
+            return EvolutionCommandResult("用法：review | accept | revise | reject | note")
         action = action_map[subaction]
-        if action not in {"record_case", "record_memory", "request_candidate", "reject", "note"}:
-            return EvolutionCommandResult("可选动作：record_case、record_memory、request_candidate")
-        if action == "request_candidate" and not bool(
-            getattr(getattr(self.config, "evolution", self.config), "recovery_skill_candidate_enabled", False)
+        if action not in {"record_case", "record_memory", "request_candidate", "revise", "reject", "note"}:
+            return EvolutionCommandResult("可选动作：revise、reject，以及兼容的 record_case、record_memory、request_candidate、note")
+        evolution = getattr(self.config, "evolution", self.config)
+        if action in {"reject", "revise"} and not bool(
+            getattr(evolution, "recovery_review_enabled", True)
         ):
-            return EvolutionCommandResult("修复 Skill 候选当前关闭；可先使用 record_case 或 record_memory。")
+            return EvolutionCommandResult("失败改进审核功能当前关闭，未修改 Issue。")
+        if action in {"request_candidate", "revise"} and not bool(
+            getattr(evolution, "recovery_skill_candidate_enabled", False)
+        ):
+            return EvolutionCommandResult("修复 Skill 候选当前关闭，未创建 candidate。")
         note = " ".join(tokens[3:]) if len(tokens) > 3 else ""
+        if action == "revise" and not note.strip():
+            return EvolutionCommandResult("拒绝：修复方向不能为空。")
+        if action == "reject" and not note.strip():
+            return EvolutionCommandResult("拒绝：请提供拒绝原因。")
         try:
+            from nanobot.memory.failure_issues import revise_direction_hash
+
+            action_key = (
+                f"qq-revise:{issue_id}:{actor}:{revise_direction_hash(note)}"
+                if action == "revise"
+                else f"qq:{issue_id}:{action}:{actor}:{note}"
+            )
             result = apply_failure_issue_action(
                 connection, workspace=self.workspace, issue_id=issue_id, action=action,
                 actor_openid=actor, group_openid=group, note=note,
-                idempotency_key=f"qq:{issue_id}:{action}:{actor}:{note}",
+                idempotency_key=action_key,
+                candidate_enabled=bool(getattr(getattr(self.config, "evolution", self.config), "recovery_skill_candidate_enabled", False)),
             )
         except (LookupError, ValueError) as exc:
             return EvolutionCommandResult(f"失败改进 Issue 操作未执行：{exc}")
-        labels = {"recorded_case": "已记录为 Case", "memory_recorded": "已写入语义记忆", "candidate_requested": "已申请修复 Skill 候选", "rejected": "已拒绝", "pending_review": "已记录补充意见"}
-        return EvolutionCommandResult(f"Issue {issue_id}：{labels.get(str(result['status']), result['status'])}。")
+        labels = {
+            "recorded_case": "已记录为 Case",
+            "memory_recorded": "已写入语义记忆",
+            "candidate_requested": "已记录修复方向并进入候选评测",
+            "rejected": "已拒绝并归档",
+            "pending_review": "已记录补充意见",
+        }
+        suffix = ""
+        if action == "revise":
+            suffix = f" request_id={result.get('request_id')} candidate_id={result.get('candidate_id')}"
+        return EvolutionCommandResult(f"Issue {issue_id}：{labels.get(str(result['status']), result['status'])}。{suffix}")
 
     def handle(self, args: str, *, metadata: Mapping[str, Any]) -> EvolutionCommandResult:
         tokens = args.strip().split(maxsplit=3)
@@ -516,7 +562,7 @@ class EvolutionCommandService:
             )
 
         mutating = action in {"approve", "reject", "rollback", "publish"}
-        if action == "recovery" and len(tokens) > 1 and tokens[1].lower() in {"accept", "reject", "note"}:
+        if action == "recovery" and len(tokens) > 1 and tokens[1].lower() in {"accept", "revise", "reject", "note"}:
             mutating = True
         try:
             group, actor = self._require_scope(metadata, mutating=mutating)
@@ -553,7 +599,7 @@ class EvolutionCommandService:
             if action == "overlay":
                 return self._overlay_command(tokens, actor=actor)
 
-            if action == "recovery" and len(tokens) > 1 and tokens[1].lower() in {"list", "review", "accept", "reject", "note"}:
+            if action == "recovery" and len(tokens) > 1 and tokens[1].lower() in {"list", "review", "accept", "revise", "reject", "note"}:
                 return self._recovery_command(tokens, connection=connection, group=group, actor=actor)
 
             if action == "recovery":
@@ -711,7 +757,25 @@ class EvolutionCommandService:
 
             if action == "rollback":
                 if len(tokens) < 3:
-                    return EvolutionCommandResult("用法：/evolve rollback <proposal-id> <code>")
+                    challenge = issue_rollback_confirmation(
+                        connection,
+                        proposal_id,
+                        actor=actor or "unknown",
+                        config=self.config,
+                    )
+                    if challenge.status == "issued":
+                        return EvolutionCommandResult(
+                            "回滚确认已签发\n"
+                            f"Proposal：{record.public_id}\n"
+                            f"确认码：{challenge.code}\n"
+                            f"有效期：{_format_beijing_time(challenge.expires_at)}\n"
+                            f"请由同一管理员 @机器人执行：/evolve rollback {record.public_id} <确认码>"
+                        )
+                    if challenge.status == "idempotent":
+                        return EvolutionCommandResult(
+                            f"该 Proposal 已签发过回滚确认码（有效期：{_format_beijing_time(challenge.expires_at)}）。"
+                        )
+                    return EvolutionCommandResult(f"回滚确认失败：{challenge.reason or challenge.status}")
                 result = rollback_workspace_proposal(
                     connection,
                     self.workspace,

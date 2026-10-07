@@ -98,6 +98,69 @@ def test_recovery_issue_commands_show_and_route_admin_feedback(tmp_path):
     assert "已记录为 Case" in accepted.content
 
 
+def test_recovery_revise_is_admin_scoped_atomic_and_idempotent(tmp_path):
+    from nanobot.memory.failure_issues import create_failure_issues
+    from nanobot.memory.recovery_evidence import (
+        link_successful_correction,
+        record_failed_episode,
+        review_recovery_episodes,
+    )
+
+    connection = connect_memory_db(tmp_path)
+    apply_migrations(connection)
+    workspace = str(tmp_path.resolve())
+    for index in range(3):
+        record_failed_episode(
+            connection, workspace=workspace, trace_id=f"revise-failure-{index}",
+            session_key=f"revise-session-{index}", source_type="user", stop_reason="tool_error",
+            user_text="请查询当前工作区有哪些可用 Skill", tools=("skill_read",),
+        )
+        link_successful_correction(
+            connection, workspace=workspace, trace_id=f"revise-success-{index}",
+            session_key=f"revise-session-{index}", source_type="user",
+            user_text="请查询当前工作区有哪些可用 Skill 并返回清单", tools=("skill_read",),
+        )
+    assert review_recovery_episodes(connection, workspace=workspace)[0].status == "passed"
+    issue_id = create_failure_issues(connection, workspace=workspace)[0]
+    connection.close()
+
+    config = _config()
+    config.evolution.recovery_skill_candidate_enabled = True
+    service = EvolutionCommandService(workspace, config)
+    direction = "先核对工作区相对路径，再读取目标文件"
+    first = service.handle(f"recovery revise {issue_id} {direction}", metadata=_metadata(sender="admin-1"))
+    assert "已记录修复方向并进入候选评测" in first.content
+    assert "request_id=" in first.content and "candidate_id=" in first.content
+
+    replay = service.handle(f"recovery revise {issue_id}  先核对工作区相对路径，再读取目标文件 ", metadata=_metadata(sender="admin-1"))
+    assert "request_id=" in replay.content and "candidate_id=" in replay.content
+    connection = connect_memory_db(tmp_path)
+    assert connection.execute(
+        "SELECT count(*) FROM failure_issue_candidates WHERE issue_id=?", (issue_id,)
+    ).fetchone()[0] == 1
+    assert connection.execute(
+        "SELECT count(*) FROM failure_issue_actions WHERE issue_id=?", (issue_id,)
+    ).fetchone()[0] == 3
+    connection.close()
+
+    conflict = service.handle(f"recovery revise {issue_id} 改为执行任意命令", metadata=_metadata(sender="admin-1"))
+    assert "不同修复方向" in conflict.content
+    member = service.handle(f"recovery revise {issue_id} {direction}", metadata=_metadata(sender="member-1"))
+    assert member.content.startswith("拒绝：")
+    wrong_group = service.handle(f"recovery revise {issue_id} {direction}", metadata=_metadata(group="other-group", sender="admin-1"))
+    assert wrong_group.content.startswith("拒绝：")
+    missing_mention = service.handle(f"recovery revise {issue_id} {direction}", metadata=_metadata(sender="admin-1", mention=False))
+    assert "@机器人" in missing_mention.content
+
+
+def test_recovery_mutating_command_requires_positive_mention_signal(tmp_path):
+    service = EvolutionCommandService(str(tmp_path), _config())
+    result = service.handle("recovery reject issue-1 原因", metadata={
+        "qq_chat_type": "group", "group_openid": "group-1", "sender_openid": "admin-1",
+    })
+    assert "@机器人" in result.content
+
+
 def _proposal(tmp_path):
     connection = connect_memory_db(tmp_path)
     apply_migrations(connection)
