@@ -107,6 +107,9 @@ def _safe_summary(value: Any, limit: int = 240) -> str | None:
 
 
 def _failure_family(event: Mapping[str, Any]) -> str | None:
+    status = str(event.get("status") or "").strip().casefold()
+    if status in {"ok", "success", "completed", "done"}:
+        return None
     value = " ".join(
         str(event.get(key) or "")
         for key in ("error_code", "error_type", "error_source", "failure_family", "detail")

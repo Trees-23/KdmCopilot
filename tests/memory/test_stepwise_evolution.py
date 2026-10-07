@@ -34,6 +34,15 @@ def test_risk_uses_capability_and_effect_not_a_whitelist() -> None:
     assert classify_risk("read_file", event={"detail": "outside workspace boundary"}) == "R4"
 
 
+def test_successful_step_does_not_get_a_failure_family() -> None:
+    steps = build_step_evidence((
+        {"tool_name": "read_file", "status": "ok", "detail": "read completed"},
+        {"tool_name": "read_file", "status": "error", "error_code": "file_not_found"},
+    ))
+    assert steps[0].failure_family is None
+    assert steps[1].failure_family == "resource_not_found"
+
+
 def test_mixed_steps_keep_order_and_downgrade_only_the_task(tmp_path) -> None:
     events = (
         {"event_id": "e1", "tool_name": "read_file", "status": "ok", "safe_input_summary": "path=README.md", "verification_kind": "read_success"},
