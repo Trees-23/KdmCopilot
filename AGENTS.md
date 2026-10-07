@@ -56,6 +56,14 @@ This file provides guidance to AI coding agents working with this repository.
 - 修改 Python、WebUI、Dockerfile、依赖或运行协议后，不得只重启既有 `nanobot-gateway` 容器。完成任务
   提交后必须执行 `./scripts/rebuild_gateway_for_scenario.sh`；脚本只重建并替换固定的长期 Gateway，要求
   干净工作区，并确认健康检查返回的构建标识与脚本输出一致后，才能宣称 Gateway 使用了本次代码。
+- 需要让长期 Gateway 加载新提交或新配置时，必须分步操作，避免停止、构建、启动混在一次排障动作中：
+  1. 先执行 `docker compose stop nanobot-gateway`；
+  2. 再执行 `docker compose ps nanobot-gateway`、健康端口探测和固定端口占用检查，确认容器已停止、
+     `18790` 不可连接且 `8765/18790` 没有残留的非 Compose 容器；
+  3. 只有确认停止成功后，才能执行 `./scripts/rebuild_gateway_for_scenario.sh`，由脚本完成构建、重建和启动；
+  4. 启动后必须核对健康检查中的构建标识、容器 ID、镜像 ID、Compose 服务名、`runtime/` 挂载和实际工作区。
+  任一步确认失败都应停止后续操作并报告，不得用 `docker compose restart`、第二套 Gateway、临时端口或
+  `docker compose down -v` 绕过该顺序。
 - 默认地址固定为 `http://localhost:8765`、`http://localhost:8765/#/new`、
   `http://localhost:8765/#/traces` 和 `http://127.0.0.1:18790/health`。若这些端口被非 Compose 容器占用，
   明确报告冲突容器并退出；不得自动换端口或接管、停止、删除该容器。
