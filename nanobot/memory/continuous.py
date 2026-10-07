@@ -68,6 +68,15 @@ class Phase6RuntimeConfig:
     def from_config(cls, config: Any) -> "Phase6RuntimeConfig":
         """Build the runtime DTO from ``Config.phase6`` or a mapping."""
 
+        # Callers outside the scheduled Cron path may pass the application
+        # root Config instead of Config.phase6.  Normalize that shape here so
+        # a valid Phase 6 configuration cannot silently degrade to the
+        # dataclass defaults (most importantly, enabled=False).
+        if not isinstance(config, Mapping) and hasattr(config, "phase6"):
+            config = config.phase6
+        elif isinstance(config, Mapping) and "phase6" in config:
+            config = config["phase6"]
+
         if isinstance(config, Mapping):
             values = config
         else:

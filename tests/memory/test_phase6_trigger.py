@@ -4,8 +4,9 @@ import json
 from datetime import UTC, datetime
 
 import nanobot.memory.phase6_trigger as phase6_trigger
-from nanobot.config.schema import Phase6Config, Phase6EvolutionConfig
+from nanobot.config.schema import Config, Phase6Config, Phase6EvolutionConfig
 from nanobot.cron.types import CronSchedule
+from nanobot.memory.continuous import Phase6RuntimeConfig
 from nanobot.memory.maintenance import open_maintenance_db
 from nanobot.memory.phase6_trigger import (
     PHASE6_REVIEW_JOB_ID,
@@ -22,6 +23,12 @@ class _Cron:
 
     def register_system_job(self, job) -> None:
         self.jobs.append(job)
+
+
+def test_runtime_config_normalizes_application_root_config() -> None:
+    config = Config(phase6=Phase6Config(enabled=True))
+    runtime = Phase6RuntimeConfig.from_config(config)
+    assert runtime.enabled is True
 
 
 def test_builds_protected_daily_beijing_cron_and_skips_disabled_config() -> None:
