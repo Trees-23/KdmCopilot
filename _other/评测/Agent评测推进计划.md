@@ -389,17 +389,6 @@ GAIA 的主要入口是 Hugging Face 数据集，不要求先克隆一个 GitHub
 首轮不因为引入评估框架而改变 nanobot 的运行链路；优先使用 nanobot 自身的 AgentRunner、Audit
 和确定性断言，框架只负责编排或展示时再接入。
 
-## 十四、合并后的执行分支约定
-
-当前分支只维护本计划和已有工作，不在本分支下载外部 Benchmark 或实现 adapter。待本分支按流程合并
-到 `main` 后，重新从最新远端 `main` 创建独立评测分支：
-
-```bash
-git switch main
-git pull --ff-only origin main
-git switch -c codex/agent-eval-external
-```
-
 随后按以下顺序开始实际工作：
 
 1. 在仓库外准备 BFCL 和 τ-Bench 源码，锁定 commit 和依赖版本。
