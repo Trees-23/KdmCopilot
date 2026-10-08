@@ -14,6 +14,7 @@ from nanobot.memory.schema import (
     CANDIDATE_STAGING_TABLES,
     DELIVERY_PAYLOAD_MIGRATION_PATH,
     FAILURE_ISSUE_CANDIDATES_MIGRATION_PATH,
+    FAILURE_ISSUE_GROUP_BINDING_MIGRATION_PATH,
     FAILURE_ISSUES_MIGRATION_PATH,
     MIGRATION_ID,
     MIGRATION_VERSION,
@@ -21,6 +22,7 @@ from nanobot.memory.schema import (
     RECOVERY_CASES_MIGRATION_PATH,
     RECOVERY_REVIEW_ATOMIC_ACTIONS_MIGRATION_PATH,
     RECOVERY_SEMANTIC_FAMILIES_MIGRATION_PATH,
+    REQUIRED_COLUMNS,
     REQUIRED_TABLES,
     SEMANTIC_QUALITY_MIGRATION_PATH,
     STEPWISE_EVOLUTION_EVIDENCE_MIGRATION_PATH,
@@ -65,12 +67,33 @@ def _table_names(connection: sqlite3.Connection) -> set[str]:
     return {row[0] for row in rows}
 
 
+def _column_names(connection: sqlite3.Connection, table: str) -> set[str]:
+    return {str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})")}
+
+
+def _verify_required_columns(connection: sqlite3.Connection) -> None:
+    missing = {
+        f"{table}.{column}"
+        for table, columns in REQUIRED_COLUMNS.items()
+        for column in columns
+        if column not in _column_names(connection, table)
+    }
+    if missing:
+        raise MigrationError(f"memory schema missing columns: {', '.join(sorted(missing))}")
+
+
+def _ensure_failure_issue_group_binding(connection: sqlite3.Connection) -> None:
+    if "group_openid" not in _column_names(connection, "failure_issues"):
+        connection.execute("ALTER TABLE failure_issues ADD COLUMN group_openid TEXT")
+
+
 def verify_schema(connection: sqlite3.Connection, expected_hash: str | None = None) -> None:
     """Verify the applied schema has all required tables and matching metadata."""
 
     missing = REQUIRED_TABLES - _table_names(connection)
     if missing:
         raise MigrationError(f"memory schema missing tables: {', '.join(sorted(missing))}")
+    _verify_required_columns(connection)
     row = connection.execute(
         "SELECT version,migration_id,schema_hash,status FROM schema_meta "
         "WHERE version=?",
@@ -120,7 +143,7 @@ def apply_migrations(
     _bootstrap_schema_meta(connection)
 
     def apply_one(version: int, migration_id: str, migration_text: str,
-                  required_tables: set[str] | frozenset[str]) -> None:
+                  required_tables: set[str] | frozenset[str], before_apply=None) -> None:
         expected_hash = schema_hash(migration_text)
         current = connection.execute(
             "SELECT migration_id,schema_hash,status FROM schema_meta WHERE version=?", (version,)
@@ -140,6 +163,8 @@ def apply_migrations(
                 "status='running',applied_at=excluded.applied_at,error_message=NULL",
                 (version, migration_id, app_build, expected_hash, "running", utc_now()),
             )
+            if before_apply is not None:
+                before_apply(connection)
             for statement in migration_text.split(";"):
                 if statement.strip():
                     connection.execute(statement)
@@ -197,8 +222,9 @@ def apply_migrations(
     apply_one(
         MIGRATION_VERSION,
         MIGRATION_ID,
-        CANDIDATE_ADOPTION_STATES_MIGRATION_PATH.read_text(encoding="utf-8"),
+        FAILURE_ISSUE_GROUP_BINDING_MIGRATION_PATH.read_text(encoding="utf-8"),
         REQUIRED_TABLES,
+        _ensure_failure_issue_group_binding,
     )
     verify_schema(connection, schema_hash(latest_migration_sql()))
 
