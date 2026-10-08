@@ -112,6 +112,12 @@ def test_m19_new_and_existing_skill_candidates_are_isolated(tmp_path) -> None:
     new_candidate = stage_task_candidate(connection, task=task, workspace=workspace)
     assert new_candidate.source_kind == "skill_candidate"
     assert get_staged_candidate(connection, new_candidate.candidate_id) == new_candidate
+    content = connection.execute(
+        "SELECT candidate_content FROM evolution_candidate_staging WHERE candidate_id=?",
+        (new_candidate.candidate_id,),
+    ).fetchone()[0]
+    assert "M15 通过、workspace allowlist 命中后" in content
+    assert "人工 Proposal 门禁" not in content
 
     connection.execute(
         "INSERT INTO skills(skill_id,name,source_kind,current_revision_id,created_at,updated_at) VALUES(?,?,?,?,?,?)",

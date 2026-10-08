@@ -99,7 +99,7 @@ def _candidate_content(task: TaskEvidence, skill_name: str) -> str:
         f"- M18 task：{task.task_id}",
         f"- 来源 Trace 数量：{len(task.source_trace_ids)}",
         f"- M18 资格：{task.qualification}",
-        "- 当前版本不会因生成候选而切换；需继续通过 M15 评测与人工 Proposal 门禁。",
+        "- 当前版本不会因生成候选而切换；仅在 M15 通过、workspace allowlist 命中后，才可自动原子采用。",
     ])
     return "\n".join(lines) + "\n"
 
