@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+
 import pytest
 
 from nanobot.config.schema import Phase6Config, Phase6EvolutionConfig
@@ -170,6 +172,30 @@ def test_repair_candidate_uses_only_a_synthetic_named_fixture(tmp_path) -> None:
 
     assert specs[0].cases[0]["prompt"] == "读取 README.md 前先确认它位于工作区根目录"
     assert specs[0].fixture_files == (("README.md", "# M15 synthetic fixture\nname: README.md\n"),)
+    connection.close()
+
+
+def test_repair_candidate_uses_raw_workspace_content_hash(tmp_path) -> None:
+    connection = connect_memory_db(tmp_path)
+    apply_migrations(connection)
+    workspace = str(tmp_path.resolve())
+    _seed_recovery_review(connection, workspace)
+    issue_id = create_failure_issues(connection, workspace=workspace)[0]
+    apply_failure_issue_action(
+        connection, workspace=workspace, issue_id=issue_id, action="revise",
+        actor_openid="admin-1", group_openid="group-1",
+        note="先核对工作区相对路径，再读取目标文件", candidate_enabled=True,
+    )
+    row = connection.execute(
+        "SELECT candidate_hash,candidate_content,candidate_revision_id FROM failure_issue_candidates WHERE issue_id=?",
+        (issue_id,),
+    ).fetchone()
+    assert row is not None
+    expected = "sha256:" + hashlib.sha256(row[1].encode("utf-8")).hexdigest()
+    assert row[0] == expected
+    assert connection.execute(
+        "SELECT content_hash FROM skill_revisions WHERE revision_id=?", (row[2],)
+    ).fetchone()[0] == expected
     connection.close()
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 from datetime import UTC, datetime
 
@@ -13,6 +14,7 @@ from nanobot.memory.schema import (
     CANDIDATE_ADOPTION_STATES_MIGRATION_PATH,
     CANDIDATE_STAGING_TABLES,
     DELIVERY_PAYLOAD_MIGRATION_PATH,
+    FAILURE_CANDIDATE_CONTENT_HASHES_MIGRATION_PATH,
     FAILURE_ISSUE_CANDIDATES_MIGRATION_PATH,
     FAILURE_ISSUE_GROUP_BINDING_MIGRATION_PATH,
     FAILURE_ISSUES_MIGRATION_PATH,
@@ -85,6 +87,39 @@ def _verify_required_columns(connection: sqlite3.Connection) -> None:
 def _ensure_failure_issue_group_binding(connection: sqlite3.Connection) -> None:
     if "group_openid" not in _column_names(connection, "failure_issues"):
         connection.execute("ALTER TABLE failure_issues ADD COLUMN group_openid TEXT")
+
+
+def _repair_failure_candidate_content_hashes(connection: sqlite3.Connection) -> None:
+    """Align pre-v17 isolated candidate hashes with exact workspace file bytes."""
+
+    rows = connection.execute(
+        "SELECT candidate_id,candidate_revision_id,candidate_content FROM failure_issue_candidates"
+    ).fetchall()
+    for candidate_id, revision_id, content in rows:
+        content_hash = "sha256:" + hashlib.sha256(str(content).encode("utf-8")).hexdigest()
+        connection.execute(
+            "UPDATE failure_issue_candidates SET candidate_hash=? WHERE candidate_id=?",
+            (content_hash, candidate_id),
+        )
+        connection.execute(
+            "UPDATE skill_revisions SET content_hash=? WHERE revision_id=?",
+            (content_hash, revision_id),
+        )
+        connection.execute(
+            "UPDATE skill_proposals SET candidate_hash=? WHERE candidate_revision_id=?",
+            (content_hash, revision_id),
+        )
+    empty_hash = "sha256:" + hashlib.sha256(b"").hexdigest()
+    connection.execute(
+        "UPDATE skill_revisions SET content_hash=? WHERE revision_id IN "
+        "(SELECT baseline_revision_id FROM failure_issue_candidates) AND content=''",
+        (empty_hash,),
+    )
+    connection.execute(
+        "UPDATE skill_proposals SET baseline_hash=? WHERE baseline_revision_id IN "
+        "(SELECT baseline_revision_id FROM failure_issue_candidates)",
+        (empty_hash,),
+    )
 
 
 def verify_schema(connection: sqlite3.Connection, expected_hash: str | None = None) -> None:
@@ -220,11 +255,18 @@ def apply_migrations(
         REQUIRED_TABLES,
     )
     apply_one(
-        MIGRATION_VERSION,
-        MIGRATION_ID,
+        16,
+        "0016_failure_issue_group_binding",
         FAILURE_ISSUE_GROUP_BINDING_MIGRATION_PATH.read_text(encoding="utf-8"),
         REQUIRED_TABLES,
         _ensure_failure_issue_group_binding,
+    )
+    apply_one(
+        MIGRATION_VERSION,
+        MIGRATION_ID,
+        FAILURE_CANDIDATE_CONTENT_HASHES_MIGRATION_PATH.read_text(encoding="utf-8"),
+        REQUIRED_TABLES,
+        _repair_failure_candidate_content_hashes,
     )
     verify_schema(connection, schema_hash(latest_migration_sql()))
 

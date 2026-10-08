@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+
 import pytest
 
 from nanobot.memory.db import connect_memory_db_path
@@ -35,7 +37,11 @@ def test_failed_migration_is_recorded_and_can_be_recovered() -> None:
 def test_latest_migration_repairs_missing_failure_issue_group_binding() -> None:
     connection = connect_memory_db_path(":memory:")
     apply_migrations(connection)
-    connection.execute("PRAGMA foreign_keys=OFF")
+    connection.execute(
+        "INSERT INTO failure_issues(issue_id,workspace,recovery_key,episode_ids_json,title,failure_class,summary,status,"
+        "recommendation,created_at,updated_at) VALUES('legacy-issue','/workspace','legacy','[]','legacy','tool_error',"
+        "'legacy','candidate_requested','legacy','now','now')"
+    )
     connection.execute("ALTER TABLE failure_issues RENAME TO failure_issues_before_group_repair")
     connection.execute(
         """CREATE TABLE failure_issues (
@@ -52,10 +58,55 @@ def test_latest_migration_repairs_missing_failure_issue_group_binding() -> None:
     )
     connection.execute("DROP TABLE failure_issues_before_group_repair")
     connection.execute("DELETE FROM schema_meta WHERE version=16")
-    connection.execute("PRAGMA foreign_keys=ON")
     connection.commit()
 
     apply_migrations(connection)
 
     assert "group_openid" in {row[1] for row in connection.execute("PRAGMA table_info(failure_issues)")}
     assert connection.execute("SELECT status FROM schema_meta WHERE version=16").fetchone()[0] == "applied"
+
+
+def test_latest_migration_repairs_legacy_failure_candidate_content_hashes() -> None:
+    connection = connect_memory_db_path(":memory:")
+    apply_migrations(connection)
+    content = "# Recovery\n"
+    connection.execute(
+        "INSERT INTO skills(skill_id,name,source_kind,current_revision_id,current_version,status,created_at,updated_at) "
+        "VALUES('skill-legacy','legacy','workspace','legacy-base','0','staging','now','now')"
+    )
+    connection.execute(
+        "INSERT INTO skill_revisions(revision_id,skill_id,skill_version,content_hash,content,author_actor,status,created_at) "
+        "VALUES('legacy-base','skill-legacy','0','sha256:wrong-base','','test','staging','now')"
+    )
+    connection.execute(
+        "INSERT INTO skill_revisions(revision_id,skill_id,skill_version,content_hash,content,author_actor,status,created_at) "
+        "VALUES('legacy-revision','skill-legacy','candidate','sha256:wrong-candidate',?,'test','staging','now')",
+        (content,),
+    )
+    connection.execute(
+        "INSERT INTO failure_issues(issue_id,workspace,recovery_key,episode_ids_json,title,failure_class,summary,status,"
+        "recommendation,created_at,updated_at) VALUES('legacy-issue','/workspace','legacy','[]','legacy','tool_error',"
+        "'legacy','candidate_requested','legacy','now','now')"
+    )
+    connection.execute(
+        "INSERT INTO failure_issue_candidates(candidate_id,issue_id,workspace,skill_id,skill_name,baseline_revision_id,"
+        "candidate_revision_id,candidate_hash,candidate_content,status,reason,created_at,updated_at) "
+        "VALUES('legacy-candidate','legacy-issue','/workspace','skill-legacy','legacy','legacy-base','legacy-revision',"
+        "'sha256:wrong',?,'queued','legacy','now','now')",
+        (content,),
+    )
+    connection.execute("DELETE FROM schema_meta WHERE version=17")
+    connection.commit()
+
+    apply_migrations(connection)
+
+    expected = "sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest()
+    assert connection.execute(
+        "SELECT candidate_hash FROM failure_issue_candidates WHERE candidate_id='legacy-candidate'"
+    ).fetchone()[0] == expected
+    assert connection.execute(
+        "SELECT content_hash FROM skill_revisions WHERE revision_id='legacy-revision'"
+    ).fetchone()[0] == expected
+    assert connection.execute(
+        "SELECT content_hash FROM skill_revisions WHERE revision_id='legacy-base'"
+    ).fetchone()[0] == "sha256:" + hashlib.sha256(b"").hexdigest()

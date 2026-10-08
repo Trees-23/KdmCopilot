@@ -342,7 +342,10 @@ def stage_failure_issue_candidate(
         "- 必须先通过 M15 的基线/候选 A/B、反例、安全和性能门禁。\n"
         "- 本候选不会改变当前生效 Skill，也不会自动创建 Proposal、PR 或发布。\n"
     )
-    candidate_hash = digest(content)
+    # Workspace adoption verifies the exact bytes that will become SKILL.md.
+    # ``derivation.digest`` canonicalizes structured values and would hash a
+    # JSON-quoted string here, causing its later raw-file CAS to fail.
+    candidate_hash = "sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest()
     baseline_id = f"{candidate_id}:baseline"
     revision_id = f"{candidate_id}:revision:{candidate_hash[7:19]}"
     now = _now()
@@ -362,7 +365,7 @@ def stage_failure_issue_candidate(
                (revision_id,skill_id,skill_version,content_hash,content,source_case_ids_json,
                 author_actor,status,created_at)
                VALUES(?,?,?,?,?,?,'failure-issue','staging',?)""",
-            (baseline_id, skill_id, "0", digest(""), "", json.dumps([issue_id]), now),
+            (baseline_id, skill_id, "0", "sha256:" + hashlib.sha256(b"").hexdigest(), "", json.dumps([issue_id]), now),
         )
         connection.execute(
             "UPDATE skills SET current_revision_id=?,current_version='0' "
