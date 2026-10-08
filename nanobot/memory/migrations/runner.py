@@ -16,6 +16,7 @@ from nanobot.memory.schema import (
     CANDIDATE_STAGING_TABLES,
     DELIVERY_PAYLOAD_MIGRATION_PATH,
     FAILURE_CANDIDATE_EVALUATION_HASHES_MIGRATION_PATH,
+    FAILURE_CANDIDATE_HASH_RETRY_MIGRATION_PATH,
     FAILURE_ISSUE_CANDIDATES_MIGRATION_PATH,
     FAILURE_ISSUE_GROUP_BINDING_MIGRATION_PATH,
     FAILURE_ISSUES_MIGRATION_PATH,
@@ -127,6 +128,15 @@ def _repair_failure_candidate_content_hashes(connection: sqlite3.Connection) -> 
         "UPDATE skill_proposals SET baseline_hash=? WHERE baseline_revision_id IN "
         "(SELECT baseline_revision_id FROM failure_issue_candidates)",
         (empty_hash,),
+    )
+    connection.execute(
+        """UPDATE skill_proposals SET status='approved',failure_reason=NULL,updated_at=?
+           WHERE status='failed' AND failure_reason='candidate hash mismatch'
+             AND candidate_revision_id IN (SELECT candidate_revision_id FROM failure_issue_candidates)
+             AND EXISTS (SELECT 1 FROM proposal_actions a
+                         WHERE a.proposal_id=skill_proposals.proposal_id
+                           AND a.action='automatic_gate_approval' AND a.result_status='approved')""",
+        (utc_now(),),
     )
 
 
@@ -270,11 +280,17 @@ def apply_migrations(
         _ensure_failure_issue_group_binding,
     )
     apply_one(
-        MIGRATION_VERSION,
-        MIGRATION_ID,
+        18,
+        "0018_failure_candidate_evaluation_hashes",
         FAILURE_CANDIDATE_EVALUATION_HASHES_MIGRATION_PATH.read_text(encoding="utf-8"),
         REQUIRED_TABLES,
         _repair_failure_candidate_content_hashes,
+    )
+    apply_one(
+        MIGRATION_VERSION,
+        MIGRATION_ID,
+        FAILURE_CANDIDATE_HASH_RETRY_MIGRATION_PATH.read_text(encoding="utf-8"),
+        REQUIRED_TABLES,
     )
     verify_schema(connection, schema_hash(latest_migration_sql()))
 
