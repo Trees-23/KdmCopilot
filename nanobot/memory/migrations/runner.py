@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
 from datetime import UTC, datetime
 
@@ -14,7 +15,7 @@ from nanobot.memory.schema import (
     CANDIDATE_ADOPTION_STATES_MIGRATION_PATH,
     CANDIDATE_STAGING_TABLES,
     DELIVERY_PAYLOAD_MIGRATION_PATH,
-    FAILURE_CANDIDATE_CONTENT_HASHES_MIGRATION_PATH,
+    FAILURE_CANDIDATE_EVALUATION_HASHES_MIGRATION_PATH,
     FAILURE_ISSUE_CANDIDATES_MIGRATION_PATH,
     FAILURE_ISSUE_GROUP_BINDING_MIGRATION_PATH,
     FAILURE_ISSUES_MIGRATION_PATH,
@@ -97,6 +98,9 @@ def _repair_failure_candidate_content_hashes(connection: sqlite3.Connection) -> 
     ).fetchall()
     for candidate_id, revision_id, content in rows:
         content_hash = "sha256:" + hashlib.sha256(str(content).encode("utf-8")).hexdigest()
+        legacy_hash = "sha256:" + hashlib.sha256(
+            json.dumps(content, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
         connection.execute(
             "UPDATE failure_issue_candidates SET candidate_hash=? WHERE candidate_id=?",
             (content_hash, candidate_id),
@@ -108,6 +112,10 @@ def _repair_failure_candidate_content_hashes(connection: sqlite3.Connection) -> 
         connection.execute(
             "UPDATE skill_proposals SET candidate_hash=? WHERE candidate_revision_id=?",
             (content_hash, revision_id),
+        )
+        connection.execute(
+            "UPDATE ab_evaluations SET candidate_hash=? WHERE candidate_hash=?",
+            (content_hash, legacy_hash),
         )
     empty_hash = "sha256:" + hashlib.sha256(b"").hexdigest()
     connection.execute(
@@ -264,7 +272,7 @@ def apply_migrations(
     apply_one(
         MIGRATION_VERSION,
         MIGRATION_ID,
-        FAILURE_CANDIDATE_CONTENT_HASHES_MIGRATION_PATH.read_text(encoding="utf-8"),
+        FAILURE_CANDIDATE_EVALUATION_HASHES_MIGRATION_PATH.read_text(encoding="utf-8"),
         REQUIRED_TABLES,
         _repair_failure_candidate_content_hashes,
     )

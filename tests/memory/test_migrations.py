@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 
 import pytest
 
@@ -95,7 +96,16 @@ def test_latest_migration_repairs_legacy_failure_candidate_content_hashes() -> N
         "'sha256:wrong',?,'queued','legacy','now','now')",
         (content,),
     )
-    connection.execute("DELETE FROM schema_meta WHERE version=17")
+    legacy_hash = "sha256:" + hashlib.sha256(
+        json.dumps(content, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    connection.execute(
+        "INSERT INTO ab_evaluations(evaluation_id,workspace,skill_name,candidate_hash,mode,model_id,reasoning_effort,"
+        "real_evidence_count,max_model_calls,status,reason_code,created_at) "
+        "VALUES('legacy-evaluation','/workspace','legacy',?,'enforced','model','high',3,20,'passed','passed','now')",
+        (legacy_hash,),
+    )
+    connection.execute("DELETE FROM schema_meta WHERE version=18")
     connection.commit()
 
     apply_migrations(connection)
@@ -110,3 +120,6 @@ def test_latest_migration_repairs_legacy_failure_candidate_content_hashes() -> N
     assert connection.execute(
         "SELECT content_hash FROM skill_revisions WHERE revision_id='legacy-base'"
     ).fetchone()[0] == "sha256:" + hashlib.sha256(b"").hexdigest()
+    assert connection.execute(
+        "SELECT candidate_hash FROM ab_evaluations WHERE evaluation_id='legacy-evaluation'"
+    ).fetchone()[0] == expected

@@ -5,8 +5,8 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-MIGRATION_VERSION = 17
-MIGRATION_ID = "0017_failure_candidate_content_hashes"
+MIGRATION_VERSION = 18
+MIGRATION_ID = "0018_failure_candidate_evaluation_hashes"
 APP_BUILD = "memory-phase1"
 
 MIGRATIONS_DIR = Path(__file__).with_name("migrations")
@@ -27,12 +27,13 @@ RECOVERY_REVIEW_ATOMIC_ACTIONS_MIGRATION_PATH = MIGRATIONS_DIR / "0014_recovery_
 CANDIDATE_ADOPTION_STATES_MIGRATION_PATH = MIGRATIONS_DIR / "0015_candidate_adoption_states.sql"
 FAILURE_ISSUE_GROUP_BINDING_MIGRATION_PATH = MIGRATIONS_DIR / "0016_failure_issue_group_binding.sql"
 FAILURE_CANDIDATE_CONTENT_HASHES_MIGRATION_PATH = MIGRATIONS_DIR / "0017_failure_candidate_content_hashes.sql"
+FAILURE_CANDIDATE_EVALUATION_HASHES_MIGRATION_PATH = MIGRATIONS_DIR / "0018_failure_candidate_evaluation_hashes.sql"
 
 
 def migration_sql() -> str:
     """Return the checked-in latest migration SQL."""
 
-    return FAILURE_CANDIDATE_CONTENT_HASHES_MIGRATION_PATH.read_text(encoding="utf-8")
+    return FAILURE_CANDIDATE_EVALUATION_HASHES_MIGRATION_PATH.read_text(encoding="utf-8")
 
 
 def latest_migration_sql() -> str:
