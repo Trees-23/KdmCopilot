@@ -65,7 +65,7 @@ async def test_ab_gate_fails_closed_for_insufficient_real_evidence(tmp_path) -> 
     workspace.mkdir()
     connection = open_maintenance_db(workspace)
     spec = _spec()
-    insufficient = replace(spec, case_ids=spec.case_ids[:9])
+    insufficient = replace(spec, case_ids=spec.case_ids[:2])
     result = await evaluate_candidate_specs(
         connection, workspace, (insufficient,), Phase6RuntimeConfig(enabled=True), executor=_executor
     )

@@ -304,6 +304,7 @@ def test_repair_candidate_enters_m15_and_fails_closed_with_three_episodes(tmp_pa
     connection.close()
     config = Phase6Config(
         enabled=True,
+        min_repeat_count=4,
         evolution=Phase6EvolutionConfig(recovery_skill_candidate_enabled=True),
     )
     result = run_phase6_review_scan(tmp_path, config)

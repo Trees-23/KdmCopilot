@@ -332,7 +332,12 @@ async def _evaluate_one(
          config.ab_evaluation_max_model_calls_per_day, _now()),
     )
     connection.commit()
-    if evidence_count < 10:
+    # M18/M19 selection already requires ``min_repeat_count`` independent
+    # successful turns (three by default).  Requiring ten here would make the
+    # M15 gate unreachable for a valid first candidate and is not part of the
+    # product contract.  Keep the same lower bound instead; generated scope
+    # and safety counterexamples remain separate from real evidence.
+    if evidence_count < config.min_repeat_count:
         connection.execute(
             "UPDATE ab_evaluations SET status='failed',reason_code='insufficient_real_evidence',completed_at=? WHERE evaluation_id=?",
             (_now(), evaluation_id),
