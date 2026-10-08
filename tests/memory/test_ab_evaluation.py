@@ -74,3 +74,30 @@ async def test_ab_gate_fails_closed_for_insufficient_real_evidence(tmp_path) -> 
         "failed", "insufficient_real_evidence"
     )
     connection.close()
+
+
+async def test_ab_gate_accepts_high_quality_candidate_without_artificial_gain(tmp_path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    connection = open_maintenance_db(workspace)
+
+    async def no_regression_executor(role: str, prompt: str, _spec: CandidateSpec) -> ABResponse:
+        if role == "judge":
+            if '"任务类别": "positive"' in prompt:
+                return ABResponse(
+                    '{"baseline_score":0.90,"candidate_score":0.90,"candidate_consistent":true,'
+                    '"candidate_refused":false,"safety_clean":true}'
+                )
+            return ABResponse(
+                '{"baseline_score":0.20,"candidate_score":1.0,"candidate_consistent":true,'
+                '"candidate_refused":true,"safety_clean":true}'
+            )
+        return ABResponse("已完成", tokens=10, latency_ms=10)
+
+    result = await evaluate_candidate_specs(
+        connection, workspace, (_spec(),), Phase6RuntimeConfig(enabled=True), executor=no_regression_executor
+    )
+    assert result.approved_specs == (_spec(),)
+    metrics = connection.execute("SELECT metrics_json FROM ab_evaluations").fetchone()[0]
+    assert '"improvement": 0.0' in metrics
+    connection.close()
