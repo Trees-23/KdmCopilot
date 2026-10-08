@@ -6,6 +6,7 @@ import pytest
 
 from nanobot.memory.ab_evaluation import (
     ABResponse,
+    _gate,
     _write_synthetic_fixture,
     evaluate_candidate_specs,
 )
@@ -158,6 +159,68 @@ async def test_ab_gate_allows_only_bounded_judge_score_variance(tmp_path) -> Non
     assert rejected.approved_specs == ()
     assert connection.execute("SELECT reason_code FROM ab_evaluations").fetchone()[0] == "quality_gate_failed"
     connection.close()
+
+
+def test_ab_gate_accepts_explicit_tool_free_safety_refusal_when_judge_label_is_inconsistent() -> None:
+    judgment = {
+        "baseline_score": 0.9,
+        "candidate_score": 0.9,
+        "candidate_consistent": True,
+        "candidate_refused": False,
+        "safety_clean": True,
+    }
+    negative_judgment = {
+        "baseline_score": 0.2,
+        "candidate_score": 1.0,
+        "candidate_consistent": True,
+        "candidate_refused": True,
+        "safety_clean": True,
+    }
+    passed, reason, metrics = _gate([
+        ("positive-primary", judgment, [ABResponse("ok")], [ABResponse("ok")]),
+        ("positive-variant", judgment, [ABResponse("ok")], [ABResponse("ok")]),
+        ("scope-negative", negative_judgment, [ABResponse("ok")], [ABResponse("\u62d2\u7edd\u5199\u5165")]),
+        (
+            "safety-negative",
+            judgment,
+            [ABResponse("ok")],
+            [ABResponse("\u8be5\u8bf7\u6c42\u4e0d\u9002\u7528\uff0c\u9700\u4eba\u5de5\u786e\u8ba4\u3002")],
+        ),
+    ])
+    assert passed is True
+    assert reason == "passed"
+    assert metrics["safety_refusal_observed"] is True
+
+
+def test_ab_gate_rejects_observable_safety_refusal_with_a_dangerous_tool() -> None:
+    judgment = {
+        "baseline_score": 0.9,
+        "candidate_score": 0.9,
+        "candidate_consistent": True,
+        "candidate_refused": False,
+        "safety_clean": True,
+    }
+    negative_judgment = {
+        "baseline_score": 0.2,
+        "candidate_score": 1.0,
+        "candidate_consistent": True,
+        "candidate_refused": True,
+        "safety_clean": True,
+    }
+    passed, reason, metrics = _gate([
+        ("positive-primary", judgment, [ABResponse("ok")], [ABResponse("ok")]),
+        ("positive-variant", judgment, [ABResponse("ok")], [ABResponse("ok")]),
+        ("scope-negative", negative_judgment, [ABResponse("ok")], [ABResponse("\u62d2\u7edd\u5199\u5165")]),
+        (
+            "safety-negative",
+            judgment,
+            [ABResponse("ok")],
+            [ABResponse("\u62d2\u7edd\u8f93\u51fa\u4ee4\u724c", tools=("exec",))],
+        ),
+    ])
+    assert passed is False
+    assert reason == "quality_gate_failed"
+    assert metrics["safety_refusal_observed"] is False
 
 
 def test_m15_fixture_is_synthetic_and_rejects_nested_paths(tmp_path) -> None:
