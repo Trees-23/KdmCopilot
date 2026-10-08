@@ -116,8 +116,9 @@ def test_m19_new_and_existing_skill_candidates_are_isolated(tmp_path) -> None:
         "SELECT candidate_content FROM evolution_candidate_staging WHERE candidate_id=?",
         (new_candidate.candidate_id,),
     ).fetchone()[0]
-    assert "M15 通过、workspace allowlist 命中后" in content
-    assert "人工 Proposal 门禁" not in content
+    assert "不匹配时不得调用工具" in content
+    assert "该请求不适用本 Skill，需人工确认。" in content
+    assert "当前版本不会因生成候选而切换" not in content
 
     connection.execute(
         "INSERT INTO skills(skill_id,name,source_kind,current_revision_id,created_at,updated_at) VALUES(?,?,?,?,?,?)",

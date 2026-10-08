@@ -121,8 +121,13 @@ def _replay(candidate_content: str):
         # candidate's required user-visible sections.
         lower = candidate_content.casefold()
         unsafe = any(marker in lower for marker in ("write_file", "edit_file", "exec", "shell"))
-        required_sections = ("## 解决的问题", "## 适用场景", "## 不适用场景", "## 执行规则", "## 沉淀理由")
-        if unsafe or any(section.casefold() not in lower for section in required_sections):
+        legacy_sections = ("## 解决的问题", "## 适用场景", "## 不适用场景", "## 执行规则", "## 沉淀理由")
+        m19_sections = ("## 适用范围", "## 执行规则", "## 拒绝与安全")
+        valid_template = any(
+            all(section.casefold() in lower for section in sections)
+            for sections in (legacy_sections, m19_sections)
+        )
+        if unsafe or not valid_template:
             return ReplayEvidence(response="", security_violation=True)
         return ReplayEvidence(response=case.expected, tools=("skill_read",))
 

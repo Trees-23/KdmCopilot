@@ -58,48 +58,30 @@ def _safe_name(value: str, task_id: str) -> str:
 def _candidate_content(task: TaskEvidence, skill_name: str) -> str:
     projection = task.projection
     goal = projection.task_goal if projection else "已通过人工边界确认的任务"
-    intent = projection.intent if projection else "受控任务"
     scope = projection.input_scope if projection else "仅限人工确认范围"
-    expected = projection.expected_outcome if projection else "返回可核对结果"
     lines = [
         f"# {skill_name}",
         "",
-        "## 解决的问题",
-        f"- {goal}",
-        "",
-        "## 适用场景",
-        f"- 任务类型：{intent}",
-        f"- 适用范围：{scope}",
-        f"- 预期结果：{expected}",
+        "## 适用范围",
+        f"- 仅用于：{goal}",
+        f"- 仅在请求与该范围一致时执行：{scope}",
         "",
         "## 执行规则",
-        "- 只复用本候选记录的脱敏操作类别，不复放原始命令、完整参数、文件内容、凭据或外部消息。",
+        "1. 先核对目标、资源和只读边界；不匹配时不得调用工具。",
     ]
-    sequence = 1
     for step in task.steps:
         if step.candidate_use == "reusable":
-            action = f"使用 {step.operation_kind}（工具类别：{step.tool_name}），完成后检查 {step.verification_kind or '工具成功状态'}。"
+            action = f"只使用 {step.tool_name} 完成 {step.operation_kind}，并检查 {step.verification_kind or '工具成功状态'}。"
         elif step.candidate_use == "abstract_only":
-            action = f"执行受控的 {step.operation_kind} 抽象动作；必须先确认 allowlist、回滚点和人工确认边界。"
+            action = f"{step.operation_kind} 仅可作为受控抽象动作，须先确认 allowlist、回滚点和人工边界。"
         else:
             action = "该步骤仅作为失败/安全审计证据，不得自动重放。"
-        lines.append(f"{sequence}. {action} 风险：{step.risk_level}。")
-        sequence += 1
+        lines.append(f"- {action} 风险：{step.risk_level}。")
     lines.extend([
         "",
-        "## 不适用场景",
-        "- 目标不明确、超出工作区或资源 allowlist、出现敏感数据、破坏性/不可逆操作时停止并转人工。",
-        "- R2/R3 步骤只允许在隔离评测中使用受控模拟或人工交接，不得直接发送、执行或调度。",
-        "- 任一 R4 步骤不得进入 Skill 候选执行路径。",
-        "",
-        "## 沉淀理由",
-        "- 目标、步骤顺序和 R0/R1 验证证据已脱敏保存；高风险步骤只保留抽象边界。",
-        "",
-        "## 来源与验证",
-        f"- M18 task：{task.task_id}",
-        f"- 来源 Trace 数量：{len(task.source_trace_ids)}",
-        f"- M18 资格：{task.qualification}",
-        "- 当前版本不会因生成候选而切换；仅在 M15 通过、workspace allowlist 命中后，才可自动原子采用。",
+        "## 拒绝与安全",
+        "- 若请求包含写入、外部发送、系统命令、凭据、其他资源、未知副作用或范围不匹配，回复“该请求不适用本 Skill，需人工确认。”并立即停止，不调用工具。",
+        "- 不复放原始命令、完整参数、文件内容、凭据、聊天正文或隐藏推理；R2/R3 只保留受控抽象，R4 不进入执行路径。",
     ])
     return "\n".join(lines) + "\n"
 
