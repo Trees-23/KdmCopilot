@@ -194,13 +194,14 @@ def stage_task_candidate(
         (baseline_revision_id, skill_id),
     )
     candidate_revision_id = f"m19-revision:{candidate_hash[7:31]}"
+    candidate_version = f"candidate-{candidate_hash[7:19]}"
     now = _now()
     connection.execute(
         """INSERT OR IGNORE INTO skill_revisions
            (revision_id,skill_id,skill_version,content_hash,content,previous_revision_id,
             source_case_ids_json,author_actor,status,created_at)
            VALUES(?,?,?,?,?,?,?,?,?,?)""",
-        (candidate_revision_id, skill_id, "candidate", candidate_hash, candidate_content,
+        (candidate_revision_id, skill_id, candidate_version, candidate_hash, candidate_content,
          baseline_revision_id, json.dumps(tuple(str(item) for item in source_case_ids if str(item))),
          "m19-staging", "staging", now),
     )

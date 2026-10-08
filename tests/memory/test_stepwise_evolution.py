@@ -138,6 +138,21 @@ def test_m19_new_and_existing_skill_candidates_are_isolated(tmp_path) -> None:
     assert connection.execute(
         "SELECT current_revision_id FROM skills WHERE skill_id='skill-existing'"
     ).fetchone()[0] == "rev-existing"
+    second_task = build_task_evidence(
+        workspace=workspace, session_key="session", trace_id="trace-candidate-second", turn_id="turn-second",
+        user_text="请读取工作区 README.md 并确认首行标题",
+        events=({"event_id": "candidate-event-second", "tool_name": "read_file", "status": "ok", "verification_kind": "read_success"},),
+        actual_outcome="completed",
+    )
+    persist_task_evidence(connection, second_task)
+    second_revision = stage_task_candidate(
+        connection, task=second_task, workspace=workspace, matched_skill_id="skill-existing",
+        matched_skill_name="workspace-lookup",
+    )
+    assert second_revision.candidate_revision_id != revision.candidate_revision_id
+    assert connection.execute(
+        "SELECT count(*) FROM skill_revisions WHERE skill_id='skill-existing'"
+    ).fetchone()[0] == 3
     uncertain = stage_task_candidate(
         connection, task=task, workspace=workspace, matched_skill_id="skill-existing",
         matched_skill_name="workspace-lookup", match_confidence=0.6,
