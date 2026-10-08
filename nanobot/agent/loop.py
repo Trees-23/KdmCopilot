@@ -413,6 +413,9 @@ class AgentLoop:
         )
         self._start_time = time.time()
         self._last_usage: dict[str, int] = {}
+        # Redacted tool-operation projection from the most recent turn.  M15
+        # consumes this instead of inferring tools from user-visible text.
+        self._last_tool_evidence: list[dict[str, Any]] = []
         self._extra_hooks: list[AgentHook] = hooks or []
         self._hook_factories: list[AgentTurnHookFactory] = hook_factories or []
 
@@ -1381,6 +1384,7 @@ class AgentLoop:
             reset_request_context(request_token)
             reset_file_states(file_state_token)
         self._last_usage = result.usage
+        self._last_tool_evidence = list(result.tool_evidence or [])
         if result.stop_reason == "max_iterations":
             logger.warning("Max iterations ({}) reached", self.max_iterations)
             should_stream = turn_continuation.should_stream_budget_response(

@@ -12,6 +12,7 @@ from nanobot.memory.failure_issues import (
 from nanobot.memory.migrations.runner import apply_migrations
 from nanobot.memory.phase6_trigger import (
     RECOVERY_ISSUE_REVIEW_JOB_ID,
+    _load_repair_candidates,
     build_recovery_issue_review_job,
     register_recovery_issue_review_job,
     run_phase6_review_scan,
@@ -142,7 +143,10 @@ def test_failure_issue_request_candidate_stages_isolated_revision(tmp_path) -> N
     ).fetchone()
     assert candidate is not None
     assert candidate[0] == "queued"
-    assert "恢复规则" in candidate[1]
+    assert "恢复步骤" in candidate[1]
+    assert "结果格式" in candidate[1]
+    specs, _records = _load_repair_candidates(connection, workspace)
+    assert specs[0].cases[0]["prompt"] == "请查询当前工作区有哪些可用 Skill 并返回清单"
     assert connection.execute(
         "SELECT count(*) FROM skill_proposals WHERE workspace=?", (workspace,)
     ).fetchone()[0] == 0

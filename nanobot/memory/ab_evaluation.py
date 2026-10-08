@@ -218,11 +218,16 @@ async def _make_agent_executor(active_agent: Any, config: Phase6RuntimeConfig) -
         )
         usage = getattr(loop, "_last_usage", {}) or {}
         tokens = sum(int(value) for key, value in usage.items() if "token" in str(key) and isinstance(value, int))
+        evidence = tuple(
+            str(item.get("tool_name"))
+            for item in (getattr(loop, "_last_tool_evidence", ()) or ())
+            if isinstance(item, dict) and item.get("tool_name")
+        )
         return ABResponse(
             content="" if message is None else str(message.content),
             tokens=tokens,
             latency_ms=(time.monotonic() - started) * 1000,
-            tools=(),
+            tools=evidence,
         )
 
     # The temporary root is injected by the per-candidate runner below.

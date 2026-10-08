@@ -169,10 +169,14 @@ def _load_repair_candidates(connection: Any, workspace: str) -> tuple[tuple[Any,
             ), episode_ids,
         ).fetchall() if episode_ids else []
         trace_ids = tuple(str(value) for pair in episode_rows for value in pair if value)
+        # A repair candidate is assessed against the administrator-confirmed
+        # correction, never against the failed pre-correction request.  The
+        # old request is retained on the Issue and in the recovery audit.
+        corrected_prompt = str(row[10] or row[8] or "").strip()
         cases = tuple({
             "case_id": f"recovery-case:{episode_id}",
-            "prompt": str(row[8] or "").strip(),
-            "expected": str(row[13] or row[10] or "恢复成功并遵守范围边界").strip(),
+            "prompt": corrected_prompt,
+            "expected": corrected_prompt,
         } for episode_id in episode_ids)
         if not trace_ids or not cases:
             continue
@@ -193,8 +197,8 @@ def _load_repair_candidates(connection: Any, workspace: str) -> tuple[tuple[Any,
         ))
         records.extend({
             "trace_id": trace_id, "summary": str(row[8] or "恢复失败任务"), "intent": "排查问题",
-            "input_scope": str(row[8] or "恢复失败任务"),
-            "expected_outcome": str(row[13] or row[10] or "恢复成功并遵守范围边界"),
+            "input_scope": corrected_prompt or "恢复失败任务",
+            "expected_outcome": corrected_prompt or "恢复成功并遵守范围边界",
             "tools": ("skill_read",), "outcome": "success", "task_key": task_key,
             "evidence_id": f"recovery-evidence:{episode_id}",
         } for episode_id, trace_id in zip(episode_ids, trace_ids))
