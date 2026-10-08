@@ -146,10 +146,30 @@ def test_failure_issue_request_candidate_stages_isolated_revision(tmp_path) -> N
     assert "恢复步骤" in candidate[1]
     assert "结果格式" in candidate[1]
     specs, _records = _load_repair_candidates(connection, workspace)
-    assert specs[0].cases[0]["prompt"] == "请查询当前工作区有哪些可用 Skill 并返回清单"
+    assert specs[0].cases[0]["prompt"] == "先核对工作区相对路径，再读取目标文件"
+    assert specs[0].fixture_files == ()
     assert connection.execute(
         "SELECT count(*) FROM skill_proposals WHERE workspace=?", (workspace,)
     ).fetchone()[0] == 0
+    connection.close()
+
+
+def test_repair_candidate_uses_only_a_synthetic_named_fixture(tmp_path) -> None:
+    connection = connect_memory_db(tmp_path)
+    apply_migrations(connection)
+    workspace = str(tmp_path.resolve())
+    _seed_recovery_review(connection, workspace)
+    issue_id = create_failure_issues(connection, workspace=workspace)[0]
+    apply_failure_issue_action(
+        connection, workspace=workspace, issue_id=issue_id, action="revise",
+        actor_openid="admin-1", group_openid="group-1",
+        note="读取 README.md 前先确认它位于工作区根目录", candidate_enabled=True,
+    )
+
+    specs, _records = _load_repair_candidates(connection, workspace)
+
+    assert specs[0].cases[0]["prompt"] == "读取 README.md 前先确认它位于工作区根目录"
+    assert specs[0].fixture_files == (("README.md", "# M15 synthetic fixture\nname: README.md\n"),)
     connection.close()
 
 

@@ -144,6 +144,7 @@ def _load_repair_candidates(connection: Any, workspace: str) -> tuple[tuple[Any,
     """Load queued repair drafts as bounded M15 CandidateSpecs and evidence."""
 
     from nanobot.memory.evolution_orchestrator import CandidateSpec
+    from nanobot.memory.phase6_candidates import _fixture_files
 
     rows = connection.execute(
         """SELECT c.candidate_id,c.issue_id,c.skill_id,c.skill_name,c.baseline_revision_id,
@@ -170,9 +171,9 @@ def _load_repair_candidates(connection: Any, workspace: str) -> tuple[tuple[Any,
         ).fetchall() if episode_ids else []
         trace_ids = tuple(str(value) for pair in episode_rows for value in pair if value)
         # A repair candidate is assessed against the administrator-confirmed
-        # correction, never against the failed pre-correction request.  The
-        # old request is retained on the Issue and in the recovery audit.
-        corrected_prompt = str(row[10] or row[8] or "").strip()
+        # revise direction when present, never against the failed pre-correction
+        # request. The old automatic correction remains on the Issue for audit.
+        corrected_prompt = str(row[13] or row[10] or row[8] or "").strip()
         cases = tuple({
             "case_id": f"recovery-case:{episode_id}",
             "prompt": corrected_prompt,
@@ -194,6 +195,7 @@ def _load_repair_candidates(connection: Any, workspace: str) -> tuple[tuple[Any,
             case_ids=tuple(item["case_id"] for item in cases), candidate_content=str(row[7]),
             holdout_case_ids=tuple(item["case_id"] for item in cases[-max(2, len(cases) // 5):]),
             origin_candidate_id=str(row[0]),
+            fixture_files=_fixture_files(cases),
         ))
         records.extend({
             "trace_id": trace_id, "summary": str(row[8] or "恢复失败任务"), "intent": "排查问题",
