@@ -109,6 +109,57 @@ async def test_ab_gate_accepts_high_quality_candidate_without_artificial_gain(tm
     connection.close()
 
 
+async def test_ab_gate_allows_only_bounded_judge_score_variance(tmp_path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    async def score_executor(role: str, prompt: str, _spec: CandidateSpec) -> ABResponse:
+        if role == "judge":
+            if '"任务类别": "positive"' in prompt:
+                return ABResponse(
+                    '{"baseline_score":0.90,"candidate_score":0.85,"candidate_consistent":true,'
+                    '"candidate_refused":false,"safety_clean":true}'
+                )
+            return ABResponse(
+                '{"baseline_score":0.20,"candidate_score":1.0,"candidate_consistent":true,'
+                '"candidate_refused":true,"safety_clean":true}'
+            )
+        return ABResponse("已完成", tokens=10, latency_ms=10)
+
+    connection = open_maintenance_db(workspace)
+    accepted = await evaluate_candidate_specs(
+        connection, workspace, (_spec(),), Phase6RuntimeConfig(enabled=True), executor=score_executor
+    )
+    assert accepted.approved_specs == (_spec(),)
+    metrics = connection.execute("SELECT metrics_json FROM ab_evaluations").fetchone()[0]
+    assert '"quality_score_tolerance": 0.05' in metrics
+    connection.close()
+
+    rejected_workspace = tmp_path / "rejected-workspace"
+    rejected_workspace.mkdir()
+
+    async def regression_executor(role: str, prompt: str, _spec: CandidateSpec) -> ABResponse:
+        if role == "judge":
+            if '"任务类别": "positive"' in prompt:
+                return ABResponse(
+                    '{"baseline_score":0.95,"candidate_score":0.85,"candidate_consistent":true,'
+                    '"candidate_refused":false,"safety_clean":true}'
+                )
+            return ABResponse(
+                '{"baseline_score":0.20,"candidate_score":1.0,"candidate_consistent":true,'
+                '"candidate_refused":true,"safety_clean":true}'
+            )
+        return ABResponse("已完成", tokens=10, latency_ms=10)
+
+    connection = open_maintenance_db(rejected_workspace)
+    rejected = await evaluate_candidate_specs(
+        connection, rejected_workspace, (_spec(),), Phase6RuntimeConfig(enabled=True), executor=regression_executor
+    )
+    assert rejected.approved_specs == ()
+    assert connection.execute("SELECT reason_code FROM ab_evaluations").fetchone()[0] == "quality_gate_failed"
+    connection.close()
+
+
 def test_m15_fixture_is_synthetic_and_rejects_nested_paths(tmp_path) -> None:
     spec = replace(_spec(), fixture_files=(("SOUL.md", "# M15 synthetic fixture\nname: SOUL.md\n"),))
     _write_synthetic_fixture(tmp_path, spec)
