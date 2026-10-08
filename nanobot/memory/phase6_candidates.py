@@ -21,6 +21,7 @@ from nanobot.memory.evaluation import ReplayEvidence
 from nanobot.memory.evolution_orchestrator import CandidateSpec
 
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9._-]+")
+_FIXTURE_PATH = re.compile(r"(?<![A-Za-z0-9._/-])([A-Za-z0-9][A-Za-z0-9._-]{0,119}\.(?:md|txt|json|ya?ml))\b")
 _FRAMEWORK_EVIDENCE = re.compile(
     r"(?i)(?:event_count|event_types|checkpoint(?:_|\b)|turn_(?:started|finished)|"
     r"model_(?:request|response|attempt)|delivery_(?:attempted|finished)|trace_created)"
@@ -128,6 +129,25 @@ def _replay(candidate_content: str):
     return replay
 
 
+def _fixture_files(cases: Iterable[dict[str, str]]) -> tuple[tuple[str, str], ...]:
+    """Build a minimal synthetic fixture from the redacted case contract.
+
+    M15 must compare equal disposable workspaces.  It must not mount, copy,
+    or inspect the user's live workspace, so each permitted relative filename
+    gets a deterministic placeholder rather than original file content.
+    """
+
+    paths: set[str] = set()
+    for case in cases:
+        for path in _FIXTURE_PATH.findall(str(case.get("prompt") or "")):
+            if "/" not in path and "\\" not in path:
+                paths.add(path)
+    return tuple(
+        (path, f"# M15 synthetic fixture\nname: {path}\n")
+        for path in sorted(paths)
+    )
+
+
 def _ensure_revisions(connection: Any, candidate: TraceCandidate, skill_name: str, content: str) -> tuple[str, str, str, str]:
     """Create or reuse an isolated baseline/candidate revision pair."""
 
@@ -220,7 +240,7 @@ def build_candidate_specs(
             candidate_hash = _content_hash(content)
             staged_candidate_id = None
             candidate_source_kind = "shared"
-        cases = tuple(
+        case_records = tuple(
             {
                 "case_id": f"case:{trace_id}",
                 "prompt": candidate.summary,
@@ -228,6 +248,7 @@ def build_candidate_specs(
             }
             for trace_id in candidate.trace_ids
         )
+        fixtures = _fixture_files(case_records)
         specs.append(
             CandidateSpec(
                 task_key=candidate.task_key,
@@ -238,8 +259,9 @@ def build_candidate_specs(
                 candidate_revision_id=candidate_id,
                 baseline_hash=baseline_hash,
                 candidate_hash=candidate_hash,
-                cases=cases,
-                fixture_hash=digest({"task_key": candidate.task_key, "trace_ids": candidate.trace_ids}),
+                cases=case_records,
+                fixture_hash=digest({"task_key": candidate.task_key, "trace_ids": candidate.trace_ids,
+                                     "fixtures": fixtures}),
                 model_id="phase6-deterministic-replay",
                 replay=_replay(content),
                 case_ids=tuple(f"case:{trace_id}" for trace_id in candidate.trace_ids),
@@ -250,6 +272,7 @@ def build_candidate_specs(
                     ]
                 ),
                 origin_candidate_id=staged_candidate_id,
+                fixture_files=fixtures,
             )
         )
     return CandidateBuildResult(tuple(specs), tuple(skipped))

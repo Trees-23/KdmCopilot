@@ -2,7 +2,13 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from nanobot.memory.ab_evaluation import ABResponse, evaluate_candidate_specs
+import pytest
+
+from nanobot.memory.ab_evaluation import (
+    ABResponse,
+    _write_synthetic_fixture,
+    evaluate_candidate_specs,
+)
 from nanobot.memory.continuous import Phase6RuntimeConfig
 from nanobot.memory.evolution_orchestrator import CandidateSpec
 from nanobot.memory.maintenance import open_maintenance_db
@@ -101,3 +107,12 @@ async def test_ab_gate_accepts_high_quality_candidate_without_artificial_gain(tm
     metrics = connection.execute("SELECT metrics_json FROM ab_evaluations").fetchone()[0]
     assert '"improvement": 0.0' in metrics
     connection.close()
+
+
+def test_m15_fixture_is_synthetic_and_rejects_nested_paths(tmp_path) -> None:
+    spec = replace(_spec(), fixture_files=(("SOUL.md", "# M15 synthetic fixture\nname: SOUL.md\n"),))
+    _write_synthetic_fixture(tmp_path, spec)
+    assert (tmp_path / "SOUL.md").read_text(encoding="utf-8").startswith("# M15 synthetic fixture")
+    invalid = replace(spec, fixture_files=(("nested/SOUL.md", "not used"),))
+    with pytest.raises(ValueError, match="invalid M15 fixture path"):
+        _write_synthetic_fixture(tmp_path, invalid)

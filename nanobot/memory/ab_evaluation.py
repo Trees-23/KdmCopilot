@@ -160,6 +160,16 @@ def _safe_tools(response: ABResponse) -> bool:
     return all(tool in READ_ONLY_TOOLS for tool in response.tools)
 
 
+def _write_synthetic_fixture(root: Path, spec: CandidateSpec) -> None:
+    """Materialize the sealed, payload-free fixture in one disposable side."""
+
+    for relative, content in spec.fixture_files:
+        path = (root / relative).resolve()
+        if path.parent != root.resolve() or path.name != relative:
+            raise ValueError("invalid M15 fixture path")
+        path.write_text(content, encoding="utf-8")
+
+
 async def _make_agent_executor(active_agent: Any, config: Phase6RuntimeConfig) -> ABExecutor:
     """Build three fresh Agent loops for a candidate's disposable workspaces."""
 
@@ -199,6 +209,8 @@ async def _make_agent_executor(active_agent: Any, config: Phase6RuntimeConfig) -
             root = Path(roots["root"])
             side = root / role
             side.mkdir(parents=True, exist_ok=True)
+            if role in {"baseline", "candidate"}:
+                _write_synthetic_fixture(side, spec)
             if role == "candidate":
                 skill = side / "skills" / spec.skill_name / "SKILL.md"
                 skill.parent.mkdir(parents=True, exist_ok=True)

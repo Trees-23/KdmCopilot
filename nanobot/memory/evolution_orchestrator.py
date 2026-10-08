@@ -62,6 +62,9 @@ class CandidateSpec:
     candidate_content: str = ""
     holdout_case_ids: tuple[str, ...] = ()
     origin_candidate_id: str | None = None
+    # Synthetic, non-secret fixture files for isolated M15 replay.  These
+    # are never copied from the live workspace or from a chat transcript.
+    fixture_files: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
