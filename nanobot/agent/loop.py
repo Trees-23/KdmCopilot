@@ -1384,7 +1384,11 @@ class AgentLoop:
             reset_request_context(request_token)
             reset_file_states(file_state_token)
         self._last_usage = result.usage
-        self._last_tool_evidence = list(result.tool_evidence or [])
+        # Keep compatibility with integrations that provide a legacy runner result
+        # containing only ``tool_events``.  Native AgentRunResult always has this
+        # field, but the evidence projection is optional for external runners.
+        result_tool_evidence = list(getattr(result, "tool_evidence", ()) or ())
+        self._last_tool_evidence = result_tool_evidence
         if result.stop_reason == "max_iterations":
             logger.warning("Max iterations ({}) reached", self.max_iterations)
             should_stream = turn_continuation.should_stream_budget_response(
@@ -1411,7 +1415,7 @@ class AgentLoop:
         if tool_events is not None:
             tool_events.extend(result.tool_events)
         if tool_evidence is not None:
-            tool_evidence.extend(result.tool_evidence)
+            tool_evidence.extend(result_tool_evidence)
         return result.final_content, result.tools_used, result.messages, result.stop_reason, result.had_injections
 
     async def run(self) -> None:
