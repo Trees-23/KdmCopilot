@@ -15,6 +15,7 @@ from nanobot.agent.tools import mcp as mcp_tools
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.apps.cli import utils as cli_app_utils
 from nanobot.bus.events import InboundMessage
+from nanobot.memory.retriever import MemoryRetriever, RetrievalResult
 from nanobot.runtime_context import (
     RUNTIME_CONTEXT_END,
     RUNTIME_CONTEXT_MESSAGE_META,
@@ -40,13 +41,14 @@ class SystemPromptSections:
 
     stable: str
     dynamic: str
+    retrieval: RetrievalResult | None = None
 
     @property
     def content(self) -> str:
         return _join_prompt_sections(self.stable, self.dynamic)
 
     def metadata(self) -> dict[str, int | str]:
-        return {
+        metadata: dict[str, int | str] = {
             "schema_version": SYSTEM_CONTEXT_SECTIONS_VERSION,
             "stable_chars": len(self.stable),
             "stable_system_digest": _digest_text(self.stable),
@@ -54,6 +56,16 @@ class SystemPromptSections:
             "stable_tokens": estimate_message_tokens({"role": "system", "content": self.stable}),
             "dynamic_tokens": estimate_message_tokens({"role": "system", "content": self.dynamic}),
         }
+        if self.retrieval is not None:
+            metadata.update(
+                {
+                    "retrieval_digest": self.retrieval.digest,
+                    "retrieval_intent": self.retrieval.intent,
+                    "retrieval_outcome": self.retrieval.outcome,
+                    "retrieval_tokens": self.retrieval.tokens,
+                }
+            )
+        return metadata
 
 
 def model_request_context_cache_metadata(
@@ -107,13 +119,20 @@ def _system_sections_metadata_from_messages(
         dynamic_digest = value.get("dynamic_fact_digest")
         if not isinstance(stable_digest, str) or not isinstance(dynamic_digest, str):
             continue
-        return {
+        result: dict[str, int | str] = {
             "schema_version": SYSTEM_CONTEXT_SECTIONS_VERSION,
             "stable_system_digest": stable_digest,
             "dynamic_fact_digest": dynamic_digest,
             "stable_tokens": _non_negative_int(value.get("stable_tokens")),
             "dynamic_tokens": _non_negative_int(value.get("dynamic_tokens")),
         }
+        for key in ("retrieval_digest", "retrieval_intent", "retrieval_outcome"):
+            item = value.get(key)
+            if isinstance(item, str):
+                result[key] = item
+        if "retrieval_tokens" in value:
+            result["retrieval_tokens"] = _non_negative_int(value.get("retrieval_tokens"))
+        return result
     return None
 
 
@@ -163,6 +182,7 @@ class ContextBuilder:
         self.timezone = timezone
         self.memory = MemoryStore(workspace)
         self.skills = SkillsLoader(workspace, disabled_skills=set(disabled_skills) if disabled_skills else None)
+        self.memory_retriever = MemoryRetriever(workspace)
 
     def build_system_prompt(
         self,
@@ -173,6 +193,10 @@ class ContextBuilder:
         include_memory_recent_history: bool = True,
         session_key: str | None = None,
         unified_session: bool = False,
+        memory_query: str | None = None,
+        trace_id: str | None = None,
+        turn_id: str | None = None,
+        context_window_tokens: int | None = None,
     ) -> str:
         """Build the system prompt from identity, bootstrap files, memory, and skills."""
         return self.build_system_sections(
@@ -183,6 +207,10 @@ class ContextBuilder:
             include_memory_recent_history=include_memory_recent_history,
             session_key=session_key,
             unified_session=unified_session,
+            memory_query=memory_query,
+            trace_id=trace_id,
+            turn_id=turn_id,
+            context_window_tokens=context_window_tokens,
         ).content
 
     def build_system_sections(
@@ -194,6 +222,10 @@ class ContextBuilder:
         include_memory_recent_history: bool = True,
         session_key: str | None = None,
         unified_session: bool = False,
+        memory_query: str | None = None,
+        trace_id: str | None = None,
+        turn_id: str | None = None,
+        context_window_tokens: int | None = None,
     ) -> SystemPromptSections:
         """Build stable instructions separately from dynamic memory facts."""
         root = workspace or self.workspace
@@ -206,6 +238,20 @@ class ContextBuilder:
         stable_parts.append(render_template("agent/tool_contract.md"))
 
         dynamic_parts: list[str] = []
+        retrieval: RetrievalResult | None = None
+
+        if memory_query and session_key:
+            retrieval = self.memory_retriever.retrieve(
+                memory_query,
+                session_key=session_key,
+                workspace=root,
+                trace_id=trace_id,
+                turn_id=turn_id,
+                context_window_tokens=context_window_tokens,
+            )
+            rendered_retrieval = retrieval.render()
+            if rendered_retrieval:
+                dynamic_parts.append(rendered_retrieval)
 
         memory = self.memory.get_memory_context()
         if memory and not self._is_template_content(self.memory.read_memory(), "memory/MEMORY.md"):
@@ -241,6 +287,7 @@ class ContextBuilder:
         return SystemPromptSections(
             stable="\n\n---\n\n".join(stable_parts),
             dynamic="\n\n---\n\n".join(dynamic_parts),
+            retrieval=retrieval,
         )
 
     def _get_identity(self, channel: str | None = None, workspace: Path | None = None) -> str:
@@ -314,6 +361,9 @@ class ContextBuilder:
         include_memory_recent_history: bool = True,
         session_key: str | None = None,
         unified_session: bool = False,
+        trace_id: str | None = None,
+        turn_id: str | None = None,
+        context_window_tokens: int | None = None,
     ) -> list[dict[str, Any]]:
         """Build the complete message list for an LLM call."""
         root = workspace or self.workspace
@@ -328,6 +378,10 @@ class ContextBuilder:
             include_memory_recent_history=include_memory_recent_history,
             session_key=session_key,
             unified_session=unified_session,
+            memory_query=current_message,
+            trace_id=trace_id,
+            turn_id=turn_id,
+            context_window_tokens=context_window_tokens,
         )
         messages = [
             {

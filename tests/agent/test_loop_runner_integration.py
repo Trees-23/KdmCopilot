@@ -312,6 +312,8 @@ async def test_loop_max_iterations_message_stays_stable(tmp_path):
         "I reached the maximum number of tool call iterations (2) "
         "without completing the task. You can try breaking the task into smaller steps."
     )
+    assert loop._last_tool_evidence
+    assert loop._last_tool_evidence[0]["tool_name"] == "list_dir"
 
 
 @pytest.mark.asyncio

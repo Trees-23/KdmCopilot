@@ -426,6 +426,195 @@ class AuditConfig(Base):
     additional_secret_patterns: list[str] = Field(default_factory=list)
 
 
+class Phase6EvolutionConfig(Base):
+    """Independent gates for the Proposal notification and release lifecycle."""
+
+    shadow_mode: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("shadowMode", "shadow_mode"),
+        serialization_alias="shadowMode",
+    )
+    notifications_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("notificationsEnabled", "notifications_enabled"),
+        serialization_alias="notificationsEnabled",
+    )
+    adoption_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("adoptionEnabled", "adoption_enabled"),
+        serialization_alias="adoptionEnabled",
+    )
+    draft_pr_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("draftPrEnabled", "draft_pr_enabled"),
+        serialization_alias="draftPrEnabled",
+    )
+    workspace_skill_allowlist: list[str] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("workspaceSkillAllowlist", "workspace_skill_allowlist"),
+        serialization_alias="workspaceSkillAllowlist",
+    )
+    publish_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("publishEnabled", "publish_enabled"),
+        serialization_alias="publishEnabled",
+    )
+    overlay_repository: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("overlayRepository", "overlay_repository"),
+        serialization_alias="overlayRepository",
+    )
+    overlay_base_branch: str = Field(
+        default="main",
+        validation_alias=AliasChoices("overlayBaseBranch", "overlay_base_branch"),
+        serialization_alias="overlayBaseBranch",
+    )
+    overlay_checkout_path: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("overlayCheckoutPath", "overlay_checkout_path"),
+        serialization_alias="overlayCheckoutPath",
+    )
+    observation_groups: list[str] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("observationGroups", "observation_groups"),
+        serialization_alias="observationGroups",
+    )
+    notification_groups: list[str] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("notificationGroups", "notification_groups"),
+        serialization_alias="notificationGroups",
+    )
+    approval_admin_openids: list[str] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("approvalAdminOpenids", "approval_admin_openids"),
+        serialization_alias="approvalAdminOpenids",
+    )
+    command_require_mention: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("commandRequireMention", "command_require_mention"),
+        serialization_alias="commandRequireMention",
+    )
+    proposal_ttl_minutes: int = Field(
+        default=720,
+        ge=1,
+        validation_alias=AliasChoices("proposalTtlMinutes", "proposal_ttl_minutes"),
+        serialization_alias="proposalTtlMinutes",
+    )
+    max_notifications_per_group_per_day: int = Field(
+        default=12,
+        ge=1,
+        validation_alias=AliasChoices(
+            "maxNotificationsPerGroupPerDay", "max_notifications_per_group_per_day"
+        ),
+        serialization_alias="maxNotificationsPerGroupPerDay",
+    )
+    ab_evaluation_mode: Literal["disabled", "shadow", "enforced"] = Field(
+        default="enforced",
+        validation_alias=AliasChoices("abEvaluationMode", "ab_evaluation_mode"),
+        serialization_alias="abEvaluationMode",
+    )
+    ab_evaluation_model: str = Field(
+        default="glm-5.3-flash",
+        min_length=1,
+        validation_alias=AliasChoices("abEvaluationModel", "ab_evaluation_model"),
+        serialization_alias="abEvaluationModel",
+    )
+    ab_evaluation_reasoning_effort: Literal["low", "medium", "high"] = Field(
+        default="high",
+        validation_alias=AliasChoices(
+            "abEvaluationReasoningEffort", "ab_evaluation_reasoning_effort"
+        ),
+        serialization_alias="abEvaluationReasoningEffort",
+    )
+    ab_evaluation_max_candidates_per_day: int = Field(
+        default=2,
+        ge=1,
+        le=20,
+        validation_alias=AliasChoices(
+            "abEvaluationMaxCandidatesPerDay", "ab_evaluation_max_candidates_per_day"
+        ),
+        serialization_alias="abEvaluationMaxCandidatesPerDay",
+    )
+    ab_evaluation_max_model_calls_per_day: int = Field(
+        default=40,
+        ge=1,
+        le=200,
+        validation_alias=AliasChoices(
+            "abEvaluationMaxModelCallsPerDay", "ab_evaluation_max_model_calls_per_day"
+        ),
+        serialization_alias="abEvaluationMaxModelCallsPerDay",
+    )
+    recovery_review_enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("recoveryReviewEnabled", "recovery_review_enabled"),
+        serialization_alias="recoveryReviewEnabled",
+    )
+    recovery_notifications_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("recoveryNotificationsEnabled", "recovery_notifications_enabled"),
+        serialization_alias="recoveryNotificationsEnabled",
+    )
+    recovery_skill_candidate_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("recoverySkillCandidateEnabled", "recovery_skill_candidate_enabled"),
+        serialization_alias="recoverySkillCandidateEnabled",
+    )
+    stepwise_evidence_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("stepwiseEvidenceEnabled", "stepwise_evidence_enabled"),
+        serialization_alias="stepwiseEvidenceEnabled",
+    )
+    stepwise_evidence_mode: Literal["disabled", "shadow", "enforced"] = Field(
+        default="shadow",
+        validation_alias=AliasChoices("stepwiseEvidenceMode", "stepwise_evidence_mode"),
+        serialization_alias="stepwiseEvidenceMode",
+    )
+    mixed_risk_policy: Literal["partial", "manual", "reject"] = Field(
+        default="manual",
+        validation_alias=AliasChoices("mixedRiskPolicy", "mixed_risk_policy"),
+        serialization_alias="mixedRiskPolicy",
+    )
+    stepwise_candidate_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("stepwiseCandidateEnabled", "stepwise_candidate_enabled"),
+        serialization_alias="stepwiseCandidateEnabled",
+    )
+    case_candidate_promotion: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("caseCandidatePromotion", "case_candidate_promotion"),
+        serialization_alias="caseCandidatePromotion",
+    )
+
+
+class Phase6Config(Base):
+    """Opt-in controlled continuous-memory review configuration.
+
+    The defaults deliberately keep Phase 6 off.  Enabling this section only
+    permits derived proposals/evidence; publication and adoption remain
+    explicit, separate operations.
+    """
+
+    enabled: bool = False
+    kill_switch: bool = False
+    evolution: Phase6EvolutionConfig = Field(default_factory=Phase6EvolutionConfig)
+    min_repeat_count: int = Field(default=3, ge=3)
+    max_candidates_per_cycle: int = Field(default=20, ge=1)
+    regression_pause_threshold: int = Field(default=3, ge=1)
+    dead_letter_pause_threshold: int = Field(default=3, ge=1)
+    notification_failure_rate_pause_threshold: float = Field(default=1.0, ge=0, le=1)
+    unauthorized_pause_threshold: int = Field(default=1, ge=1)
+    cross_group_leak_pause_threshold: int = Field(default=1, ge=1)
+    max_memory_growth_ratio: float = Field(default=0.5, ge=0)
+    retention_days: int = Field(default=18, ge=1)
+    payload_retention_days: int = Field(default=7, ge=1)
+
+    @model_validator(mode="after")
+    def _validate_retention_window(self) -> "Phase6Config":
+        if self.payload_retention_days > self.retention_days:
+            raise ValueError("payload_retention_days must not exceed retention_days")
+        return self
+
+
 class Config(BaseSettings):
     """Root configuration for nanobot."""
 
@@ -437,6 +626,7 @@ class Config(BaseSettings):
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     audit: AuditConfig = Field(default_factory=AuditConfig)
+    phase6: Phase6Config = Field(default_factory=Phase6Config)
     model_presets: dict[str, ModelPresetConfig] = Field(
         default_factory=dict,
         validation_alias=AliasChoices("modelPresets", "model_presets"),

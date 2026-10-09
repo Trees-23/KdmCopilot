@@ -166,11 +166,11 @@ class AuditQuery:
     @staticmethod
     def _event_order(event: AuditEventBase) -> tuple[Any, ...]:
         return (
-            event.occurred_at,
             event.process_instance_id,
             event.durability_epoch,
             event.segment_id,
             event.segment_sequence,
+            event.occurred_at,
             event.event_id,
         )
 

@@ -1889,6 +1889,52 @@ def _run_gateway(
                 logger.info("Heartbeat: silenced by post-run evaluation")
             return response
 
+        # Phase 6 review is a protected system task.  It scans redacted Trace
+        # projections directly; it never asks the Agent to interpret a prompt
+        # or decide whether to write, notify, merge, or publish.
+        from nanobot.memory.phase6_runtime import build_overlay_pipeline
+        from nanobot.memory.phase6_trigger import (
+            PHASE6_REVIEW_JOB_ID,
+            RECOVERY_ISSUE_REVIEW_JOB_ID,
+            run_phase6_review_scan_async,
+            run_recovery_issue_scan,
+        )
+
+        if job.name == PHASE6_REVIEW_JOB_ID:
+            from nanobot.config.paths import get_audit_dir
+
+            result = await run_phase6_review_scan_async(
+                config.workspace_path,
+                config.phase6,
+                audit_root=get_audit_dir(config.audit.path),
+                overlay_pipeline_factory=(
+                    lambda connection, workspace, phase6_config: build_overlay_pipeline(
+                        connection,
+                        workspace,
+                        phase6_config,
+                        notifier=channels.proposal_notifier,
+                    )
+                ),
+                notify_error=channels.proposal_notifier.enqueue_scan_failure,
+                active_agent=agent,
+            )
+            logger.info("Phase 6 scheduled review completed: {}", getattr(result, "status", result))
+            return str(getattr(result, "status", "completed"))
+
+        if job.name == RECOVERY_ISSUE_REVIEW_JOB_ID:
+            def _queue_issue(issue_id: str, group_openid: str) -> int:
+                return channels.proposal_notifier.enqueue_failure_issue(
+                    issue_id, group_openid=group_openid
+                )
+
+            result = run_recovery_issue_scan(
+                config.workspace_path,
+                config.phase6,
+                notify_issue=_queue_issue,
+            )
+            logger.info("Phase 6 recovery Issue review completed: {}", result.get("status"))
+            return str(result.get("status", "completed"))
+
         if is_bound_cron_job(job):
             return await run_bound_cron_job(job, agent=agent, cron=cron)
 
@@ -2043,6 +2089,16 @@ def _run_gateway(
             ),
             payload=CronPayload(kind="system_event"),
         ))
+
+    from nanobot.memory.phase6_trigger import (
+        register_phase6_review_job,
+        register_recovery_issue_review_job,
+    )
+
+    if register_phase6_review_job(cron, config.phase6):
+        console.print("[green]✓[/green] Phase 6 review: 每天 14:00（北京时间）")
+    if register_recovery_issue_review_job(cron, config.phase6):
+        console.print("[green]✓[/green] 失败 Issue 汇总: 每天 12:00（北京时间）")
 
     async def _open_browser_when_ready() -> None:
         """Wait for the gateway to bind, then point the user's browser at the webui."""

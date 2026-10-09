@@ -67,6 +67,9 @@ from nanobot.bus.runtime_events import (
 from nanobot.command import CommandContext, CommandRouter, register_builtin_commands
 from nanobot.config.schema import AgentDefaults, ModelPresetConfig
 from nanobot.cron.session_turns import is_cron_turn
+from nanobot.memory.evolution_commands import EvolutionCommandService
+from nanobot.memory.maintenance import open_maintenance_db, upsert_activity
+from nanobot.memory.policy import ToolPolicy
 from nanobot.providers.base import LLMProvider
 from nanobot.providers.factory import ProviderSnapshot
 from nanobot.runtime_context import (
@@ -172,6 +175,8 @@ class TurnContext:
 
     final_content: str | None = None
     tools_used: list[str] = field(default_factory=list)
+    tool_events: list[dict[str, Any]] = field(default_factory=list)
+    tool_evidence: list[dict[str, Any]] = field(default_factory=list)
     all_messages: list[dict[str, Any]] = field(default_factory=list)
     stop_reason: str = ""
     had_injections: bool = False
@@ -333,6 +338,8 @@ class AgentLoop:
         restart_mode: str = "auto",
         local_trigger_store: Any | None = None,
         audit_runtime: AuditRuntime | None = None,
+        phase6_config: Any | None = None,
+        publish_callbacks: Any | None = None,
     ):
         from nanobot.config.schema import ToolsConfig, _resolve_tool_config_refs
 
@@ -343,6 +350,14 @@ class AgentLoop:
         self.runtime_events = runtime_events or RuntimeEventBus()
         self.runtime_event_publisher = RuntimeEventPublisher(self.runtime_events)
         self.channels_config = channels_config
+        if phase6_config is None:
+            from nanobot.config.schema import Phase6Config
+
+            phase6_config = Phase6Config()
+        self.phase6_config = phase6_config
+        self.evolution_commands = EvolutionCommandService(
+            workspace, phase6_config, publish_callbacks=publish_callbacks
+        )
         self.restart_mode = restart_mode
         self._runtime_model_publisher = runtime_model_publisher
         self.workspace = workspace
@@ -367,6 +382,7 @@ class AgentLoop:
             provider_snapshot_loader=provider_snapshot_loader,
             preset_snapshot_loader=preset_snapshot_loader,
         )
+
         self.context_block_limit = context_block_limit
         self.max_tool_result_chars = (
             max_tool_result_chars
@@ -397,6 +413,9 @@ class AgentLoop:
         )
         self._start_time = time.time()
         self._last_usage: dict[str, int] = {}
+        # Redacted tool-operation projection from the most recent turn.  M15
+        # consumes this instead of inferring tools from user-visible text.
+        self._last_tool_evidence: list[dict[str, Any]] = []
         self._extra_hooks: list[AgentHook] = hooks or []
         self._hook_factories: list[AgentTurnHookFactory] = hook_factories or []
 
@@ -409,6 +428,7 @@ class AgentLoop:
         self.goal_orchestration = GoalOrchestrationStore(self.sessions)
         self.sessions.set_file_cap_archiver(self.context.memory.raw_archive)
         self.tools = ToolRegistry()
+        self.tools.set_tool_policy(ToolPolicy())
         # One file-read/write tracker per logical session. The tool registry is
         # shared by this loop, so tools resolve the active state via contextvars.
         self._file_state_store = FileStateStore()
@@ -519,6 +539,16 @@ class AgentLoop:
         self.commands = CommandRouter()
         register_builtin_commands(self.commands)
 
+    def refresh_phase6_config(self, phase6_config: Any) -> None:
+        """Apply Phase 6 governance changes to future turns without restart.
+
+        Skill publication remains separately gated; replacing this in-memory
+        reference only changes the next command/cycle's policy evaluation.
+        """
+
+        self.phase6_config = phase6_config
+        self.evolution_commands.config = phase6_config
+
     @classmethod
     def from_config(
         cls,
@@ -564,6 +594,26 @@ class AgentLoop:
             "child_audit_root",
             str(get_audit_dir(config.audit.path)),
         )
+        if "publish_callbacks" not in extra:
+            evolution = config.phase6.evolution
+            repository = getattr(evolution, "overlay_repository", None)
+            if repository:
+                from nanobot.memory.overlay_deployer import (
+                    OverlayGatewayDeployer,
+                    build_publish_callbacks,
+                )
+                from nanobot.memory.overlay_release import GitHubOverlayRelease
+
+                release = GitHubOverlayRelease(
+                    repository,
+                    base_branch=str(getattr(evolution, "overlay_base_branch", "main")),
+                )
+                deployer = OverlayGatewayDeployer(
+                    repository,
+                    project_root=Path(__file__).resolve().parents[2],
+                    workspace=config.workspace_path,
+                )
+                extra["publish_callbacks"] = build_publish_callbacks(release, deployer)
         return cls(
             bus=bus,
             provider=provider,
@@ -600,6 +650,7 @@ class AgentLoop:
             restart_mode=config.gateway.restart_mode,
             provider_snapshot_loader=provider_snapshot_loader,
             preset_snapshot_loader=preset_snapshot_loader,
+            phase6_config=config.phase6,
             **extra,
         )
 
@@ -824,6 +875,9 @@ class AgentLoop:
             include_memory_recent_history=not ctx.ephemeral,
             session_key=ctx.session.key,
             unified_session=self._unified_session,
+            trace_id=ctx.audit_turn.trace_id if ctx.audit_turn else None,
+            turn_id=ctx.audit_turn.turn_id if ctx.audit_turn else None,
+            context_window_tokens=ctx.runtime.context_window_tokens,
         )
 
     def _request_context_for_turn(self, ctx: TurnContext) -> RequestContext:
@@ -952,6 +1006,8 @@ class AgentLoop:
         hook_factories: list[AgentTurnHookFactory] | None = None,
         turn_scopes: list[AbstractContextManager[Any]] | None = None,
         tools: ToolRegistry | None = None,
+        tool_events: list[dict[str, Any]] | None = None,
+        tool_evidence: list[dict[str, Any]] | None = None,
         request_context: RequestContext | None = None,
         audit_context: AuditRunContext | None = None,
     ) -> tuple[str | None, list[str], list[dict], str, bool]:
@@ -963,6 +1019,11 @@ class AgentLoop:
         ``resuming=False`` means this is the final response.
 
         Returns (final_content, tools_used, messages, stop_reason, had_injections).
+
+        ``tool_events`` is an optional compatibility-preserving side channel for
+        callers that need to distinguish successful and failed tool calls.
+        ``tool_evidence`` carries a separate redacted operation projection for
+        M18 and is never sent to channels.
         """
         self._sync_subagent_runtime_limits()
 
@@ -1323,6 +1384,11 @@ class AgentLoop:
             reset_request_context(request_token)
             reset_file_states(file_state_token)
         self._last_usage = result.usage
+        # Keep compatibility with integrations that provide a legacy runner result
+        # containing only ``tool_events``.  Native AgentRunResult always has this
+        # field, but the evidence projection is optional for external runners.
+        result_tool_evidence = list(getattr(result, "tool_evidence", ()) or ())
+        self._last_tool_evidence = result_tool_evidence
         if result.stop_reason == "max_iterations":
             logger.warning("Max iterations ({}) reached", self.max_iterations)
             should_stream = turn_continuation.should_stream_budget_response(
@@ -1346,6 +1412,10 @@ class AgentLoop:
                 await on_stream_end(resuming=False)
         elif result.stop_reason == "error":
             logger.error("LLM returned error: {}", (result.final_content or "")[:200])
+        if tool_events is not None:
+            tool_events.extend(result.tool_events)
+        if tool_evidence is not None:
+            tool_evidence.extend(result_tool_evidence)
         return result.final_content, result.tools_used, result.messages, result.stop_reason, result.had_injections
 
     async def run(self) -> None:
@@ -1926,6 +1996,18 @@ class AgentLoop:
         if ctx.session is None:
             ctx.session = self.sessions.get_or_create(ctx.session_key)
         if ctx.kind is TurnKind.USER:
+            try:
+                scope = self.workspace_scopes.for_message(msg, ctx.session.metadata)
+                connection = open_maintenance_db(scope.project_path or self.workspace)
+                upsert_activity(
+                    connection,
+                    workspace=str((scope.project_path or self.workspace).resolve()),
+                    session_key=ctx.session_key,
+                    message_cursor=str(msg.metadata.get("message_id") or ctx.turn_id),
+                )
+                connection.close()
+            except Exception:
+                logger.warning("Failed to upsert maintenance activity", exc_info=True)
             if (
                 msg.sender_id != "subagent"
                 and not turn_continuation.internal_continuation_inbound(msg.metadata)
@@ -1988,7 +2070,21 @@ class AgentLoop:
             is_user_turn=is_user_turn,
             turn_scopes=ctx.turn_scopes,
         )
-        result = await self.commands.dispatch(cmd_ctx)
+        result = None
+        if not raw.startswith("/"):
+            natural = self.evolution_commands.handle_natural_query(
+                raw,
+                metadata={**dict(ctx.msg.metadata or {}), "chat_id": ctx.msg.chat_id, "sender_id": ctx.msg.sender_id},
+            )
+            if natural is not None:
+                result = OutboundMessage(
+                    channel=ctx.route.channel,
+                    chat_id=ctx.route.chat_id,
+                    content=natural.content,
+                    metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
+                )
+        if result is None:
+            result = await self.commands.dispatch(cmd_ctx)
         if result is not None:
             ctx.outbound = result
             # Shortcut commands skip BUILD and SAVE, so we must persist the
@@ -2113,6 +2209,8 @@ class AgentLoop:
             hook_factories=ctx.hook_factories,
             turn_scopes=ctx.turn_scopes,
             tools=ctx.tools,
+            tool_events=ctx.tool_events,
+            tool_evidence=ctx.tool_evidence,
             request_context=ctx.request_context,
             audit_context=ctx.audit_run,
         )
@@ -2178,7 +2276,172 @@ class AgentLoop:
                 run=ctx.audit_run,
                 reason="turn_completed",
             )
+        self._capture_semantic_evolution_evidence(ctx)
         return "ok"
+
+    def _capture_semantic_evolution_evidence(self, ctx: TurnContext) -> None:
+        """Persist a bounded semantic projection after a successful user turn.
+
+        This is deliberately best-effort telemetry: failure to write an
+        evolution candidate must never change a normal user response.  The
+        projector itself stores no raw transcript and rejects commands,
+        framework/internal turns and unverified no-tool tasks.
+        """
+
+        if not bool(getattr(self.phase6_config, "enabled", False)):
+            return
+        if (
+            ctx.kind is not TurnKind.USER
+            or ctx.original_user_text is None
+            or ctx.audit_turn is None
+            or ctx.audit_run is None
+        ):
+            return
+        workspace = (
+            str(ctx.request_context.workspace)
+            if ctx.request_context is not None and ctx.request_context.workspace
+            else self.workspace
+        )
+        connection = None
+        try:
+            from nanobot.memory.db import connect_memory_db
+            from nanobot.memory.migrations.runner import apply_migrations
+            from nanobot.memory.recovery_evidence import (
+                link_successful_correction,
+                record_failed_episode,
+            )
+            from nanobot.memory.semantic_evidence import persist_turn_semantic_evidence
+            evolution = getattr(self.phase6_config, "evolution", self.phase6_config)
+            stepwise_enabled = bool(getattr(evolution, "stepwise_evidence_enabled", False))
+            stepwise_mode = str(getattr(evolution, "stepwise_evidence_mode", "shadow"))
+            mixed_risk_policy = str(getattr(evolution, "mixed_risk_policy", "manual"))
+
+            resolved_workspace = str(Path(workspace).expanduser().resolve())
+            connection = connect_memory_db(resolved_workspace)
+            apply_migrations(connection)
+            if stepwise_enabled and stepwise_mode != "disabled":
+                from nanobot.memory.stepwise_evidence import (
+                    build_task_evidence,
+                    persist_task_evidence,
+                )
+
+                legacy_tools = tuple(str(item) for item in (ctx.tools_used or ()) if str(item))
+                step_events = tuple(getattr(ctx, "tool_evidence", ()) or getattr(ctx, "tool_events", ()))
+                legacy_eligible = (
+                    ctx.stop_reason not in {"error", "tool_error"}
+                    and bool(legacy_tools)
+                    and all(item in {"read_file", "list_dir", "find_files", "grep", "skill_catalog_search", "skill_read"} for item in legacy_tools)
+                )
+                task_evidence = build_task_evidence(
+                    workspace=resolved_workspace,
+                    session_key=ctx.session_key,
+                    trace_id=ctx.audit_turn.trace_id,
+                    turn_id=ctx.audit_turn.turn_id,
+                    user_text=ctx.original_user_text,
+                    events=step_events,
+                    actual_outcome=str(ctx.stop_reason or "unknown"),
+                    legacy_qualification="candidate_eligible" if legacy_eligible else "rejected_by_legacy_gate",
+                    mixed_risk_policy=mixed_risk_policy,
+                )
+                persist_task_evidence(connection, task_evidence)
+                # Enforced mode lets the new task qualification control the
+                # semantic candidate stream; shadow mode deliberately keeps
+                # the old whole-turn selector as a comparison baseline.
+                if stepwise_mode == "enforced" and task_evidence.qualification != "candidate_eligible":
+                    stepwise_events = tuple(step_events)
+                    has_failed_step = any(
+                        isinstance(event, dict)
+                        and event.get("status") in {"error", "blocked", "timeout"}
+                        for event in stepwise_events
+                    )
+                    # Recovery evidence still needs to see a failed tool even
+                    # when the overall turn returned a conversational answer.
+                    # Only a clean, non-eligible turn skips the legacy semantic
+                    # write entirely.
+                    if ctx.stop_reason not in {"error", "tool_error"} and not has_failed_step:
+                        return
+            if ctx.stop_reason in {"error", "tool_error"}:
+                failed_event = next(
+                    (
+                        event for event in reversed(
+                            getattr(ctx, "tool_evidence", ()) or getattr(ctx, "tool_events", ())
+                        )
+                        if isinstance(event, dict)
+                        and event.get("status") in {"error", "blocked", "timeout"}
+                    ),
+                    {},
+                )
+                record_failed_episode(
+                    connection,
+                    workspace=resolved_workspace,
+                    trace_id=ctx.audit_turn.trace_id,
+                    session_key=ctx.session_key,
+                    source_type=ctx.audit_run.source_type,
+                    stop_reason=ctx.stop_reason,
+                    user_text=ctx.original_user_text,
+                    tools=ctx.tools_used,
+                    failure_error_code=failed_event.get("error_code"),
+                    failure_error_type=failed_event.get("error_type"),
+                    failure_error_source=failed_event.get("error_source"),
+                    failure_retryability=failed_event.get("retryability"),
+                    failure_detail=failed_event.get("detail"),
+                )
+                return
+            failed_events = tuple(
+                event for event in (getattr(ctx, "tool_evidence", ()) or getattr(ctx, "tool_events", ()))
+                if isinstance(event, dict) and event.get("status") in {"error", "blocked", "timeout"}
+            )
+            failed_tool_names = tuple(
+                str(event.get("tool_name") or event.get("name"))
+                for event in failed_events
+                if str(event.get("tool_name") or event.get("name") or "").strip()
+            )
+            if failed_tool_names:
+                # A tool can fail while the Agent still completes the turn. Keep
+                # that failure as recovery evidence so a later correction can be
+                # linked to it; successful tools remain useful context but are
+                # not needed to prove the failed operation.
+                record_failed_episode(
+                    connection,
+                    workspace=resolved_workspace,
+                    trace_id=ctx.audit_turn.trace_id,
+                    session_key=ctx.session_key,
+                    source_type=ctx.audit_run.source_type,
+                    stop_reason="tool_error",
+                    user_text=ctx.original_user_text,
+                    tools=failed_tool_names,
+                    failure_error_code=next((event.get("error_code") for event in failed_events if event.get("error_code")), None),
+                    failure_error_type=next((event.get("error_type") for event in failed_events if event.get("error_type")), None),
+                    failure_error_source=next((event.get("error_source") for event in failed_events if event.get("error_source")), None),
+                    failure_retryability=next((event.get("retryability") for event in failed_events if event.get("retryability")), None),
+                    failure_detail=next((event.get("detail") for event in failed_events if event.get("detail")), None),
+                )
+                return
+            persist_turn_semantic_evidence(
+                connection,
+                workspace=resolved_workspace,
+                trace_id=ctx.audit_turn.trace_id,
+                turn_id=ctx.audit_turn.turn_id,
+                session_key=ctx.session_key,
+                source_type=ctx.audit_run.source_type,
+                outcome="success",
+                user_text=ctx.original_user_text,
+                tools=ctx.tools_used,
+            )
+            link_successful_correction(
+                connection,
+                workspace=resolved_workspace,
+                trace_id=ctx.audit_turn.trace_id,
+                session_key=ctx.session_key,
+                source_type=ctx.audit_run.source_type,
+                user_text=ctx.original_user_text,
+                tools=ctx.tools_used,
+            )
+        except Exception:
+            logger.warning("Failed to persist semantic Skill-evolution evidence", exc_info=True)
+        finally:
+            if connection is not None:
+                connection.close()
 
     async def _state_respond(self, ctx: TurnContext) -> str:
         if ctx.suppress_response:

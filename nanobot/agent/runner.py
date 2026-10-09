@@ -30,6 +30,7 @@ from nanobot.agent.tool_failure import ToolFailureSource, normalize_tool_failure
 from nanobot.agent.tools.base import ToolResult
 from nanobot.agent.tools.registry import ToolRegistry, is_tool_error_result
 from nanobot.audit.context import AuditRunContext
+from nanobot.audit.diagnostics import tool_operation_evidence
 from nanobot.audit.hook import RunnerAuditHook
 from nanobot.audit.ids import new_audit_id
 from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
@@ -114,6 +115,7 @@ class AgentRunResult:
     error: str | None = None
     error_kind: str | None = None
     tool_events: list[dict[str, str]] = field(default_factory=list)
+    tool_evidence: list[dict[str, Any]] = field(default_factory=list)
     had_injections: bool = False
 
 
@@ -367,6 +369,7 @@ class AgentRunner:
         error_kind: str | None = None
         stop_reason = "completed"
         tool_events: list[dict[str, str]] = []
+        tool_evidence: list[dict[str, Any]] = []
         external_lookup_counts: dict[str, int] = {}
         # Per-turn throttle for repeated attempts against the same outside target.
         workspace_violation_counts: dict[str, int] = {}
@@ -480,7 +483,7 @@ class AgentRunner:
 
                 await hook.before_execute_tools(context)
 
-                results, new_events, fatal_error = await self._execute_tools(
+                results, new_events, fatal_error, new_evidence = await self._execute_tools(
                     spec,
                     response.tool_calls,
                     external_lookup_counts,
@@ -489,6 +492,7 @@ class AgentRunner:
                     context,
                 )
                 tool_events.extend(new_events)
+                tool_evidence.extend(new_evidence)
                 tools_used.extend(
                     tool_call.name
                     for tool_call, event in zip(response.tool_calls, new_events)
@@ -800,6 +804,7 @@ class AgentRunner:
             error=error,
             error_kind=error_kind,
             tool_events=tool_events,
+            tool_evidence=tool_evidence,
             had_injections=had_injections,
         )
 
@@ -1320,11 +1325,11 @@ class AgentRunner:
         workspace_violation_counts: dict[str, int],
         hook: AgentHook | None = None,
         context: AgentHookContext | None = None,
-    ) -> tuple[list[Any], list[dict[str, str]], BaseException | None]:
+    ) -> tuple[list[Any], list[dict[str, str]], BaseException | None, list[dict[str, Any]]]:
         hook = hook or AgentHook()
         context = context or AgentHookContext(iteration=0, messages=[])
         batches = self._partition_tool_batches(spec, tool_calls)
-        tool_results: list[tuple[Any, dict[str, str], BaseException | None]] = []
+        tool_results: list[tuple[Any, dict[str, str], BaseException | None, dict[str, Any]]] = []
         for batch in batches:
             if spec.concurrent_tools and len(batch) > 1:
                 batch_results = await asyncio.gather(*(
@@ -1355,13 +1360,15 @@ class AgentRunner:
 
         results: list[Any] = []
         events: list[dict[str, str]] = []
+        evidence: list[dict[str, Any]] = []
         fatal_error: BaseException | None = None
-        for result, event, error in tool_results:
+        for result, event, error, operation in tool_results:
             results.append(result)
             events.append(event)
+            evidence.append(operation)
             if error is not None and fatal_error is None:
                 fatal_error = error
-        return results, events, fatal_error
+        return results, events, fatal_error, evidence
 
     async def _run_tool(
         self,
@@ -1371,7 +1378,7 @@ class AgentRunner:
         workspace_violation_counts: dict[str, int],
         hook: AgentHook | None = None,
         context: AgentHookContext | None = None,
-    ) -> tuple[Any, dict[str, str], BaseException | None]:
+    ) -> tuple[Any, dict[str, str], BaseException | None, dict[str, Any]]:
         hook = hook or AgentHook()
         context = context or AgentHookContext(iteration=0, messages=[])
         outcome = ToolAuditOutcome(
@@ -1436,7 +1443,37 @@ class AgentRunner:
                     else None
                 ),
             )
-            return result
+            # Keep the public compatibility event unchanged.  M18 consumes a
+            # separate bounded operation projection so existing integrations
+            # do not start receiving new fields.
+            prepared = getattr(spec.tools, "prepare_call", None)
+            operation_tool = None
+            operation_params = tool_call.arguments
+            if callable(prepared):
+                try:
+                    prepared_value = prepared(tool_call.name, tool_call.arguments)
+                    if isinstance(prepared_value, tuple) and len(prepared_value) == 3:
+                        operation_tool, operation_params, _ = prepared_value
+                except Exception:
+                    operation_tool = None
+                    operation_params = tool_call.arguments
+            operation = tool_operation_evidence(tool_call.name, operation_tool, operation_params)
+            if outcome.source_event_id is None:
+                outcome.source_event_id = new_audit_id()
+            return result[0], event, fatal_error, {
+                "event_id": outcome.source_event_id,
+                "tool_name": tool_call.name,
+                "operation_kind": operation.operation_kind,
+                "safe_input_summary": operation.summary,
+                "resource_key": operation.resource_key,
+                "verification_kind": operation.verification_kind,
+                "error_code": outcome.error_code,
+                "error_type": outcome.error_type or outcome.error_kind,
+                "error_source": getattr(payload, "error_source", None),
+                "retryability": getattr(payload, "retryability", None),
+                "status": status,
+                "detail": event.get("detail"),
+            }
         except asyncio.CancelledError:
             outcome = ToolAuditOutcome(
                 "cancelled",

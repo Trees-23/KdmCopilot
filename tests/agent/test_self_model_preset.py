@@ -313,6 +313,30 @@ def test_from_config_injects_default_preset(tmp_path) -> None:
     assert loop.model_presets["default"].model == "openai/gpt-4.1"
 
 
+def test_from_config_wires_private_overlay_publish_callbacks(tmp_path) -> None:
+    from unittest.mock import patch
+
+    from nanobot.config.schema import Config
+
+    config = Config.model_validate({
+        "agents": {"defaults": {"model": "openai/gpt-4.1", "workspace": str(tmp_path)}},
+        "phase6": {"evolution": {"overlayRepository": "Trees-23/private-skills"}},
+    })
+    fake_provider = _provider("openai/gpt-4.1")
+    with (
+        patch("nanobot.providers.factory.make_provider", return_value=fake_provider),
+        patch("nanobot.memory.overlay_release.GitHubOverlayRelease") as release_type,
+        patch("nanobot.memory.overlay_deployer.OverlayGatewayDeployer") as deployer_type,
+        patch("nanobot.memory.overlay_deployer.build_publish_callbacks", return_value="callbacks") as build,
+    ):
+        loop = AgentLoop.from_config(config)
+
+    release_type.assert_called_once_with("Trees-23/private-skills", base_branch="main")
+    deployer_type.assert_called_once()
+    build.assert_called_once_with(release_type.return_value, deployer_type.return_value)
+    assert loop.evolution_commands.publish_callbacks == "callbacks"
+
+
 def test_from_config_static_preset_loader_does_not_enable_hot_reload(tmp_path) -> None:
     from unittest.mock import patch
 

@@ -208,7 +208,20 @@ async def test_mcp_reconnect_during_shutdown_does_not_crash(
     assert isinstance(tool, MCPToolWrapper)
 
     await asyncio.create_task(tool.execute(name="first"))
-    await asyncio.sleep(_IDLE_TIMEOUT_SECONDS + _IDLE_EXPIRY_GRACE_SECONDS)
+
+    # Make the stale-session signal deterministic.  The companion test above
+    # covers a real idle timeout; this test is specifically about shutdown
+    # racing with an in-flight reconnect.  Depending on runner load, the
+    # FastMCP idle reaper can take much longer than its configured timeout,
+    # which used to make this race test hang before reconnect was entered.
+    stale_session = tool._session
+
+    async def fail_once(*args, **kwargs):
+        monkeypatch.setattr(stale_session, "call_tool", stale_session_call)
+        raise RuntimeError("Session terminated")
+
+    stale_session_call = stale_session.call_tool
+    monkeypatch.setattr(stale_session, "call_tool", fail_once)
 
     reconnect_started = asyncio.Event()
     finish_reconnect = asyncio.Event()
@@ -221,7 +234,9 @@ async def test_mcp_reconnect_during_shutdown_does_not_crash(
 
     monkeypatch.setattr(mcp_module, "connect_mcp_servers", gated_connect)
     call_task = asyncio.create_task(tool.execute(name="second"))
-    await asyncio.wait_for(reconnect_started.wait(), timeout=5)
+    # Hosted Windows runners can take several seconds to reap the idle MCP
+    # session before the next call observes the closed transport.
+    await asyncio.wait_for(reconnect_started.wait(), timeout=30)
     close_task = asyncio.create_task(loop.close_mcp())
     await asyncio.sleep(0)
     finish_reconnect.set()
@@ -236,7 +251,7 @@ async def test_mcp_reconnect_during_shutdown_does_not_crash(
     asyncio.get_running_loop().set_exception_handler(capture_unhandled)
 
     try:
-        await asyncio.wait_for(asyncio.gather(call_task, close_task), timeout=15)
+        await asyncio.wait_for(asyncio.gather(call_task, close_task), timeout=45)
     except asyncio.CancelledError:
         unhandled.append(asyncio.CancelledError("main task cancelled by leaked MCP cancel scope"))
     except Exception as exc:

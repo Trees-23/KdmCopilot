@@ -36,6 +36,7 @@ from nanobot.channels.contracts import (
 )
 from nanobot.channels.registry import channel_default_enabled
 from nanobot.config.schema import Config
+from nanobot.memory.proposal_notifier import ProposalNotifier
 from nanobot.utils.restart import (
     RestartNotice,
     consume_restart_notice_from_env,
@@ -122,10 +123,19 @@ class ChannelManager:
         self._channel_errors: dict[str, str] = {}
         self._channel_tasks: dict[str, asyncio.Task] = {}
         self._dispatch_task: asyncio.Task | None = None
+        self._proposal_delivery_task: asyncio.Task | None = None
         self._started = False
         self._origin_reply_fingerprints: dict[tuple[str, str, str], str] = {}
-
+        self.proposal_notifier = ProposalNotifier(
+            str(config.workspace_path), config.phase6, bus
+        )
         self._init_channels()
+
+    def refresh_phase6_config(self, phase6_config: Any) -> None:
+        """Refresh Phase 6 policy used by QQ notifications without restart."""
+
+        self.config = self.config.model_copy(update={"phase6": phase6_config})
+        self.proposal_notifier.config = phase6_config
 
     def _channel_section(
         self,
@@ -561,6 +571,7 @@ class ChannelManager:
         self._started = True
         # Start outbound dispatcher
         self._dispatch_task = asyncio.create_task(self._dispatch_outbound())
+        self._proposal_delivery_task = asyncio.create_task(self._proposal_delivery_loop())
 
         # Start channels
         tasks = []
@@ -626,10 +637,37 @@ class ChannelManager:
             self._dispatch_task.cancel()
             with suppress(asyncio.CancelledError):
                 await self._dispatch_task
+        proposal_delivery_task = getattr(self, "_proposal_delivery_task", None)
+        if proposal_delivery_task:
+            proposal_delivery_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await proposal_delivery_task
+            self._proposal_delivery_task = None
 
         # Stop all channels
         for name in list(self.channels):
             await self._stop_channel(name)
+
+    async def _proposal_delivery_loop(self) -> None:
+        """Drain queued Proposal notifications without involving an Agent turn."""
+        while self._started:
+            try:
+                if (
+                    self.proposal_notifier._enabled()
+                    or self.proposal_notifier._recovery_enabled()
+                ):
+                    await self.proposal_notifier.deliver_once(worker_id="gateway-proposal-notifier")
+                    await self.proposal_notifier.deliver_alert_once(worker_id="gateway-phase6-alerts")
+                    await self.proposal_notifier.deliver_failure_issue_once()
+                    await asyncio.sleep(1)
+                else:
+                    # Keep the disabled path cheap and side-effect free.
+                    await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Proposal notification delivery loop failed")
+                await asyncio.sleep(5)
 
     @staticmethod
     def _fingerprint_content(content: str) -> str:
