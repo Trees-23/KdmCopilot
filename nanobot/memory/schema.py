@@ -43,12 +43,6 @@ def latest_migration_sql() -> str:
     return migration_sql()
 
 
-def recovery_review_atomic_actions_migration_sql() -> str:
-    """Return the immutable v14 migration SQL for the migration runner."""
-
-    return RECOVERY_REVIEW_ATOMIC_ACTIONS_MIGRATION_PATH.read_text(encoding="utf-8")
-
-
 def candidate_staging_migration_sql() -> str:
     """Return the immutable M19 candidate-staging migration SQL."""
 

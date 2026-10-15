@@ -136,14 +136,6 @@ def record_tool_terminal(
     return True
 
 
-def build_failure_overlay(
-    session_metadata: Mapping[str, Any] | None,
-    message_metadata: Mapping[str, Any] | None,
-) -> AgentStatusOverlay | None:
-    """Render the current repeated-failure facts without exposing raw inputs."""
-    return build_status_overlay(session_metadata, message_metadata)
-
-
 def build_status_overlay(
     session_metadata: Mapping[str, Any] | None,
     message_metadata: Mapping[str, Any] | None,

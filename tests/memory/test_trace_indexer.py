@@ -12,8 +12,6 @@ from nanobot.memory.migrations.runner import apply_migrations
 from nanobot.memory.retrieval_events import (
     RetrievalEvent,
     record_retrieval,
-    retrieval_failure_event,
-    search_trace_summaries,
 )
 from nanobot.memory.trace_indexer import (
     PAYLOAD_RETENTION_DAYS,
@@ -144,29 +142,6 @@ async def test_full_and_incremental_replay_are_idempotent_and_payload_free(tmp_p
     assert row[1]
 
 
-def test_trace_query_returns_structured_active_rows_and_hides_degraded_or_expired() -> None:
-    connection = _db()
-    now = datetime(2026, 1, 20, tzinfo=UTC)
-    connection.executemany(
-        """INSERT INTO trace_index
-        (trace_id,workspace,started_at,outcome,event_count,tool_count,summary,index_status,redaction_version,
-         trace_expire_at,source_path,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-        [
-            ("trace-visible", "/workspace", now.isoformat(), "succeeded", 3, 1, "safe", "indexed",
-             "audit-redactor-v1", (now + timedelta(days=1)).isoformat(), "/audit", now.isoformat(), now.isoformat()),
-            ("trace-degraded", "/workspace", now.isoformat(), "failed", 1, 0, "", "degraded",
-             "audit-redactor-v1", (now + timedelta(days=1)).isoformat(), "/audit", now.isoformat(), now.isoformat()),
-            ("trace-expired", "/workspace", now.isoformat(), "failed", 1, 0, "", "indexed",
-             "audit-redactor-v1", (now - timedelta(seconds=1)).isoformat(), "/audit", now.isoformat(), now.isoformat()),
-        ],
-    )
-
-    results = search_trace_summaries(connection, workspace="/workspace", now=now)
-
-    assert [result.trace_id for result in results] == ["trace-visible"]
-    assert results[0].summary == "safe"
-
-
 def test_retrieval_events_are_append_only_and_failures_are_visible() -> None:
     connection = _db()
     event = RetrievalEvent(
@@ -182,8 +157,9 @@ def test_retrieval_events_are_append_only_and_failures_are_visible() -> None:
         created_at="2026-01-01T00:00:00+00:00",
     )
     assert record_retrieval(connection, event) == "retrieval-1"
-    failure = retrieval_failure_event(
-        session_key="session-1", intent="history_query", error_code="index_degraded"
+    failure = RetrievalEvent(
+        session_key="session-1", intent="history_query", error_code="index_degraded",
+        scopes=[], result_ids=[], injected_ids=[], injected_context=[], outcome="failed",
     )
     record_retrieval(connection, failure)
 

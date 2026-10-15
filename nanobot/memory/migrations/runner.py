@@ -12,7 +12,6 @@ from nanobot.memory.schema import (
     ALERT_DELIVERY_MIGRATION_PATH,
     APP_BUILD,
     BASE_REQUIRED_TABLES,
-    CANDIDATE_ADOPTION_STATES_MIGRATION_PATH,
     CANDIDATE_STAGING_TABLES,
     DELIVERY_PAYLOAD_MIGRATION_PATH,
     FAILURE_CANDIDATE_EVALUATION_HASHES_MIGRATION_PATH,
@@ -318,9 +317,3 @@ def _record_failed_version(
     except Exception:
         connection.rollback()
         raise
-
-
-def migration_file_path() -> str:
-    """Expose the latest checked-in migration path for evidence and diagnostics."""
-
-    return str(CANDIDATE_ADOPTION_STATES_MIGRATION_PATH)

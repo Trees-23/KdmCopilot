@@ -72,29 +72,6 @@ def acquire_lock(
         raise
 
 
-def renew_lock(
-    connection: sqlite3.Connection,
-    lease: LockLease,
-    *,
-    lease_seconds: int = 60,
-    now: datetime | None = None,
-) -> LockLease | None:
-    """Renew only the exact owner and generation; stale workers cannot renew."""
-
-    current_time = now or _now()
-    now_text = _iso(current_time)
-    lease_text = _iso(current_time + timedelta(seconds=lease_seconds))
-    cursor = connection.execute(
-        "UPDATE maintenance_lock SET lease_until=?,renewed_at=?,updated_at=? "
-        "WHERE workspace=? AND owner=? AND generation=?",
-        (lease_text, now_text, now_text, lease.workspace, lease.owner, lease.generation),
-    )
-    connection.commit()
-    if cursor.rowcount != 1:
-        return None
-    return LockLease(lease.workspace, lease.owner, lease.generation, lease_text)
-
-
 def release_lock(connection: sqlite3.Connection, lease: LockLease) -> bool:
     """Release only the exact owner and generation."""
 

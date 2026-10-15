@@ -102,10 +102,4 @@ class IntentRouter:
     route = classify
 
 
-def route_intent(text: str | None) -> IntentDecision:
-    """Convenience wrapper for callers that do not need a router instance."""
-
-    return IntentRouter().classify(text)
-
-
-__all__ = ["IntentDecision", "IntentRouter", "MEMORY_INTENTS", "route_intent"]
+__all__ = ["IntentDecision", "IntentRouter", "MEMORY_INTENTS"]

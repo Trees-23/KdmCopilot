@@ -12,7 +12,6 @@ from nanobot.memory.db import (
     MemoryWorkspaceError,
     connect_memory_db,
     connect_memory_db_path,
-    foreign_keys_enabled,
     resolve_memory_db_path,
 )
 from nanobot.memory.migrations.runner import apply_migrations
@@ -32,8 +31,8 @@ def test_workspace_path_is_local_and_connection_pragmas_are_per_connection(tmp_p
     first = connect_memory_db(tmp_path)
     second = connect_memory_db(tmp_path)
     try:
-        assert foreign_keys_enabled(first)
-        assert foreign_keys_enabled(second)
+        assert first.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+        assert second.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert first.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
     finally:
         first.close()
