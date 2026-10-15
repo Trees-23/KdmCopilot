@@ -8,6 +8,7 @@ or uncertain judge result is a closed gate in enforced mode.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import re
@@ -27,10 +28,15 @@ from nanobot.memory.evaluation_budget import (
     EvaluationBudgetError,
     admit_evaluation,
 )
-from nanobot.memory.evaluation_provider import EvaluationProvider
+from nanobot.memory.evaluation_provider import EvaluationExecutionError, EvaluationProvider
 from nanobot.memory.evolution_orchestrator import CandidateSpec
 from nanobot.memory.policy import ToolPolicy
-from nanobot.memory.queue_state import EvaluationLease, claim_candidate, finish_evaluation
+from nanobot.memory.queue_state import (
+    EvaluationLease,
+    claim_candidate,
+    fail_timed_out_evaluation,
+    finish_evaluation,
+)
 
 _POSITIVE_ATTEMPTS = 3
 # The judge produces a bounded, one-decimal-place quality score from a small
@@ -262,6 +268,8 @@ async def _make_agent_executor(
         )
         if provider.rejected_error is not None:
             raise provider.rejected_error
+        if provider.execution_error is not None:
+            raise provider.execution_error
         usage = getattr(loop, "_last_usage", {}) or {}
         tokens = sum(int(value) for key, value in usage.items() if "token" in str(key) and isinstance(value, int))
         evidence = tuple(
@@ -441,57 +449,51 @@ async def _evaluate_one(
     *,
     active_agent: Any | None,
     executor: ABExecutor | None,
-) -> tuple[str, str]:
+) -> tuple[str, str, dict[str, Any]]:
     if len(set(spec.case_ids)) < config.min_repeat_count or not spec.cases:
-        budget.settle("failed", "insufficient_real_evidence")
-        return "failed", "insufficient_real_evidence"
+        return "failed", "insufficient_real_evidence", {}
     if not spec.candidate_content.strip():
-        budget.settle("failed", "candidate_content_missing")
-        return "failed", "candidate_content_missing"
+        return "failed", "candidate_content_missing", {}
     rounds = []
-    try:
-        for number in (1, 2):
-            status, reason, metrics = await _sample_round(
-                connection, spec, config, budget, number, active_agent=active_agent, executor=executor,
-            )
-            rounds.append({"sample_round": number, "status": status, "reason": reason, "metrics": metrics})
-        statuses = [item["status"] for item in rounds]
-        if statuses == ["passed", "passed"]:
-            status, reason = "passed", "passed"
-        elif statuses == ["failed", "failed"]:
-            status, reason = "failed", str(rounds[-1]["reason"])
-        else:
-            status, reason = "uncertain", "judge_disagreement"
-            previous = connection.execute(
-                "SELECT status FROM ab_evaluations WHERE workspace=? AND candidate_hash=? AND protocol_version=? "
-                "AND evaluation_id<>? ORDER BY created_at DESC,evaluation_id DESC",
-                (budget.workspace, spec.candidate_hash, PROTOCOL_VERSION, budget.evaluation_id),
-            ).fetchall()
-            consecutive = 1
-            for row in previous:
-                if row[0] != "uncertain":
-                    break
-                consecutive += 1
-            if consecutive >= 3:
-                status, reason = "failed", "judge_unstable"
-            elif len(previous) + 1 >= config.evaluation_max_attempts:
-                status, reason = "failed", "attempts_exhausted"
-        # Retain the old useful aggregate keys, plus the independent round facts.
-        metrics = dict(rounds[-1]["metrics"])
-        metrics["rounds"] = rounds
-        if not budget.settle(status, reason, metrics):
-            return "error", "lease_expired"
-        return status, reason
-    except EvaluationBudgetError as error:
-        if connection.in_transaction:
-            connection.rollback()
-        budget.settle("budget_exhausted", str(error), {"rounds": rounds})
-        return "budget_exhausted", str(error)
-    except BaseException as error:
-        if connection.in_transaction:
-            connection.rollback()
-        budget.settle("error", "evaluation_error", {"error": type(error).__name__, "rounds": rounds})
-        raise
+    for number in (1, 2):
+        status, reason, metrics = await _sample_round(
+            connection, spec, config, budget, number, active_agent=active_agent, executor=executor,
+        )
+        rounds.append({"sample_round": number, "status": status, "reason": reason, "metrics": metrics})
+    expected = sorted((number, key, attempt) for number in (1, 2)
+                      for key, _split, _prompt, attempts in _cases(spec)
+                      for attempt in range(1, attempts + 1))
+    persisted = [tuple(row) for row in connection.execute(
+        "SELECT sample_round,case_key,attempt FROM ab_case_results WHERE evaluation_id=? "
+        "ORDER BY sample_round,case_key,attempt", (budget.evaluation_id,),
+    )]
+    if persisted != expected:
+        raise ValueError("evaluation_round_evidence_incomplete")
+    statuses = [item["status"] for item in rounds]
+    if statuses == ["passed", "passed"]:
+        status, reason = "passed", "passed"
+    elif statuses == ["failed", "failed"]:
+        status, reason = "failed", str(rounds[-1]["reason"])
+    else:
+        status, reason = "uncertain", "judge_disagreement"
+        previous = connection.execute(
+            "SELECT status FROM ab_evaluations WHERE workspace=? AND candidate_hash=? AND protocol_version=? "
+            "AND evaluation_id<>? ORDER BY created_at DESC,evaluation_id DESC",
+            (budget.workspace, spec.candidate_hash, PROTOCOL_VERSION, budget.evaluation_id),
+        ).fetchall()
+        consecutive = 1
+        for row in previous:
+            if row[0] != "uncertain":
+                break
+            consecutive += 1
+        if consecutive >= 3:
+            status, reason = "failed", "judge_unstable"
+        elif len(previous) + 1 >= config.evaluation_max_attempts:
+            status, reason = "failed", "attempts_exhausted"
+    # Retain the old useful aggregate keys, plus the independent round facts.
+    metrics = dict(rounds[-1]["metrics"])
+    metrics["rounds"] = rounds
+    return status, reason, metrics
 
 
 async def evaluate_candidate_specs(
@@ -506,7 +508,7 @@ async def evaluate_candidate_specs(
     """Admit by content and cumulative budget, then require two independent matching verdicts."""
     if not specs:
         return ABEvaluationResult()
-    from nanobot.memory.queue_state import reap_stale_evaluations, reuse_final_evaluation
+    from nanobot.memory.queue_state import reap_stale_evaluations
 
     root = str(Path(workspace).expanduser().resolve())
     reap_stale_evaluations(connection, workspace=root, max_attempts=config.evaluation_max_attempts)
@@ -524,11 +526,6 @@ async def evaluate_candidate_specs(
                 leases.append(lease)
             approved.append(spec)
         return ABEvaluationResult(tuple(approved), "disabled", proposal_leases=tuple(leases))
-    approved: list[CandidateSpec] = []
-    proposal_leases: list[EvaluationLease] = []
-    calls = evaluated = 0
-    exhausted = False
-    execution_owner = f"evaluation:{uuid4()}"
     fifo = {
         row[0]: index for index, row in enumerate(connection.execute(
             "SELECT candidate_id FROM evolution_candidate_staging WHERE workspace=? AND status='queued' "
@@ -536,7 +533,48 @@ async def evaluate_candidate_specs(
         ))
     }
     ordered = sorted(enumerate(specs), key=lambda item: fifo.get(item[1].origin_candidate_id, len(fifo) + item[0]))
-    for _index, spec in ordered:
+    results = await asyncio.gather(
+        *(_evaluate_one_guarded(connection, root, spec, config, active_agent=active_agent, executor=executor)
+          for _index, spec in ordered),
+        return_exceptions=True,
+    )
+    approved, leases = [], []
+    calls = evaluated = 0
+    exhausted = failed = False
+    for result in results:
+        if isinstance(result, BaseException):
+            if not isinstance(result, Exception):
+                raise result
+            failed = True
+            continue
+        approved.extend(result.approved_specs)
+        leases.extend(result.proposal_leases)
+        calls += result.model_calls_used
+        evaluated += result.evaluated_count
+        exhausted = exhausted or result.status == "budget_exhausted"
+        failed = failed or result.status == "error"
+    return ABEvaluationResult(
+        tuple(approved), "budget_exhausted" if exhausted else "error" if failed else "completed",
+        "ab_evaluation_daily_budget_exhausted" if exhausted else "evaluation_error" if failed else None,
+        evaluated, calls, tuple(leases),
+    )
+
+
+async def _evaluate_one_guarded(
+    connection: Any,
+    root: str,
+    spec: CandidateSpec,
+    config: Phase6RuntimeConfig,
+    *,
+    active_agent: Any | None,
+    executor: ABExecutor | None,
+) -> ABEvaluationResult:
+    from nanobot.memory.queue_state import reuse_final_evaluation
+
+    budget = lease = None
+    deadline = asyncio.timeout(config.evaluation_timeout_seconds)
+    retry = False
+    try:
         queue_candidate_id = None
         if spec.origin_candidate_id:
             candidate = connection.execute(
@@ -544,64 +582,92 @@ async def evaluate_candidate_specs(
                 (spec.origin_candidate_id, root, spec.candidate_hash),
             ).fetchone()
             if candidate is not None and candidate[0] not in {"queued", "evaluating"}:
-                continue
+                return ABEvaluationResult()
             if candidate is not None:
                 queue_candidate_id = spec.origin_candidate_id
         required_calls = 0 if len(set(spec.case_ids)) < config.min_repeat_count or not spec.cases or not spec.candidate_content.strip() else 40
         admission = admit_evaluation(connection, root, spec, config, required_calls=required_calls)
         if admission.status == "budget_exhausted":
-            exhausted = True
-            continue
+            return ABEvaluationResult(status="budget_exhausted")
         if admission.status == "running":
-            continue
+            return ABEvaluationResult()
         lease = None
         if admission.status == "cached":
             if queue_candidate_id and reuse_final_evaluation(
                 connection, queue_candidate_id, admission.evaluation_id,
             ):
-                continue
+                return ABEvaluationResult()
             if admission.result_status == "failed":
-                continue
+                return ABEvaluationResult()
             if queue_candidate_id:
                 lease = claim_candidate(
-                    connection, workspace=root, candidate_id=queue_candidate_id, owner=execution_owner,
+                    connection, workspace=root, candidate_id=queue_candidate_id, owner=f"evaluation:{uuid4()}",
                     lease_seconds=config.evaluation_lease_seconds, max_attempts=config.evaluation_max_attempts,
                 )
                 if lease is None:
-                    continue
-            approved.append(spec)
-            if lease is not None:
-                proposal_leases.append(lease)
-            continue
+                    return ABEvaluationResult()
+            return ABEvaluationResult((spec,), proposal_leases=() if lease is None else (lease,))
         assert admission.evaluation_id is not None
         budget = EvaluationBudget(connection, root, admission.evaluation_id, config)
         if queue_candidate_id:
             lease = claim_candidate(
-                connection, workspace=root, candidate_id=queue_candidate_id, owner=execution_owner,
+                connection, workspace=root, candidate_id=queue_candidate_id, owner=f"evaluation:{uuid4()}",
                 lease_seconds=config.evaluation_lease_seconds, max_attempts=config.evaluation_max_attempts,
             )
             if lease is None:
                 budget.discard_unstarted()
-                continue
-        status, reason = await _evaluate_one(
-            connection, spec, config, budget, active_agent=active_agent, executor=executor,
-        )
-        calls += budget.used_calls()
-        evaluated += int(status in {"passed", "failed"})
-        if status == "passed":
-            approved.append(spec)
-            if lease is not None:
-                proposal_leases.append(lease)
-        elif lease is not None:
+                return ABEvaluationResult()
+        async with deadline:
+            status, reason, metrics = await _evaluate_one(
+                connection, spec, config, budget, active_agent=active_agent, executor=executor,
+            )
+        if asyncio.get_running_loop().time() >= deadline.when():
+            status, reason, metrics = "failed", "evaluation_timeout", {}
+        if not budget.settle(status, reason, metrics, evaluation_lease=lease):
+            status, reason = "error", "lease_expired"
+    except asyncio.CancelledError:
+        if connection.in_transaction:
+            connection.rollback()
+        if budget is not None:
+            budget.settle("error", "evaluation_cancelled")
+        raise
+    except Exception as error:
+        if connection.in_transaction:
+            connection.rollback()
+        if budget is None:
+            return ABEvaluationResult(status="error", reason="evaluation_admission_error")
+        if deadline.expired() or (isinstance(error, EvaluationBudgetError)
+                                  and str(error) == "evaluation_execution_expired"):
+            status, reason = "failed", "evaluation_timeout"
+        elif isinstance(error, EvaluationBudgetError):
+            status, reason = "budget_exhausted", str(error)
+        else:
+            recoverable = (isinstance(error, (ConnectionError, TimeoutError))
+                           or isinstance(error, EvaluationExecutionError) and error.retryable)
+            attempts = lease.attempt if lease is not None else connection.execute(
+                "SELECT count(*) FROM ab_evaluations WHERE workspace=? AND candidate_hash=? AND protocol_version=?",
+                (root, spec.candidate_hash, PROTOCOL_VERSION),
+            ).fetchone()[0]
+            retry = recoverable and attempts < config.evaluation_max_attempts and budget.can_retry()
+            status, reason = ("error", "evaluation_error_retryable") if retry else ("failed", "evaluation_error")
+        if not budget.settle(
+            status, reason, {"error": type(error).__name__}, evaluation_lease=lease,
+        ):
+            status, reason, retry = "error", "lease_expired", False
+    if lease is not None and status != "passed":
+        if reason == "evaluation_timeout":
+            fail_timed_out_evaluation(connection, lease)
+        else:
             finish_evaluation(
-                connection, lease, status="queued" if status in {"uncertain", "budget_exhausted"} else "failed",
+                connection, lease,
+                status="queued" if retry or status in {"uncertain", "budget_exhausted"} else "failed",
                 reason=reason, last_error=reason, max_attempts=config.evaluation_max_attempts,
             )
-        exhausted = exhausted or status == "budget_exhausted"
     return ABEvaluationResult(
-        tuple(approved), "budget_exhausted" if exhausted else "completed",
-        "ab_evaluation_daily_budget_exhausted" if exhausted else None,
-        evaluated, calls, tuple(proposal_leases),
+        (spec,) if status == "passed" else (),
+        "budget_exhausted" if status == "budget_exhausted" else "error" if status == "error" else "completed",
+        reason, int(status in {"passed", "failed"}), budget.used_calls(),
+        (lease,) if status == "passed" and lease is not None else (),
     )
 
 

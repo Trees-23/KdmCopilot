@@ -11,6 +11,7 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from nanobot.memory.continuous import Phase6RuntimeConfig
+from nanobot.memory.queue_state import EvaluationLease, evaluation_lease_is_current
 from nanobot.providers.observed_call import ProviderCallAdmissionError
 
 PROTOCOL_VERSION = "two-round-v1"
@@ -259,7 +260,21 @@ class EvaluationBudget:
             "SELECT model_calls_used FROM ab_evaluations WHERE evaluation_id=?", (self.evaluation_id,),
         ).fetchone()[0])
 
-    def settle(self, status: str, reason: str, metrics: dict[str, Any] | None = None) -> bool:
+    def can_retry(self, required_calls: int = MINIMUM_COMPLETE_RUN_CALLS) -> bool:
+        """Test the budget after returning only this live attempt's known-unused reservation."""
+        now = _now()
+        _candidates, calls = _usage(self.connection, self.workspace, now)
+        own_unused = self.connection.execute(
+            "SELECT coalesce(sum(reserved_calls),0) FROM evaluation_model_call_reservations "
+            "WHERE evaluation_id=? AND budget_day=? AND status='active'",
+            (self.evaluation_id, _day(now)),
+        ).fetchone()[0]
+        return calls - own_unused + required_calls <= self.config.ab_evaluation_max_model_calls_per_day
+
+    def settle(
+        self, status: str, reason: str, metrics: dict[str, Any] | None = None,
+        *, evaluation_lease: EvaluationLease | None = None,
+    ) -> bool:
         connection = self.connection
         connection.execute("BEGIN IMMEDIATE")
         try:
@@ -270,6 +285,9 @@ class EvaluationBudget:
             if not row or row[0] != "running":
                 connection.rollback()
                 return False
+            if (evaluation_lease is not None and not evaluation_lease_is_current(
+                    connection, evaluation_lease, allow_expired=reason == "evaluation_timeout")):
+                status, reason = "error", "lease_expired"
             if status in {"passed", "failed"} and reason != "evaluation_timeout" and row[1] <= _stamp(_now()):
                 status, reason = "error", "lease_expired"
             connection.execute(

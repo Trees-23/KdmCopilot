@@ -13,6 +13,10 @@ QUEUE_STATES = frozenset({
 MAX_ATTEMPTS = 3
 
 
+class StaleEvaluationLeaseError(RuntimeError):
+    """The evaluation no longer owns the candidate it is attempting to publish."""
+
+
 def _timestamp(now: datetime | None = None) -> str:
     return (now or datetime.now(UTC)).astimezone(UTC).isoformat(timespec="microseconds")
 
@@ -182,4 +186,52 @@ def reuse_final_evaluation(
         (status, row[1], None if row[0] == "passed" else row[1], _timestamp(), candidate_id, row[3], row[4]),
     )
     connection.commit()
+    return cursor.rowcount == 1
+
+
+def fail_timed_out_evaluation(connection: sqlite3.Connection, lease: EvaluationLease) -> bool:
+    """Finish a timed-out owner even at its deadline, without touching any replacement owner."""
+    cursor = connection.execute(
+        "UPDATE evolution_candidate_staging SET status='failed',reason='evaluation_timeout',"
+        "last_error='evaluation_timeout',lease_owner=NULL,lease_expires_at=NULL,updated_at=? "
+        "WHERE candidate_id=? AND workspace=? AND status='evaluating' AND lease_owner=? "
+        "AND attempt_count=? AND lease_expires_at=?",
+        (_timestamp(), lease.candidate_id, lease.workspace, lease.owner, lease.attempt, lease.expires_at),
+    )
+    connection.commit()
+    return cursor.rowcount == 1
+
+
+def evaluation_lease_is_current(
+    connection: sqlite3.Connection, lease: EvaluationLease, *, allow_expired: bool = False,
+) -> bool:
+    """Read-only early guard; publication still consumes ownership in the INSERT transaction."""
+    return connection.execute(
+        "SELECT 1 FROM evolution_candidate_staging WHERE candidate_id=? AND workspace=? "
+        "AND status='evaluating' AND lease_owner=? AND attempt_count=? "
+        "AND lease_expires_at=? AND (? OR lease_expires_at>?)",
+        (lease.candidate_id, lease.workspace, lease.owner, lease.attempt, lease.expires_at, allow_expired, _timestamp()),
+    ).fetchone() is not None
+
+
+def consume_proposal_lease(
+    connection: sqlite3.Connection,
+    lease: EvaluationLease,
+    *,
+    workspace: str,
+    candidate_hash: str,
+    candidate_revision_id: str,
+) -> bool:
+    """Consume the lease inside the caller's Proposal INSERT transaction; never commit here."""
+    if not connection.in_transaction or workspace != lease.workspace:
+        return False
+    now = _timestamp()
+    cursor = connection.execute(
+        "UPDATE evolution_candidate_staging SET status='proposal_eligible',reason='Proposal 门禁通过',"
+        "last_error=NULL,lease_owner=NULL,lease_expires_at=NULL,updated_at=? "
+        "WHERE candidate_id=? AND workspace=? AND status='evaluating' AND lease_owner=? AND attempt_count=? "
+        "AND lease_expires_at=? AND lease_expires_at>? AND candidate_hash=? AND candidate_revision_id=?",
+        (now, lease.candidate_id, workspace, lease.owner, lease.attempt, lease.expires_at, now,
+         candidate_hash, candidate_revision_id),
+    )
     return cursor.rowcount == 1

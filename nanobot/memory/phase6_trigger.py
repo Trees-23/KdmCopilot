@@ -423,6 +423,7 @@ async def run_phase6_review_scan_async(
                 runtime,
                 trace_records=semantic_records,
                 candidate_specs=specs,
+                evaluation_leases=ab_result.proposal_leases,
                 failed_traces=(),
                 overlay_pipeline=overlay_pipeline,
             )
@@ -433,9 +434,7 @@ async def run_phase6_review_scan_async(
                     "AND candidate_hash=? AND status NOT IN ('failed','rejected_by_admin','expired','rolled_back')",
                     (str(root), spec.candidate_revision_id, spec.candidate_hash),
                 ).fetchone()
-                if proposal is not None:
-                    finish_evaluation(connection, lease, status="proposal_eligible", reason="Proposal 门禁通过")
-                else:
+                if proposal is None:
                     finish_evaluation(connection, lease, status="failed", reason="质量或 Proposal 门禁未通过",
                                       last_error="quality_gate_failed")
         evolution = getattr(config, "evolution", config)
@@ -464,6 +463,7 @@ async def run_phase6_review_scan_async(
                     repair_cycle = run_fixture_review_cycle(
                         connection, root, runtime, trace_records=repair_records,
                         candidate_specs=repair_ab.approved_specs, failed_traces=(),
+                        evaluation_leases=repair_ab.proposal_leases,
                         overlay_pipeline=overlay_pipeline,
                     )
                     repair_proposal_ids = tuple(repair_cycle.proposal_ids)

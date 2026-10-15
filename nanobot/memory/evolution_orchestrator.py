@@ -37,6 +37,11 @@ from nanobot.memory.evaluation import (
     replay_cases,
 )
 from nanobot.memory.lock import acquire_lock, release_lock
+from nanobot.memory.queue_state import (
+    EvaluationLease,
+    StaleEvaluationLeaseError,
+    evaluation_lease_is_current,
+)
 
 ReplayFixture = Callable[[EvalCase, Path], ReplayEvidence]
 
@@ -98,6 +103,7 @@ def run_fixture_review_cycle(
     actor: str = "phase6-orchestrator",
     owner: str | None = None,
     overlay_pipeline: Any | None = None,
+    evaluation_leases: Sequence[EvaluationLease] = (),
 ) -> EvolutionCycleResult:
     """Run one bounded review cycle under a workspace lease.
 
@@ -145,6 +151,11 @@ def run_fixture_review_cycle(
         deduped: list[str] = []
         for spec in candidate_specs:
             if spec.task_key not in selected_keys:
+                continue
+            evaluation_lease = next((item for item in evaluation_leases
+                                     if item.candidate_id == spec.origin_candidate_id), None)
+            if evaluation_lease is not None and not evaluation_lease_is_current(connection, evaluation_lease):
+                rejected.append(spec.task_key)
                 continue
             # A daily Cron can observe the same repeated Trace group again.
             # Reuse the existing Proposal instead of attempting a duplicate
@@ -216,6 +227,7 @@ def run_fixture_review_cycle(
                     candidate_revision_id=spec.candidate_revision_id,
                     skill_id=spec.skill_id,
                     gate_snapshot={"holdout_passed": gate.holdout_passed, "security_clean": gate.security_clean},
+                    evaluation_lease=evaluation_lease,
                 )
                 proposal_ids.append(proposal.proposal_id)
                 if (
@@ -261,6 +273,8 @@ def run_fixture_review_cycle(
                 if proposal.target == "git_pr_proposal" and overlay_pipeline is not None:
                     handoff = overlay_pipeline.handoff(connection, proposal.proposal_id, config)
                     overlay_handoffs.append(handoff.status)
+            except StaleEvaluationLeaseError:
+                rejected.append(spec.task_key)
             except Exception as exc:
                 if "UNIQUE constraint failed" in str(exc):
                     deduped.append(spec.task_key)

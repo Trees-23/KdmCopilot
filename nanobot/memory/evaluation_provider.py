@@ -5,7 +5,16 @@ from __future__ import annotations
 from typing import Any
 
 from nanobot.memory.evaluation_budget import EvaluationBudget
+from nanobot.providers.base import LLMProvider
 from nanobot.providers.observed_call import ProviderCallAdmissionError, notify_observer
+
+
+class EvaluationExecutionError(RuntimeError):
+    """A Provider execution failure, distinct from a scored candidate rejection."""
+
+    def __init__(self, *, retryable: bool) -> None:
+        super().__init__("evaluation_provider_error")
+        self.retryable = retryable
 
 
 class _BudgetObserver:
@@ -39,6 +48,7 @@ class EvaluationProvider:
         self._provider = provider
         self._budget = budget
         self.rejected_error: ProviderCallAdmissionError | None = None
+        self.execution_error: EvaluationExecutionError | None = None
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._provider, name)
@@ -56,6 +66,9 @@ class EvaluationProvider:
         if observer.rejected is not None:
             self.rejected_error = observer.rejected
             raise observer.rejected
+        if response.finish_reason == "error":
+            self.execution_error = EvaluationExecutionError(retryable=LLMProvider._is_transient_response(response))
+            raise self.execution_error
         return response
 
     async def chat_with_retry(self, **kwargs: Any) -> Any:

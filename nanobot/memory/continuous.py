@@ -19,6 +19,7 @@ from typing import Any, Iterable, Mapping, Sequence
 from uuid import uuid4
 
 from nanobot.memory.derivation import CaseCandidate, classify_outcome, derive_case_candidate
+from nanobot.memory.queue_state import EvaluationLease
 
 PHASE6_DIR = ".nanobot/phase6"
 EVIDENCE_FILE = "evidence.jsonl"
@@ -674,6 +675,7 @@ def persist_proposal(
     candidate_revision_id: str | None = None,
     skill_id: str | None = None,
     gate_snapshot: Mapping[str, Any] | None = None,
+    evaluation_lease: EvaluationLease | None = None,
 ) -> Phase6Proposal:
     """Persist a generated Proposal without changing any current Skill pointer."""
 
@@ -694,6 +696,7 @@ def persist_proposal(
         case_ids=proposal.case_ids,
         eval_run_ids=proposal.eval_run_ids,
         gate_snapshot=gate_snapshot,
+        evaluation_lease=evaluation_lease,
         status="eligible_for_confirmation",
     )
     return proposal

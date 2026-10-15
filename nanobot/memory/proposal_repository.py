@@ -17,6 +17,12 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Mapping, Sequence
 from uuid import uuid4
 
+from nanobot.memory.queue_state import (
+    EvaluationLease,
+    StaleEvaluationLeaseError,
+    consume_proposal_lease,
+)
+
 PROPOSAL_STATUSES = frozenset({
     "draft", "evaluating", "rejected_by_gate", "insufficient_evidence", "stale",
     "eligible_for_confirmation", "notified", "approved", "adopting", "adopted",
@@ -133,6 +139,7 @@ class ProposalRepository:
         proposal_id: str | None = None,
         display_id: str | None = None,
         now: datetime | None = None,
+        evaluation_lease: EvaluationLease | None = None,
     ) -> ProposalRecord:
         if source_kind not in {"workspace", "builtin", "shared", "entrypoint", "mcp"}:
             raise ValueError("unsupported Proposal source kind")
@@ -147,6 +154,16 @@ class ProposalRepository:
         timestamp = _iso(now)
         self.connection.execute("BEGIN IMMEDIATE")
         try:
+            queued = self.connection.execute(
+                "SELECT 1 FROM evolution_candidate_staging WHERE workspace=? "
+                "AND (candidate_hash=? OR candidate_revision_id=?)", (workspace, candidate_hash, candidate_revision_id),
+            ).fetchone()
+            if queued is not None or evaluation_lease is not None:
+                if evaluation_lease is None or not consume_proposal_lease(
+                    self.connection, evaluation_lease, workspace=workspace,
+                    candidate_hash=candidate_hash, candidate_revision_id=candidate_revision_id,
+                ):
+                    raise StaleEvaluationLeaseError("evaluation_lease_required_or_stale")
             self.connection.execute(
                 "INSERT INTO skill_proposals(proposal_id,workspace,skill_id,skill_name,source_kind,target,"
                 "baseline_revision_id,candidate_revision_id,baseline_hash,candidate_hash,version_epoch,display_id,"
