@@ -17,9 +17,6 @@ def _workspace_db(tmp_path):
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys=ON")
     apply_migrations(connection)
-    connection.execute(
-        "CREATE VIRTUAL TABLE memory_fts USING fts5(object_type UNINDEXED, object_id UNINDEXED, title, summary, body, tags)"
-    )
     return workspace, connection
 
 

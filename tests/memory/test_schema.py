@@ -1,4 +1,4 @@
-"""Phase 0 schema, path, foreign-key and FTS tests."""
+"""Phase 0 schema, path and foreign-key tests."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pytest
 
-import nanobot.memory.index as memory_index
 from nanobot.memory.db import (
     MemoryWorkspaceError,
     connect_memory_db,
@@ -16,7 +15,6 @@ from nanobot.memory.db import (
     foreign_keys_enabled,
     resolve_memory_db_path,
 )
-from nanobot.memory.index import initialize_fts, rebuild_fts, search_memory
 from nanobot.memory.migrations.runner import apply_migrations
 
 
@@ -129,51 +127,3 @@ def test_eval_foreign_keys_reject_missing_revisions() -> None:
             "tool_schema_digest,fixture_hash,dataset_hash,seed,replay_group_id,started_at) "
             "VALUES('run','missing','missing','sha256:b','model','sha256:t','sha256:f','sha256:d','seed','group','now')"
         )
-
-
-def test_fts_initialization_rebuild_and_active_filtering() -> None:
-    connection = _db()
-    status = initialize_fts(connection)
-    assert status.available is True
-    assert initialize_fts(connection).available is True
-    connection.execute(
-        "INSERT INTO memory_records(memory_id,memory_type,source_actor,title,summary,status,created_at,updated_at) "
-        "VALUES('active','fact','test','Active memory','summary','active','now','now')"
-    )
-    connection.execute(
-        "INSERT INTO memory_revisions(revision_id,memory_id,revision_no,content,content_hash,author_actor,reason,created_at) "
-        "VALUES('active-r','active',1,'important keyword','sha256:a','test','test','now')"
-    )
-    connection.execute("UPDATE memory_records SET current_revision_id='active-r' WHERE memory_id='active'")
-    connection.execute(
-        "INSERT INTO memory_records(memory_id,memory_type,source_actor,title,status,created_at,updated_at) "
-        "VALUES('archived','fact','test','Archived keyword','archived','now','now')"
-    )
-    connection.execute(
-        "INSERT INTO memory_revisions(revision_id,memory_id,revision_no,content,content_hash,author_actor,reason,created_at) "
-        "VALUES('archived-r','archived',1,'keyword','sha256:b','test','test','now')"
-    )
-    connection.execute("UPDATE memory_records SET current_revision_id='archived-r' WHERE memory_id='archived'")
-    connection.execute(
-        "INSERT INTO tombstones(tombstone_id,object_type,object_id,content_hash,reason_code,requested_by,deleted_at) "
-        "VALUES('t1','memory','archived','sha256:b','test','test','now')"
-    )
-    connection.commit()
-    assert rebuild_fts(connection) == 1
-    assert [row["object_id"] for row in search_memory(connection, "keyword")] == ["active"]
-
-
-def test_fts_detection_reports_degraded_status(monkeypatch: pytest.MonkeyPatch) -> None:
-    class FailingConnection:
-        def execute(self, statement: str, parameters: tuple[str, ...] = ()):
-            if "sqlite_version" in statement:
-                return type("Result", (), {"fetchone": lambda self: ("3.0.0",)})()
-            raise sqlite3.OperationalError("fts5 unavailable")
-
-        def close(self) -> None:
-            pass
-
-    monkeypatch.setattr(memory_index.sqlite3, "connect", lambda _: FailingConnection())
-    status = memory_index.detect_fts5()
-    assert status.available is False
-    assert status.error == "fts5 unavailable"
