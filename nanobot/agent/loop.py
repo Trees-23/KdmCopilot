@@ -68,7 +68,6 @@ from nanobot.command import CommandContext, CommandRouter, register_builtin_comm
 from nanobot.config.schema import AgentDefaults, ModelPresetConfig
 from nanobot.cron.session_turns import is_cron_turn
 from nanobot.memory.evolution_commands import EvolutionCommandService
-from nanobot.memory.maintenance import open_maintenance_db, upsert_activity
 from nanobot.memory.policy import ToolPolicy
 from nanobot.providers.base import LLMProvider
 from nanobot.providers.factory import ProviderSnapshot
@@ -1996,18 +1995,6 @@ class AgentLoop:
         if ctx.session is None:
             ctx.session = self.sessions.get_or_create(ctx.session_key)
         if ctx.kind is TurnKind.USER:
-            try:
-                scope = self.workspace_scopes.for_message(msg, ctx.session.metadata)
-                connection = open_maintenance_db(scope.project_path or self.workspace)
-                upsert_activity(
-                    connection,
-                    workspace=str((scope.project_path or self.workspace).resolve()),
-                    session_key=ctx.session_key,
-                    message_cursor=str(msg.metadata.get("message_id") or ctx.turn_id),
-                )
-                connection.close()
-            except Exception:
-                logger.warning("Failed to upsert maintenance activity", exc_info=True)
             if (
                 msg.sender_id != "subagent"
                 and not turn_continuation.internal_continuation_inbound(msg.metadata)
