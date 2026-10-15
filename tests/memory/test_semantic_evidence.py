@@ -155,3 +155,13 @@ def test_agent_loop_records_tool_failure_even_when_turn_completes(tmp_path) -> N
     ).fetchone()
     assert tuple(row) == ("failed", '["read_file"]', None)
     connection.close()
+
+
+def test_negative_constraints_do_not_change_business_intent():
+    first, _ = project_user_task("请查看不存在文档的标题；不创建或修复文件，不替换目标", ("read_file",))
+    correction, _ = project_user_task("请重新查看正确路径文档的标题；不写入文件或配置", ("read_file",))
+    assert first.intent == correction.intent == "查询信息"
+    write, _ = project_user_task("请新建一个工作区文档。不要删除现有文件", ("write_file",))
+    assert write.intent == "变更实现"
+    diagnose, _ = project_user_task("请排查目录读取失败的原因；不要修改配置", ("read_file",))
+    assert diagnose.intent == "排查问题"

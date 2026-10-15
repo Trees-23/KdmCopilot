@@ -27,7 +27,11 @@ _FRAMEWORK_RE = re.compile(
 )
 _QUERY_RE = re.compile(r"(?:看看|查看|查询|列出|检索|搜索|有哪些|状态|清单|目录|skill)", re.I)
 _DIAGNOSE_RE = re.compile(r"(?:排查|诊断|报错|错误|异常|修复|为什么|原因)", re.I)
-_EDIT_RE = re.compile(r"(?:修改|更新|编写|实现|添加|删除|重构|调整)", re.I)
+_EDIT_RE = re.compile(r"(?:修改|更新|编写|实现|添加|删除|重构|调整|创建|新建|写入)", re.I)
+_NEGATED_OPERATION_RE = re.compile(
+    r"^\s*(?:不要|不得|禁止|勿|不允许|不)(?:再)?"
+    r"(?:执行|创建|新建|修复|修改|更新|编写|实现|添加|删除|重构|调整|写入|发送|读取|查看|查询|搜索|排查|诊断|整理|总结)"
+)
 _ORGANIZE_RE = re.compile(r"(?:整理|总结|归纳|分类|对比|分析)", re.I)
 
 
@@ -62,6 +66,9 @@ def _compact(text: str, limit: int = 360) -> str:
 
 
 def _intent(text: str) -> tuple[str, str]:
+    # Safety constraints such as "不创建或修复文件" are not the business objective.
+    text = "。".join(part for part in re.split(r"[，,。；;\n]", text)
+                    if not _NEGATED_OPERATION_RE.match(part))
     if _DIAGNOSE_RE.search(text):
         return "排查问题", "定位原因并给出可核对的处理建议"
     if _EDIT_RE.search(text):

@@ -83,12 +83,12 @@ async def test_complete_failure_then_correction_refreshes_original_l1(tmp_path):
     loop=_loop(tmp_path,[_tool("read_file",{"path":"missing.md"}),LLMResponse(content="文件不存在",usage={}),
                          _tool("read_file",{"path":"correct.md"}),LLMResponse(content="标题为 Correct",usage={})])
     try:
-        first=await _send(loop,"请查看 missing.md 的标题")
+        first=await _send(loop,"请查看 missing.md 的标题；不创建或修复文件，不替换目标")
         assert first.content=="文件不存在"
         connection=open_maintenance_db(tmp_path)
         old=connection.execute("SELECT * FROM memory_assets").fetchone()
         assert old["outcome"]=="failure"
-        second=await _send(loop,"请重新查看正确路径 correct.md 的标题")
+        second=await _send(loop,"请重新查看正确路径 correct.md 的标题；不写入文件或配置")
         assert second.content=="标题为 Correct"
         updated=connection.execute("SELECT * FROM memory_assets WHERE asset_id=?",(old["asset_id"],)).fetchone()
         assert updated["outcome"]=="recovered" and len(json.loads(updated["source_trace_ids"]))==2
