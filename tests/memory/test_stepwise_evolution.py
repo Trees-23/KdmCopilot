@@ -289,5 +289,5 @@ def test_enforced_mixed_failure_still_enters_recovery_evidence(tmp_path) -> None
     assert connection.execute(
         "SELECT qualification FROM evolution_task_evidence WHERE task_id=?",
         ("evolution-task:trace-enforced-failure",),
-    ).fetchone()[0] == "partial_evidence"
+    ).fetchone()[0] == "manual_review_required"
     connection.close()

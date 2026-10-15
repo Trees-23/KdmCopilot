@@ -11,6 +11,7 @@ from nanobot.memory.schema import (
     AB_QUALITY_EVALUATIONS_MIGRATION_PATH,
     ALERT_DELIVERY_MIGRATION_PATH,
     APP_BUILD,
+    ASSET_STEP_FACTS_MIGRATION_PATH,
     BASE_REQUIRED_TABLES,
     CANDIDATE_ADOPTION_STATES_MIGRATION_PATH,
     CANDIDATE_STAGING_TABLES,
@@ -24,6 +25,7 @@ from nanobot.memory.schema import (
     FAILURE_ISSUE_GROUP_BINDING_MIGRATION_PATH,
     FAILURE_ISSUES_MIGRATION_PATH,
     JUDGE_FEEDBACK_MIGRATION_PATH,
+    MEMORY_ASSETS_MIGRATION_PATH,
     MIGRATION_ID,
     MIGRATION_VERSION,
     PROPOSAL_REVIEW_MIGRATION_PATH,
@@ -220,6 +222,8 @@ def apply_migrations(
                   required_tables: set[str] | frozenset[str], before_apply=None) -> None:
         if version < 28:
             required_tables = required_tables - EVALUATION_BUDGET_TABLES
+        if version < 20:
+            required_tables = required_tables - {"memory_assets"}
         expected_hash = schema_hash(migration_text)
         current = connection.execute(
             "SELECT migration_id,schema_hash,status FROM schema_meta WHERE version=?", (version,)
@@ -317,6 +321,7 @@ def apply_migrations(
         FAILURE_CANDIDATE_HASH_RETRY_MIGRATION_PATH.read_text(encoding="utf-8"),
         REQUIRED_TABLES,
     )
+    apply_one(20, "0020_memory_assets", MEMORY_ASSETS_MIGRATION_PATH.read_text(encoding="utf-8"), REQUIRED_TABLES - EVALUATION_BUDGET_TABLES)
     apply_one(
         21,
         "0021_evolution_queue_leases",
@@ -331,11 +336,12 @@ def apply_migrations(
         REQUIRED_TABLES,
     )
     apply_one(
-        MIGRATION_VERSION,
-        MIGRATION_ID,
+        28,
+        "0028_evaluation_budget_rounds",
         EVALUATION_BUDGET_MIGRATION_PATH.read_text(encoding="utf-8"),
         REQUIRED_TABLES,
     )
+    apply_one(MIGRATION_VERSION, MIGRATION_ID, ASSET_STEP_FACTS_MIGRATION_PATH.read_text(encoding="utf-8"), REQUIRED_TABLES)
     verify_schema(connection, schema_hash(latest_migration_sql()))
 
 

@@ -33,6 +33,7 @@ from nanobot.audit.context import AuditRunContext
 from nanobot.audit.diagnostics import tool_operation_evidence
 from nanobot.audit.hook import RunnerAuditHook
 from nanobot.audit.ids import new_audit_id
+from nanobot.memory.asset_taxonomy import resource_class
 from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
 from nanobot.session.history_visibility import is_hidden_history_message
 from nanobot.utils.helpers import (
@@ -1466,11 +1467,12 @@ class AgentRunner:
                 "operation_kind": operation.operation_kind,
                 "safe_input_summary": operation.summary,
                 "resource_key": operation.resource_key,
+                "resource_class": resource_class(tool_call.name, operation_tool, operation_params),
                 "verification_kind": operation.verification_kind,
-                "error_code": outcome.error_code,
-                "error_type": outcome.error_type or outcome.error_kind,
-                "error_source": getattr(payload, "error_source", None),
-                "retryability": getattr(payload, "retryability", None),
+                "error_code": outcome.failure.error_code if outcome.failure else outcome.error_code,
+                "error_type": outcome.failure.error_type if outcome.failure else outcome.error_type or outcome.error_kind,
+                "error_source": outcome.failure.source if outcome.failure else None,
+                "retryability": outcome.failure.retryability if outcome.failure else None,
                 "status": status,
                 "detail": event.get("detail"),
             }

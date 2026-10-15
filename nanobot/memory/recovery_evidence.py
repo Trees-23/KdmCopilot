@@ -18,7 +18,6 @@ from uuid import uuid4
 
 from nanobot.memory.semantic_evidence import SemanticProjection, project_user_task
 
-_RECOVERY_SAFE_TOOLS = frozenset({"read_file", "list_dir", "skill_catalog_search", "skill_read"})
 _CLASSIFICATION_VERSION = "m17-v1"
 _FILENAME_RE = re.compile(r"(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.[A-Za-z0-9]+")
 _DATE_RE = re.compile(r"\b(?:20\d{2}[-/]\d{1,2}[-/]\d{1,2}|20\d{6}|m\d+)\b", re.I)
@@ -53,6 +52,16 @@ def _tools(tools: Iterable[str]) -> tuple[str, ...]:
 
 def _operation_family(tools: Iterable[str]) -> str:
     names = set(_tools(tools))
+    if names & {"exec", "write_stdin", "run_cli_app"}:
+        return "process_execute"
+    if names & {"write_file", "edit_file", "apply_patch"}:
+        return "file_write"
+    if "message" in names:
+        return "external_message"
+    if "cron" in names:
+        return "schedule_change"
+    if names & {"web_fetch", "web_search"}:
+        return "external_read"
     if "read_file" in names:
         return "skill_read" if "skill_read" in names else "file_read"
     if "list_dir" in names:
@@ -95,6 +104,12 @@ def _failure_family(
 def _task_family(text: str, tools: Iterable[str]) -> str:
     value = str(text or "").casefold()
     operation = _operation_family(tools)
+    if operation == "process_execute":
+        return "process_execution"
+    if operation == "file_write":
+        return "workspace_file_change"
+    if operation in {"external_message", "schedule_change", "external_read"}:
+        return operation
     if operation == "skill_search" or "skill" in value and any(token in value for token in ("找", "查", "搜", "目录")):
         return "skill_discovery"
     if operation == "skill_read" or "skill" in value and any(token in value for token in ("读取", "查看", "内容")):
@@ -133,7 +148,7 @@ def _projection(text: str, tools: Iterable[str]) -> tuple[SemanticProjection | N
     """Reuse M12's redaction boundary; no raw user text reaches this module."""
 
     verified = _tools(tools)
-    if not verified or any(tool not in _RECOVERY_SAFE_TOOLS for tool in verified):
+    if not verified:
         return None, "unsafe_or_unverified_recovery_operation"
     return project_user_task(text, verified)
 
@@ -187,7 +202,8 @@ def record_failed_episode(
                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'safe',?,?,?,?)
                ON CONFLICT(failure_trace_id) DO UPDATE SET
                  failure_goal=excluded.failure_goal,failure_intent=excluded.failure_intent,
-                 failure_tools_json=excluded.failure_tools_json,status=excluded.status,
+                 failure_tools_json=excluded.failure_tools_json,
+                 status=CASE WHEN recovery_episodes.status='recovered' THEN 'recovered' ELSE excluded.status END,
                  operation_family=excluded.operation_family,failure_family=excluded.failure_family,
                  task_family=excluded.task_family,classification_version=excluded.classification_version,
                  failure_error_code=excluded.failure_error_code,failure_error_type=excluded.failure_error_type,

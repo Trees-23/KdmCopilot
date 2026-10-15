@@ -2267,7 +2267,7 @@ class AgentLoop:
         return "ok"
 
     def _capture_semantic_evolution_evidence(self, ctx: TurnContext) -> None:
-        """Persist a bounded semantic projection after a successful user turn.
+        """Persist a bounded semantic projection after a user turn.
 
         This is deliberately best-effort telemetry: failure to write an
         evolution candidate must never change a normal user response.  The
@@ -2275,7 +2275,8 @@ class AgentLoop:
         framework/internal turns and unverified no-tool tasks.
         """
 
-        if not bool(getattr(self.phase6_config, "enabled", False)):
+        evolution = getattr(self.phase6_config, "evolution", self.phase6_config)
+        if not bool(getattr(self.phase6_config, "enabled", False)) and not bool(getattr(evolution, "asset_layer_enabled", False)):
             return
         if (
             ctx.kind is not TurnKind.USER
@@ -2293,137 +2294,13 @@ class AgentLoop:
         try:
             from nanobot.memory.db import connect_memory_db
             from nanobot.memory.migrations.runner import apply_migrations
-            from nanobot.memory.recovery_evidence import (
-                link_successful_correction,
-                record_failed_episode,
-            )
-            from nanobot.memory.semantic_evidence import persist_turn_semantic_evidence
-            evolution = getattr(self.phase6_config, "evolution", self.phase6_config)
-            stepwise_enabled = bool(getattr(evolution, "stepwise_evidence_enabled", False))
-            stepwise_mode = str(getattr(evolution, "stepwise_evidence_mode", "shadow"))
-            mixed_risk_policy = str(getattr(evolution, "mixed_risk_policy", "manual"))
+            from nanobot.memory.turn_evidence import capture_turn_evidence
 
             resolved_workspace = str(Path(workspace).expanduser().resolve())
             connection = connect_memory_db(resolved_workspace)
             apply_migrations(connection)
-            if stepwise_enabled and stepwise_mode != "disabled":
-                from nanobot.memory.stepwise_evidence import (
-                    build_task_evidence,
-                    persist_task_evidence,
-                )
-
-                legacy_tools = tuple(str(item) for item in (ctx.tools_used or ()) if str(item))
-                step_events = tuple(getattr(ctx, "tool_evidence", ()) or getattr(ctx, "tool_events", ()))
-                legacy_eligible = (
-                    ctx.stop_reason not in {"error", "tool_error"}
-                    and bool(legacy_tools)
-                    and all(item in {"read_file", "list_dir", "find_files", "grep", "skill_catalog_search", "skill_read"} for item in legacy_tools)
-                )
-                task_evidence = build_task_evidence(
-                    workspace=resolved_workspace,
-                    session_key=ctx.session_key,
-                    trace_id=ctx.audit_turn.trace_id,
-                    turn_id=ctx.audit_turn.turn_id,
-                    user_text=ctx.original_user_text,
-                    events=step_events,
-                    actual_outcome=str(ctx.stop_reason or "unknown"),
-                    legacy_qualification="candidate_eligible" if legacy_eligible else "rejected_by_legacy_gate",
-                    mixed_risk_policy=mixed_risk_policy,
-                )
-                persist_task_evidence(connection, task_evidence)
-                # Enforced mode lets the new task qualification control the
-                # semantic candidate stream; shadow mode deliberately keeps
-                # the old whole-turn selector as a comparison baseline.
-                if stepwise_mode == "enforced" and task_evidence.qualification != "candidate_eligible":
-                    stepwise_events = tuple(step_events)
-                    has_failed_step = any(
-                        isinstance(event, dict)
-                        and event.get("status") in {"error", "blocked", "timeout"}
-                        for event in stepwise_events
-                    )
-                    # Recovery evidence still needs to see a failed tool even
-                    # when the overall turn returned a conversational answer.
-                    # Only a clean, non-eligible turn skips the legacy semantic
-                    # write entirely.
-                    if ctx.stop_reason not in {"error", "tool_error"} and not has_failed_step:
-                        return
-            if ctx.stop_reason in {"error", "tool_error"}:
-                failed_event = next(
-                    (
-                        event for event in reversed(
-                            getattr(ctx, "tool_evidence", ()) or getattr(ctx, "tool_events", ())
-                        )
-                        if isinstance(event, dict)
-                        and event.get("status") in {"error", "blocked", "timeout"}
-                    ),
-                    {},
-                )
-                record_failed_episode(
-                    connection,
-                    workspace=resolved_workspace,
-                    trace_id=ctx.audit_turn.trace_id,
-                    session_key=ctx.session_key,
-                    source_type=ctx.audit_run.source_type,
-                    stop_reason=ctx.stop_reason,
-                    user_text=ctx.original_user_text,
-                    tools=ctx.tools_used,
-                    failure_error_code=failed_event.get("error_code"),
-                    failure_error_type=failed_event.get("error_type"),
-                    failure_error_source=failed_event.get("error_source"),
-                    failure_retryability=failed_event.get("retryability"),
-                    failure_detail=failed_event.get("detail"),
-                )
-                return
-            failed_events = tuple(
-                event for event in (getattr(ctx, "tool_evidence", ()) or getattr(ctx, "tool_events", ()))
-                if isinstance(event, dict) and event.get("status") in {"error", "blocked", "timeout"}
-            )
-            failed_tool_names = tuple(
-                str(event.get("tool_name") or event.get("name"))
-                for event in failed_events
-                if str(event.get("tool_name") or event.get("name") or "").strip()
-            )
-            if failed_tool_names:
-                # A tool can fail while the Agent still completes the turn. Keep
-                # that failure as recovery evidence so a later correction can be
-                # linked to it; successful tools remain useful context but are
-                # not needed to prove the failed operation.
-                record_failed_episode(
-                    connection,
-                    workspace=resolved_workspace,
-                    trace_id=ctx.audit_turn.trace_id,
-                    session_key=ctx.session_key,
-                    source_type=ctx.audit_run.source_type,
-                    stop_reason="tool_error",
-                    user_text=ctx.original_user_text,
-                    tools=failed_tool_names,
-                    failure_error_code=next((event.get("error_code") for event in failed_events if event.get("error_code")), None),
-                    failure_error_type=next((event.get("error_type") for event in failed_events if event.get("error_type")), None),
-                    failure_error_source=next((event.get("error_source") for event in failed_events if event.get("error_source")), None),
-                    failure_retryability=next((event.get("retryability") for event in failed_events if event.get("retryability")), None),
-                    failure_detail=next((event.get("detail") for event in failed_events if event.get("detail")), None),
-                )
-                return
-            persist_turn_semantic_evidence(
-                connection,
-                workspace=resolved_workspace,
-                trace_id=ctx.audit_turn.trace_id,
-                turn_id=ctx.audit_turn.turn_id,
-                session_key=ctx.session_key,
-                source_type=ctx.audit_run.source_type,
-                outcome="success",
-                user_text=ctx.original_user_text,
-                tools=ctx.tools_used,
-            )
-            link_successful_correction(
-                connection,
-                workspace=resolved_workspace,
-                trace_id=ctx.audit_turn.trace_id,
-                session_key=ctx.session_key,
-                source_type=ctx.audit_run.source_type,
-                user_text=ctx.original_user_text,
-                tools=ctx.tools_used,
-            )
+            evolution = getattr(self.phase6_config, "evolution", self.phase6_config)
+            capture_turn_evidence(connection, resolved_workspace, ctx, evolution)
         except Exception:
             logger.warning("Failed to persist semantic Skill-evolution evidence", exc_info=True)
         finally:

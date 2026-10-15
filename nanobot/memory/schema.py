@@ -5,8 +5,8 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-MIGRATION_VERSION = 28
-MIGRATION_ID = "0028_evaluation_budget_rounds"
+MIGRATION_VERSION = 29
+MIGRATION_ID = "0029_asset_step_facts"
 APP_BUILD = "memory-phase1"
 
 MIGRATIONS_DIR = Path(__file__).with_name("migrations")
@@ -30,6 +30,9 @@ FAILURE_CANDIDATE_CONTENT_HASHES_MIGRATION_PATH = MIGRATIONS_DIR / "0017_failure
 FAILURE_CANDIDATE_EVALUATION_HASHES_MIGRATION_PATH = MIGRATIONS_DIR / "0018_failure_candidate_evaluation_hashes.sql"
 FAILURE_CANDIDATE_HASH_RETRY_MIGRATION_PATH = MIGRATIONS_DIR / "0019_failure_candidate_hash_retry.sql"
 
+MEMORY_ASSETS_MIGRATION_PATH = MIGRATIONS_DIR / "0020_memory_assets.sql"
+ASSET_STEP_FACTS_MIGRATION_PATH = MIGRATIONS_DIR / "0029_asset_step_facts.sql"
+
 QUEUE_LEASES_MIGRATION_PATH = MIGRATIONS_DIR / "0021_evolution_queue_leases.sql"
 JUDGE_FEEDBACK_MIGRATION_PATH = MIGRATIONS_DIR / "0022_judge_feedback.sql"
 EVALUATION_BUDGET_MIGRATION_PATH = MIGRATIONS_DIR / "0028_evaluation_budget_rounds.sql"
@@ -38,7 +41,7 @@ EVALUATION_BUDGET_MIGRATION_PATH = MIGRATIONS_DIR / "0028_evaluation_budget_roun
 def migration_sql() -> str:
     """Return the checked-in latest migration SQL."""
 
-    return EVALUATION_BUDGET_MIGRATION_PATH.read_text(encoding="utf-8")
+    return ASSET_STEP_FACTS_MIGRATION_PATH.read_text(encoding="utf-8")
 
 
 def latest_migration_sql() -> str:
@@ -75,6 +78,7 @@ def phase6_migration_sql() -> str:
 REQUIRED_TABLES = frozenset(
     {
         "schema_meta",
+        "memory_assets",
         "memory_records",
         "memory_revisions",
         "wiki_pages",
@@ -136,6 +140,8 @@ STEPWISE_EVOLUTION_TABLES = frozenset(
 CANDIDATE_STAGING_TABLES = frozenset({"evolution_candidate_staging"})
 
 REQUIRED_COLUMNS = {
+    "memory_assets": frozenset({"asset_id", "asset_level", "origin_table", "origin_id", "steps_json", "family_key", "expires_at"}),
+    "evolution_step_evidence": frozenset({"resource_class", "error_code", "error_type", "error_source", "retryability"}),
     "ab_case_results": frozenset({"judge_feedback", "sample_round"}),
     "ab_evaluations": frozenset({"protocol_version", "execution_deadline"}),
     "failure_issues": frozenset({"group_openid"}),

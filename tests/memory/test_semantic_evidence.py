@@ -80,6 +80,7 @@ def test_agent_loop_captures_only_successful_user_semantic_evidence(tmp_path) ->
         request_context=None,
         session_key="session-loop",
         tools_used=["skill_read"],
+        tool_evidence=[{"tool_name": "skill_read", "status": "ok"}],
     )
 
     loop._capture_semantic_evolution_evidence(context)

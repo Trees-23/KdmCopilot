@@ -77,7 +77,7 @@ def test_recovery_does_not_link_an_unrelated_or_unverified_turn(tmp_path) -> Non
         tools=("write_file",),
     )
     assert unsafe is not None
-    assert unsafe.status == "insufficient_recovery_evidence"
+    assert unsafe.status == "failed"
 
     failed = record_failed_episode(
         connection,

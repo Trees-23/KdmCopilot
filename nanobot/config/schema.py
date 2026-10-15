@@ -544,6 +544,8 @@ class Phase6EvolutionConfig(Base):
         ),
         serialization_alias="abEvaluationMaxModelCallsPerDay",
     )
+    asset_layer_enabled: bool = False
+    asset_retrieval_enabled: bool = False
     evaluation_lease_seconds: int = Field(default=900, ge=1)
     evaluation_timeout_seconds: int = Field(default=900, ge=1)
     evaluation_max_attempts: int = Field(default=3, ge=1, le=3)
@@ -587,6 +589,12 @@ class Phase6EvolutionConfig(Base):
         validation_alias=AliasChoices("caseCandidatePromotion", "case_candidate_promotion"),
         serialization_alias="caseCandidatePromotion",
     )
+
+    @model_validator(mode="after")
+    def validate_asset_dependencies(self):
+        if self.asset_retrieval_enabled and not self.asset_layer_enabled:
+            raise ValueError("asset retrieval requires asset layer")
+        return self
 
 
 class Phase6Config(Base):
