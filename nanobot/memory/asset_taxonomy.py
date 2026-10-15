@@ -53,26 +53,26 @@ def error_class(error_code: str | None) -> str | None:
 
 
 def resource_class(tool_name: str, tool: Any, params: Any) -> str:
-    """Classify while resolved resource facts are available; never inspect a digest or command."""
+    """Classify resolved facts without letting diagnostic failures change tool execution."""
     if not isinstance(params, dict):
         return "unknown"
-    if tool_name == "web_fetch":
-        parsed = urlparse(str(params.get("url") or ""))
-        return "external-url" if parsed.scheme in {"http", "https"} and parsed.hostname else "unknown"
-    if tool_name not in {"read_file", "list_dir", "find_files", "grep", "write_file", "edit_file"}:
-        return "unknown"
-    display_workspace = getattr(tool, "_display_workspace", None)
-    workspace = display_workspace() if callable(display_workspace) else getattr(tool, "_workspace", None)
-    if workspace is None:
-        return "unknown"
-    raw = params.get("path", "." if tool_name in {"list_dir", "find_files", "grep"} else None)
-    if not isinstance(raw, str) or not raw.strip():
-        return "unknown"
-    resolver = getattr(tool, "_resolve_write" if tool_name in {"write_file", "edit_file"} else "_resolve_read", None)
-    resolver = resolver or getattr(tool, "_resolve", None)
-    if not callable(resolver):
-        return "unknown"
     try:
+        if tool_name == "web_fetch":
+            parsed = urlparse(str(params.get("url") or ""))
+            return "external-url" if parsed.scheme in {"http", "https"} and parsed.hostname else "unknown"
+        if tool_name not in {"read_file", "list_dir", "find_files", "grep", "write_file", "edit_file"}:
+            return "unknown"
+        display_workspace = getattr(tool, "_display_workspace", None)
+        workspace = display_workspace() if callable(display_workspace) else getattr(tool, "_workspace", None)
+        if workspace is None:
+            return "unknown"
+        raw = params.get("path", "." if tool_name in {"list_dir", "find_files", "grep"} else None)
+        if not isinstance(raw, str) or not raw.strip():
+            return "unknown"
+        resolver = getattr(tool, "_resolve_write" if tool_name in {"write_file", "edit_file"} else "_resolve_read", None)
+        resolver = resolver or getattr(tool, "_resolve", None)
+        if not callable(resolver):
+            return "unknown"
         target = Path(resolver(raw)).resolve()
         target.relative_to(Path(workspace).resolve())
         if tool_name == "list_dir" or target.is_dir():

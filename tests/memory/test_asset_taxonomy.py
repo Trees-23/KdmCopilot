@@ -40,3 +40,11 @@ def test_classification_does_not_parse_shell_or_hashes():
     assert error_class("web_search_timeout") == "timeout"
     assert operation_family("write_file") == "controlled-change"
     assert operation_family("exec") == "process-execute"
+
+
+def test_malformed_url_and_unavailable_workspace_degrade_to_unknown():
+    assert resource_class("web_fetch",None,{"url":"https://["}) == "unknown"
+    class UnavailableWorkspace:
+        def _display_workspace(self):
+            raise RuntimeError("workspace unavailable")
+    assert resource_class("read_file",UnavailableWorkspace(),{"path":"README.md"}) == "unknown"
