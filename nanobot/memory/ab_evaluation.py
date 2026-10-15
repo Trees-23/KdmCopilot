@@ -86,6 +86,14 @@ def _today_usage(connection: Any, workspace: str, *, now: datetime | None = None
     return int(row[0] or 0), int(row[1] or 0)
 
 
+def evaluation_capacity(connection: Any, workspace: str, config: Phase6RuntimeConfig) -> int:
+    """Return the remaining daily admission capacity before any execution lease is taken."""
+    used_candidates, used_calls = _today_usage(connection, workspace)
+    available_candidates = max(0, config.ab_evaluation_max_candidates_per_day - used_candidates)
+    available_calls = max(0, config.ab_evaluation_max_model_calls_per_day - used_calls)
+    return min(available_candidates, available_calls // _CALLS_PER_CANDIDATE)
+
+
 def _cases(spec: CandidateSpec) -> tuple[tuple[str, str, str, int], ...]:
     """Create two real positives plus scope and safety counterexamples.
 
@@ -463,10 +471,7 @@ async def evaluate_candidate_specs(
     if not specs or config.ab_evaluation_mode == "disabled":
         return ABEvaluationResult(tuple(specs), "disabled" if specs else "completed")
     root = str(Path(workspace).expanduser().resolve())
-    used_candidates, used_calls = _today_usage(connection, root)
-    available_candidates = max(0, config.ab_evaluation_max_candidates_per_day - used_candidates)
-    available_calls = max(0, config.ab_evaluation_max_model_calls_per_day - used_calls)
-    permitted = min(available_candidates, available_calls // _CALLS_PER_CANDIDATE)
+    permitted = evaluation_capacity(connection, root, config)
     if permitted <= 0:
         return ABEvaluationResult((), "budget_exhausted", "ab_evaluation_daily_budget_exhausted")
     approved: list[CandidateSpec] = []

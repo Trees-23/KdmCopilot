@@ -157,7 +157,7 @@ def test_m19_new_and_existing_skill_candidates_are_isolated(tmp_path) -> None:
         connection, task=task, workspace=workspace, matched_skill_id="skill-existing",
         matched_skill_name="workspace-lookup", match_confidence=0.6,
     )
-    assert uncertain.status == "manual_review_required"
+    assert uncertain.status == "manual_review"
     assert list_staged_candidates(connection, workspace=workspace)
     connection.close()
 
@@ -246,6 +246,9 @@ def test_enforced_stepwise_scan_stages_before_existing_m15_gate(tmp_path) -> Non
     assert result.status == "completed"
     connection = _connection(workspace)
     assert connection.execute("SELECT count(*) FROM evolution_candidate_staging").fetchone()[0] == 1
+    assert tuple(connection.execute(
+        "SELECT status,attempt_count,lease_owner,lease_expires_at FROM evolution_candidate_staging",
+    ).fetchone()) == ("proposal_eligible", 1, None, None)
     assert connection.execute("SELECT count(*) FROM skill_proposals").fetchone()[0] == 1
     connection.close()
 

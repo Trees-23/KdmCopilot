@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from nanobot.cron.types import CronJob, CronPayload, CronSchedule
 from nanobot.memory.continuous import (
@@ -26,6 +27,7 @@ from nanobot.memory.db import connect_memory_db
 from nanobot.memory.derivation import digest
 from nanobot.memory.evolution_orchestrator import run_fixture_review_cycle
 from nanobot.memory.migrations.runner import apply_migrations
+from nanobot.memory.queue_state import claim_candidate, finish_evaluation, reap_stale_evaluations
 from nanobot.memory.trace_indexer import index_audit_root
 
 PHASE6_REVIEW_JOB_ID = "phase6-evolution-review"
@@ -245,6 +247,8 @@ async def run_phase6_review_scan_async(
     try:
         apply_migrations(connection)
         runtime = Phase6RuntimeConfig.from_config(config)
+        if runtime.enabled and not runtime.kill_switch:
+            reap_stale_evaluations(connection, workspace=str(root), max_attempts=runtime.evaluation_max_attempts)
         # The audit log is the source of truth for Trace data.  Refresh the
         # derived index before selecting candidates; otherwise the daily job
         # can run successfully while seeing an empty trace_index forever.
@@ -306,13 +310,9 @@ async def run_phase6_review_scan_async(
             return cycle
         result = cycle
         repair_proposal_ids: tuple[str, ...] = ()
-        staged_candidate_ids: list[str] = []
         if cycle.selected_tasks:
             if runtime.stepwise_candidate_enabled and runtime.stepwise_evidence_mode == "enforced":
-                from nanobot.memory.candidate_staging import (
-                    mark_candidate_status,
-                    stage_task_candidate,
-                )
+                from nanobot.memory.candidate_staging import stage_task_candidate
                 from nanobot.memory.stepwise_evidence import load_task_evidence
 
                 staged = 0
@@ -328,18 +328,11 @@ async def run_phase6_review_scan_async(
                     if task is None:
                         continue
                     try:
-                        staged_record = stage_task_candidate(
+                        stage_task_candidate(
                             connection,
                             task=task,
                             workspace=str(root),
                             allow_partial=runtime.mixed_risk_policy == "partial",
-                        )
-                        staged_candidate_ids.append(staged_record.candidate_id)
-                        mark_candidate_status(
-                            connection,
-                            staged_record.candidate_id,
-                            status="evaluating",
-                            reason="进入 M15 隔离评测",
                         )
                         staged += 1
                     except ValueError:
@@ -395,15 +388,34 @@ async def run_phase6_review_scan_async(
                 accepted,
                 min_repeat_count=runtime.min_repeat_count,
             )
-            from nanobot.memory.ab_evaluation import evaluate_candidate_specs
+            from nanobot.memory.ab_evaluation import evaluate_candidate_specs, evaluation_capacity
 
+            capacity = (len(built.specs) if runtime.ab_evaluation_mode == "disabled"
+                        else evaluation_capacity(connection, str(root), runtime))
+            execution_owner = f"evaluation:{uuid4()}"
+            leases = {}
+            admitted = []
+            for spec in built.specs[:capacity]:
+                if spec.origin_candidate_id:
+                    lease = claim_candidate(
+                        connection, workspace=str(root), owner=execution_owner,
+                        candidate_id=spec.origin_candidate_id,
+                        lease_seconds=runtime.evaluation_lease_seconds,
+                        max_attempts=runtime.evaluation_max_attempts,
+                    )
+                    if lease is None:
+                        continue
+                    leases[spec.origin_candidate_id] = (lease, spec)
+                admitted.append(spec)
             ab_result = await evaluate_candidate_specs(
                 connection,
                 root,
-                built.specs,
+                tuple(admitted),
                 runtime,
                 active_agent=active_agent,
             )
+            if len(built.specs) > capacity:
+                ab_result = replace(ab_result, status="budget_exhausted", reason="ab_evaluation_daily_budget_exhausted")
             append_evidence(
                 root,
                 EvidenceRecord(
@@ -424,7 +436,7 @@ async def run_phase6_review_scan_async(
                     notify_error("Skill A/B 质量评测今日预算已耗尽；本轮候选已停止，不会创建审批。")
                 except Exception:
                     pass
-            specs = built.specs if runtime.ab_evaluation_mode == "shadow" else ab_result.approved_specs
+            specs = tuple(admitted) if runtime.ab_evaluation_mode == "shadow" else ab_result.approved_specs
             result = run_fixture_review_cycle(
                 connection,
                 root,
@@ -434,22 +446,17 @@ async def run_phase6_review_scan_async(
                 failed_traces=(),
                 overlay_pipeline=overlay_pipeline,
             )
-            if staged_candidate_ids:
-                from nanobot.memory.candidate_staging import mark_candidate_status
-
-                adopted = set(result.adopted_candidate_ids)
-                if adopted:
-                    status, reason = "adopted", "M15 通过并完成 workspace 原子采用"
-                elif result.proposal_ids:
-                    status, reason = "proposal_eligible", "M15 评测与 Proposal 门禁通过"
-                elif ab_result.status == "budget_exhausted":
-                    status, reason = "insufficient_evidence", "M15 评测预算耗尽，未创建 Proposal"
-                elif not ab_result.approved_specs:
-                    status, reason = "rejected_by_quality_gate", ab_result.reason or "M15 质量门禁未通过"
+            for lease, spec in leases.values():
+                proposal = connection.execute(
+                    "SELECT proposal_id FROM skill_proposals WHERE workspace=? AND candidate_revision_id=? "
+                    "AND candidate_hash=? AND status NOT IN ('failed','rejected_by_admin','expired','rolled_back')",
+                    (str(root), spec.candidate_revision_id, spec.candidate_hash),
+                ).fetchone()
+                if proposal is not None:
+                    finish_evaluation(connection, lease, status="proposal_eligible", reason="Proposal 门禁通过")
                 else:
-                    status, reason = "insufficient_evidence", "尚未形成可审阅 Proposal"
-                for candidate_id in staged_candidate_ids:
-                    mark_candidate_status(connection, candidate_id, status=status, reason=reason)
+                    finish_evaluation(connection, lease, status="failed", reason="质量或 Proposal 门禁未通过",
+                                      last_error="quality_gate_failed")
         evolution = getattr(config, "evolution", config)
         if bool(getattr(evolution, "recovery_skill_candidate_enabled", False)):
             repair_specs, repair_records = _load_repair_candidates(connection, str(root))

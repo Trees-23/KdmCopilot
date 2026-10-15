@@ -12,8 +12,10 @@ from nanobot.memory.schema import (
     ALERT_DELIVERY_MIGRATION_PATH,
     APP_BUILD,
     BASE_REQUIRED_TABLES,
+    CANDIDATE_ADOPTION_STATES_MIGRATION_PATH,
     CANDIDATE_STAGING_TABLES,
     DELIVERY_PAYLOAD_MIGRATION_PATH,
+    FAILURE_CANDIDATE_CONTENT_HASHES_MIGRATION_PATH,
     FAILURE_CANDIDATE_EVALUATION_HASHES_MIGRATION_PATH,
     FAILURE_CANDIDATE_HASH_RETRY_MIGRATION_PATH,
     FAILURE_ISSUE_CANDIDATES_MIGRATION_PATH,
@@ -22,6 +24,7 @@ from nanobot.memory.schema import (
     MIGRATION_ID,
     MIGRATION_VERSION,
     PROPOSAL_REVIEW_MIGRATION_PATH,
+    QUEUE_LEASES_MIGRATION_PATH,
     RECOVERY_CASES_MIGRATION_PATH,
     RECOVERY_REVIEW_ATOMIC_ACTIONS_MIGRATION_PATH,
     RECOVERY_SEMANTIC_FAMILIES_MIGRATION_PATH,
@@ -137,6 +140,22 @@ def _repair_failure_candidate_content_hashes(connection: sqlite3.Connection) -> 
                            AND a.action='automatic_gate_approval' AND a.result_status='approved')""",
         (utc_now(),),
     )
+
+
+def _validate_queue_upgrade(connection: sqlite3.Connection) -> None:
+    """Reject unmapped old states or duplicate content before rebuilding the queue."""
+    old_states = {
+        "candidate_staged", "manual_review_required", "evaluating", "rejected_by_quality_gate",
+        "insufficient_evidence", "proposal_eligible", "adopted", "closed",
+    }
+    actual = {row[0] for row in connection.execute("SELECT DISTINCT status FROM evolution_candidate_staging")}
+    if actual - old_states:
+        raise MigrationError("queue contains unmapped legacy states")
+    duplicate = connection.execute(
+        "SELECT 1 FROM evolution_candidate_staging GROUP BY workspace,candidate_hash HAVING count(*)>1 LIMIT 1"
+    ).fetchone()
+    if duplicate:
+        raise MigrationError("queue contains duplicate workspace/candidate_hash")
 
 
 def verify_schema(connection: sqlite3.Connection, expected_hash: str | None = None) -> None:
@@ -271,6 +290,7 @@ def apply_migrations(
         RECOVERY_REVIEW_ATOMIC_ACTIONS_MIGRATION_PATH.read_text(encoding="utf-8"),
         REQUIRED_TABLES,
     )
+    apply_one(15, "0015_candidate_adoption_states", CANDIDATE_ADOPTION_STATES_MIGRATION_PATH.read_text(encoding="utf-8"), REQUIRED_TABLES)
     apply_one(
         16,
         "0016_failure_issue_group_binding",
@@ -278,6 +298,7 @@ def apply_migrations(
         REQUIRED_TABLES,
         _ensure_failure_issue_group_binding,
     )
+    apply_one(17, "0017_failure_candidate_content_hashes", FAILURE_CANDIDATE_CONTENT_HASHES_MIGRATION_PATH.read_text(encoding="utf-8"), REQUIRED_TABLES)
     apply_one(
         18,
         "0018_failure_candidate_evaluation_hashes",
@@ -286,10 +307,17 @@ def apply_migrations(
         _repair_failure_candidate_content_hashes,
     )
     apply_one(
-        MIGRATION_VERSION,
-        MIGRATION_ID,
+        19,
+        "0019_failure_candidate_hash_retry",
         FAILURE_CANDIDATE_HASH_RETRY_MIGRATION_PATH.read_text(encoding="utf-8"),
         REQUIRED_TABLES,
+    )
+    apply_one(
+        MIGRATION_VERSION,
+        MIGRATION_ID,
+        QUEUE_LEASES_MIGRATION_PATH.read_text(encoding="utf-8"),
+        REQUIRED_TABLES,
+        _validate_queue_upgrade,
     )
     verify_schema(connection, schema_hash(latest_migration_sql()))
 

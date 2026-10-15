@@ -56,6 +56,9 @@ class Phase6RuntimeConfig:
     ab_evaluation_reasoning_effort: str = "high"
     ab_evaluation_max_candidates_per_day: int = 2
     ab_evaluation_max_model_calls_per_day: int = 40
+    evaluation_lease_seconds: int = 900
+    evaluation_timeout_seconds: int = 900
+    evaluation_max_attempts: int = 3
     adoption_enabled: bool = False
     workspace_skill_allowlist: tuple[str, ...] = ()
     stepwise_evidence_enabled: bool = False
@@ -87,6 +90,7 @@ class Phase6RuntimeConfig:
                     "draft_pr_enabled", "ab_evaluation_mode", "ab_evaluation_model",
                     "ab_evaluation_reasoning_effort", "ab_evaluation_max_candidates_per_day",
                     "ab_evaluation_max_model_calls_per_day",
+                    "evaluation_lease_seconds", "evaluation_timeout_seconds", "evaluation_max_attempts",
                     "adoption_enabled", "workspace_skill_allowlist",
                     "stepwise_evidence_enabled", "stepwise_evidence_mode", "mixed_risk_policy",
                     "stepwise_candidate_enabled", "case_candidate_promotion",
@@ -122,6 +126,10 @@ class Phase6RuntimeConfig:
             raise ValueError("ab_evaluation_max_candidates_per_day must be positive")
         if self.ab_evaluation_max_model_calls_per_day < 1:
             raise ValueError("ab_evaluation_max_model_calls_per_day must be positive")
+        if self.evaluation_lease_seconds < 1 or self.evaluation_timeout_seconds < 1:
+            raise ValueError("evaluation lease and timeout must be positive")
+        if not 1 <= self.evaluation_max_attempts <= 3:
+            raise ValueError("evaluation_max_attempts must be between 1 and 3")
         if self.stepwise_evidence_mode not in {"disabled", "shadow", "enforced"}:
             raise ValueError("stepwise_evidence_mode must be disabled, shadow, or enforced")
         if self.mixed_risk_policy not in {"partial", "manual", "reject"}:
