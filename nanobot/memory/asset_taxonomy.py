@@ -28,7 +28,7 @@ ERROR_CLASSES = {
     **dict.fromkeys(("file_not_found", "resource_not_found", "skill_not_found"), "resource-not-found"),
     **dict.fromkeys(("permission", "permission_denied", "access_denied", "forbidden"), "permission-denied"),
     **dict.fromkeys(("timeout", "web_search_timeout", "web_fetch_timeout", "tool_timeout"), "timeout"),
-    **dict.fromkeys(("invalid_tool_arguments", "invalid_arguments", "validation_error"), "invalid-arguments"),
+    **dict.fromkeys(("invalid_tool_arguments", "invalid_arguments", "validation_error", "invalid_url"), "invalid-arguments"),
     **dict.fromkeys(("policy_blocked", "workspace_violation", "ssrf_blocked"), "policy-blocked"),
     **dict.fromkeys(("rate_limit", "rate_limited"), "rate-limited"),
 }

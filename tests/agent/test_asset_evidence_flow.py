@@ -122,8 +122,6 @@ async def test_iteration_exhaustion_is_partial_with_no_fabricated_success(tmp_pa
 
 async def test_malformed_resource_diagnostic_cannot_interrupt_normal_error_reply(tmp_path):
     loop=_loop(tmp_path,[_tool("web_fetch",{"url":"https://["}),LLMResponse(content="地址格式无效",usage={})])
-    loop.tools.prepare_call=MagicMock(return_value=(None,{"url":"https://["},None))
-    loop.tools.execute=AsyncMock(return_value=ToolResult.error("Invalid URL",error_type="ValueError",error_code="invalid_url"))
     try:
         answer=await _send(loop,"请查看测试URL的内容")
         assert answer.content=="地址格式无效"
