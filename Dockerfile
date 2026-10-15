@@ -29,9 +29,43 @@ RUN ln -sf ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && \
     npm cache clean --force
 
 ARG GITHUB_MCP_VERSION=1.6.0
-# This project currently deploys on x86_64 WSL/Docker. Using Docker's remote
-# ADD avoids rebuilding the slow apt layer solely to install a download client.
-ADD https://github.com/github/github-mcp-server/releases/download/v${GITHUB_MCP_VERSION}/github-mcp-server_Linux_x86_64.tar.gz /tmp/github-mcp-server.tar.gz
+# This project currently deploys on x86_64 WSL/Docker. The official API can
+# serve release assets when the github.com download frontend is unreachable.
+# Keep the versioned download in a cached RUN layer and verify its published digest.
+RUN python - "$GITHUB_MCP_VERSION" <<'PYTHON'
+import hashlib
+import json
+import re
+import sys
+import urllib.request
+
+version = sys.argv[1]
+if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
+    raise ValueError("invalid GitHub MCP version")
+base = "https://api.github.com/repos/github/github-mcp-server"
+headers = {"X-GitHub-Api-Version": "2022-11-28", "User-Agent": "nanobot-image-build"}
+try:
+    request = urllib.request.Request(f"{base}/releases/tags/v{version}", headers=headers)
+    with urllib.request.urlopen(request, timeout=60) as response:
+        release = json.load(response)
+    asset = next(item for item in release["assets"]
+                 if item["name"] == "github-mcp-server_Linux_x86_64.tar.gz")
+    expected = str(asset.get("digest") or "")
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", expected):
+        raise ValueError("missing published GitHub MCP digest")
+    request = urllib.request.Request(
+        f"{base}/releases/assets/{int(asset['id'])}",
+        headers={**headers, "Accept": "application/octet-stream"},
+    )
+    with urllib.request.urlopen(request, timeout=60) as response:
+        archive = response.read()
+    if len(archive) != asset["size"] or "sha256:" + hashlib.sha256(archive).hexdigest() != expected:
+        raise ValueError("GitHub MCP archive checksum mismatch")
+    with open("/tmp/github-mcp-server.tar.gz", "wb") as destination:
+        destination.write(archive)
+except Exception:
+    raise RuntimeError("verified GitHub MCP dependency download failed") from None
+PYTHON
 RUN tar -xzf /tmp/github-mcp-server.tar.gz -C /usr/local/bin github-mcp-server && \
     chmod +x /usr/local/bin/github-mcp-server && \
     rm -f /tmp/github-mcp-server.tar.gz
