@@ -1,9 +1,12 @@
+import json
+
 import pytest
 
 from nanobot.audit.index import AuditIndex, AuditIndexer
 from nanobot.audit.read_service import (
     AuditReadService,
     CursorStaleError,
+    IndexStatus,
     PayloadLocatorInvalidError,
     PayloadTooLargeError,
     SessionListFilter,
@@ -13,6 +16,55 @@ from nanobot.audit.read_service import (
 from nanobot.audit.schema import TurnInputPayloadDraft
 from nanobot.audit.writer import AuditWriter, CommitItem
 from tests.audit.test_writer import _event, _item
+
+
+@pytest.mark.parametrize("filters", [
+    TraceListFilter(session_key="wanted-session"),
+    TraceListFilter(source_type="websocket"),
+    TraceListFilter(model="wanted-model"),
+    TraceListFilter(tool="grep"),
+    TraceListFilter(session_key="wanted-session", source_type="websocket", model="wanted-model", tool="grep"),
+])
+def test_trace_filters_bound_query_work_and_keep_events_from_the_entire_trace(tmp_path, filters):
+    index = AuditIndex.open(tmp_path / "audit-index.sqlite")
+    rows = []
+    for number in range(10_002):
+        wanted = number >= 10_000
+        last = number == 10_001
+        rows.append((
+            f"event-{number}", "trace_created", "2026-10-16T00:00:00+00:00",
+            "wanted-trace" if wanted else "large-unrelated-trace",
+            "other-session" if last else "wanted-session" if wanted else "noise-session",
+            "websocket" if last else "cli", "wanted-model" if last else "other-model",
+            "grep" if last else "read_file", "process", "segment", number + 1, 1,
+            json.dumps({"event_type": "trace_created"}),
+        ))
+    index.connection.executemany(
+        "INSERT INTO events(event_id,event_type,occurred_at,trace_id,session_key,source_type,model,tool_name,"
+        "process_instance_id,segment_id,segment_sequence,durability_epoch,event_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        rows,
+    )
+    index.connection.commit()
+    index.close()
+
+    class BoundedReadService(AuditReadService):
+        def _connect(self):
+            connection = super()._connect()
+            steps = 0
+
+            def bound_sqlite_work():
+                nonlocal steps
+                steps += 1000
+                return int(steps > 1_000_000)
+
+            connection.set_progress_handler(bound_sqlite_work, 1000)
+            return connection
+
+    service = BoundedReadService(
+        tmp_path / "audit-index.sqlite", status_provider=lambda: IndexStatus(state="ready", revision=1),
+    )
+    page = service.list_traces(filters)
+    assert [(row.trace_id, row.event_count) for row in page.items] == [("wanted-trace", 2)]
 
 
 def test_legacy_webui_suppression_requires_websocket_source_and_successful_run() -> None:
