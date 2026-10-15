@@ -26,7 +26,8 @@ def test_intent_router_is_rule_first_and_explicit():
     assert router.classify("show me the latest trace").scopes == ("trace",)
     assert router.classify("please remember this decision").intent == "memory_write"
     assert router.classify("normal coding task").intent == "task"
-    assert MemoryScopePolicy().for_intent(router.classify("review the case")).allows("case")
+    assert MemoryScopePolicy().for_intent(router.classify("review the case")).allows("asset")
+    assert not MemoryScopePolicy().for_intent(router.classify("review the case")).allows("case")
 
 
 def test_budget_uses_six_percent_with_soft_and_hard_caps():

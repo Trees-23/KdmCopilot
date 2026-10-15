@@ -141,6 +141,7 @@ class MemoryRetriever:
         root = Path(workspace or self.workspace or "").expanduser()
         decision = decision or self.router.classify(query)
         scope = self.policy.for_intent(decision)
+        scope = replace(scope, scopes=tuple(item for item in scope.scopes if item != "asset"))
         soft, hard = self._budgets(context_window_tokens)
         if decision.intent in {"memory_write", "forget"}:
             result = self._result(decision, scope, (), "skipped", None, soft, hard)
@@ -194,26 +195,17 @@ class MemoryRetriever:
                     (row for row in rows if _matches_query(query, str(row[2]), str(row[3]))), now
                 )
             )
-        if scope.allows("wiki") or scope.allows("case"):
+        if scope.allows("wiki"):
             rows = connection.execute(
-                """SELECT p.page_id,p.page_type,p.title,p.summary,p.current_revision_id,p.source_path,
-                          p.updated_at
-                   FROM wiki_pages p
-                   WHERE p.status NOT IN ('archived','tombstone')
-                     AND (? IN ('case','all') OR p.page_type != 'case')
+                """SELECT p.page_id,p.page_type,p.title,p.summary,p.current_revision_id,p.source_path,p.updated_at
+                   FROM wiki_pages p WHERE p.status NOT IN ('archived','tombstone') AND p.page_type != 'case'
                      AND (p.title LIKE ? OR p.summary LIKE ? OR p.tags_json LIKE ?)
-                     AND NOT EXISTS (SELECT 1 FROM tombstones t
-                                     WHERE t.object_type='wiki_page' AND t.object_id=p.page_id)
-                   ORDER BY p.updated_at DESC LIMIT ?""",
-                ("case" if scope.allows("case") and not scope.allows("wiki") else "all", needle, needle, needle, limit),
+                     AND NOT EXISTS (SELECT 1 FROM tombstones t WHERE t.object_type='wiki_page' AND t.object_id=p.page_id)
+                   ORDER BY p.updated_at DESC LIMIT ?""", (needle, needle, needle, limit),
             )
             for row in rows:
-                if row[1] == "case" and not scope.allows("case"):
-                    continue
-                if row[1] != "case" and not scope.allows("wiki"):
-                    continue
                 if _matches_query(query, str(row[2]), str(row[3])):
-                    hits.append(self._hit_from_row("case" if row[1] == "case" else "wiki", row, now, base=0.2, query=query))
+                    hits.append(self._hit_from_row("wiki", row, now, base=0.2, query=query))
         if scope.allows("skill"):
             rows = connection.execute(
                 """SELECT skill_id,name,description,current_revision_id,source_path,updated_at

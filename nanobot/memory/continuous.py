@@ -59,6 +59,7 @@ class Phase6RuntimeConfig:
     ab_evaluation_max_model_calls_per_day: int = 40
     asset_layer_enabled: bool = False
     asset_retrieval_enabled: bool = False
+    asset_injection_token_budget: int = 600
     evaluation_lease_seconds: int = 900
     evaluation_timeout_seconds: int = 900
     evaluation_max_attempts: int = 3
@@ -94,7 +95,7 @@ class Phase6RuntimeConfig:
                     "ab_evaluation_reasoning_effort", "ab_evaluation_max_candidates_per_day",
                     "ab_evaluation_max_model_calls_per_day",
                     "evaluation_lease_seconds", "evaluation_timeout_seconds", "evaluation_max_attempts",
-                    "asset_layer_enabled", "asset_retrieval_enabled",
+                    "asset_layer_enabled", "asset_retrieval_enabled", "asset_injection_token_budget",
                     "adoption_enabled", "workspace_skill_allowlist",
                     "stepwise_evidence_enabled", "stepwise_evidence_mode", "mixed_risk_policy",
                     "stepwise_candidate_enabled", "case_candidate_promotion",
@@ -104,6 +105,8 @@ class Phase6RuntimeConfig:
         return cls(**values)
 
     def __post_init__(self) -> None:
+        if not 1 <= self.asset_injection_token_budget <= 600:
+            raise ValueError("asset token budget must be between 1 and 600")
         if self.asset_retrieval_enabled and not self.asset_layer_enabled:
             raise ValueError("asset retrieval requires asset layer")
         if self.min_repeat_count < 3:

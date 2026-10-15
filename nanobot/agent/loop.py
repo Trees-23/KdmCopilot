@@ -418,7 +418,7 @@ class AgentLoop:
         self._extra_hooks: list[AgentHook] = hooks or []
         self._hook_factories: list[AgentTurnHookFactory] = hook_factories or []
 
-        self.context = ContextBuilder(workspace, timezone=timezone, disabled_skills=disabled_skills)
+        self.context = ContextBuilder(workspace, timezone=timezone, disabled_skills=disabled_skills, asset_config=phase6_config)
         self.sessions = session_manager or SessionManager(workspace)
         from nanobot.session.goal_orchestration import (
             GoalOrchestrationStore,
@@ -547,6 +547,7 @@ class AgentLoop:
 
         self.phase6_config = phase6_config
         self.evolution_commands.config = phase6_config
+        self.context.asset_config = phase6_config
 
     @classmethod
     def from_config(

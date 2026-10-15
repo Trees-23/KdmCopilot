@@ -546,6 +546,7 @@ class Phase6EvolutionConfig(Base):
     )
     asset_layer_enabled: bool = False
     asset_retrieval_enabled: bool = False
+    asset_injection_token_budget: int = Field(default=600, ge=1, le=600)
     evaluation_lease_seconds: int = Field(default=900, ge=1)
     evaluation_timeout_seconds: int = Field(default=900, ge=1)
     evaluation_max_attempts: int = Field(default=3, ge=1, le=3)

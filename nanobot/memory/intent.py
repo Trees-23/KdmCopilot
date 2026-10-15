@@ -44,12 +44,12 @@ class IntentRouter:
         (
             "forget",
             ("forget", "delete from memory", "remove from memory", "tombstone", "忘记", "遗忘", "删除记忆"),
-            ("memory", "wiki", "case", "trace"),
+            ("memory", "wiki", "trace"),
         ),
         (
             "memory_write",
             ("remember", "save to memory", "write to memory", "记住", "保存到记忆", "写入记忆"),
-            ("memory", "wiki", "case"),
+            ("memory", "wiki"),
         ),
         (
             "trace_query",
@@ -59,7 +59,7 @@ class IntentRouter:
         (
             "history_query",
             ("history", "previous conversation", "what did we discuss", "历史", "之前聊过", "上次"),
-            ("memory", "history", "wiki", "case", "trace"),
+            ("memory", "history", "wiki", "asset", "trace"),
         ),
         (
             "skill_discovery",
@@ -69,7 +69,7 @@ class IntentRouter:
         (
             "review",
             ("review", "evaluate", "regression", "复盘", "评审", "评估", "回归"),
-            ("case", "trace", "skill"),
+            ("asset", "trace", "skill"),
         ),
     )
 
@@ -88,7 +88,7 @@ class IntentRouter:
         return IntentDecision(
             intent="task",
             query=query,
-            scopes=("memory", "wiki", "case", "skill", "trace"),
+            scopes=("memory", "wiki", "asset", "skill", "trace"),
             explicit=False,
             failure_mode="session_only",
         )
