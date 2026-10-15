@@ -5,8 +5,8 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-MIGRATION_VERSION = 22
-MIGRATION_ID = "0022_judge_feedback"
+MIGRATION_VERSION = 28
+MIGRATION_ID = "0028_evaluation_budget_rounds"
 APP_BUILD = "memory-phase1"
 
 MIGRATIONS_DIR = Path(__file__).with_name("migrations")
@@ -32,12 +32,13 @@ FAILURE_CANDIDATE_HASH_RETRY_MIGRATION_PATH = MIGRATIONS_DIR / "0019_failure_can
 
 QUEUE_LEASES_MIGRATION_PATH = MIGRATIONS_DIR / "0021_evolution_queue_leases.sql"
 JUDGE_FEEDBACK_MIGRATION_PATH = MIGRATIONS_DIR / "0022_judge_feedback.sql"
+EVALUATION_BUDGET_MIGRATION_PATH = MIGRATIONS_DIR / "0028_evaluation_budget_rounds.sql"
 
 
 def migration_sql() -> str:
     """Return the checked-in latest migration SQL."""
 
-    return JUDGE_FEEDBACK_MIGRATION_PATH.read_text(encoding="utf-8")
+    return EVALUATION_BUDGET_MIGRATION_PATH.read_text(encoding="utf-8")
 
 
 def latest_migration_sql() -> str:
@@ -113,6 +114,9 @@ REQUIRED_TABLES = frozenset(
     }
 )
 
+EVALUATION_BUDGET_TABLES = frozenset({"evaluation_candidate_admissions", "evaluation_model_call_reservations"})
+REQUIRED_TABLES = REQUIRED_TABLES | EVALUATION_BUDGET_TABLES
+
 BASE_REQUIRED_TABLES = REQUIRED_TABLES - frozenset(
     {
         "skill_proposals", "proposal_deliveries", "proposal_actions", "group_memory_scopes",
@@ -132,7 +136,8 @@ STEPWISE_EVOLUTION_TABLES = frozenset(
 CANDIDATE_STAGING_TABLES = frozenset({"evolution_candidate_staging"})
 
 REQUIRED_COLUMNS = {
-    "ab_case_results": frozenset({"judge_feedback"}),
+    "ab_case_results": frozenset({"judge_feedback", "sample_round"}),
+    "ab_evaluations": frozenset({"protocol_version", "execution_deadline"}),
     "failure_issues": frozenset({"group_openid"}),
     "evolution_candidate_staging": frozenset({
         "lease_owner", "lease_expires_at", "attempt_count", "last_error",

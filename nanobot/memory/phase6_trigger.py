@@ -9,11 +9,10 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
 
 from nanobot.cron.types import CronJob, CronPayload, CronSchedule
 from nanobot.memory.continuous import (
@@ -27,7 +26,7 @@ from nanobot.memory.db import connect_memory_db
 from nanobot.memory.derivation import digest
 from nanobot.memory.evolution_orchestrator import run_fixture_review_cycle
 from nanobot.memory.migrations.runner import apply_migrations
-from nanobot.memory.queue_state import claim_candidate, finish_evaluation, reap_stale_evaluations
+from nanobot.memory.queue_state import finish_evaluation, reap_stale_evaluations
 from nanobot.memory.trace_indexer import index_audit_root
 
 PHASE6_REVIEW_JOB_ID = "phase6-evolution-review"
@@ -388,34 +387,15 @@ async def run_phase6_review_scan_async(
                 accepted,
                 min_repeat_count=runtime.min_repeat_count,
             )
-            from nanobot.memory.ab_evaluation import evaluate_candidate_specs, evaluation_capacity
+            from nanobot.memory.ab_evaluation import evaluate_candidate_specs
 
-            capacity = (len(built.specs) if runtime.ab_evaluation_mode == "disabled"
-                        else evaluation_capacity(connection, str(root), runtime))
-            execution_owner = f"evaluation:{uuid4()}"
-            leases = {}
-            admitted = []
-            for spec in built.specs[:capacity]:
-                if spec.origin_candidate_id:
-                    lease = claim_candidate(
-                        connection, workspace=str(root), owner=execution_owner,
-                        candidate_id=spec.origin_candidate_id,
-                        lease_seconds=runtime.evaluation_lease_seconds,
-                        max_attempts=runtime.evaluation_max_attempts,
-                    )
-                    if lease is None:
-                        continue
-                    leases[spec.origin_candidate_id] = (lease, spec)
-                admitted.append(spec)
             ab_result = await evaluate_candidate_specs(
                 connection,
                 root,
-                tuple(admitted),
+                built.specs,
                 runtime,
                 active_agent=active_agent,
             )
-            if len(built.specs) > capacity:
-                ab_result = replace(ab_result, status="budget_exhausted", reason="ab_evaluation_daily_budget_exhausted")
             append_evidence(
                 root,
                 EvidenceRecord(
@@ -436,7 +416,7 @@ async def run_phase6_review_scan_async(
                     notify_error("Skill A/B 质量评测今日预算已耗尽；本轮候选已停止，不会创建审批。")
                 except Exception:
                     pass
-            specs = tuple(admitted) if runtime.ab_evaluation_mode == "shadow" else ab_result.approved_specs
+            specs = ab_result.approved_specs
             result = run_fixture_review_cycle(
                 connection,
                 root,
@@ -446,7 +426,8 @@ async def run_phase6_review_scan_async(
                 failed_traces=(),
                 overlay_pipeline=overlay_pipeline,
             )
-            for lease, spec in leases.values():
+            for lease in ab_result.proposal_leases:
+                spec = next(item for item in built.specs if item.origin_candidate_id == lease.candidate_id)
                 proposal = connection.execute(
                     "SELECT proposal_id FROM skill_proposals WHERE workspace=? AND candidate_revision_id=? "
                     "AND candidate_hash=? AND status NOT IN ('failed','rejected_by_admin','expired','rolled_back')",

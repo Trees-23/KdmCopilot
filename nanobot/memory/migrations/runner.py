@@ -15,6 +15,8 @@ from nanobot.memory.schema import (
     CANDIDATE_ADOPTION_STATES_MIGRATION_PATH,
     CANDIDATE_STAGING_TABLES,
     DELIVERY_PAYLOAD_MIGRATION_PATH,
+    EVALUATION_BUDGET_MIGRATION_PATH,
+    EVALUATION_BUDGET_TABLES,
     FAILURE_CANDIDATE_CONTENT_HASHES_MIGRATION_PATH,
     FAILURE_CANDIDATE_EVALUATION_HASHES_MIGRATION_PATH,
     FAILURE_CANDIDATE_HASH_RETRY_MIGRATION_PATH,
@@ -216,6 +218,8 @@ def apply_migrations(
 
     def apply_one(version: int, migration_id: str, migration_text: str,
                   required_tables: set[str] | frozenset[str], before_apply=None) -> None:
+        if version < 28:
+            required_tables = required_tables - EVALUATION_BUDGET_TABLES
         expected_hash = schema_hash(migration_text)
         current = connection.execute(
             "SELECT migration_id,schema_hash,status FROM schema_meta WHERE version=?", (version,)
@@ -321,9 +325,15 @@ def apply_migrations(
         _validate_queue_upgrade,
     )
     apply_one(
+        22,
+        "0022_judge_feedback",
+        JUDGE_FEEDBACK_MIGRATION_PATH.read_text(encoding="utf-8"),
+        REQUIRED_TABLES,
+    )
+    apply_one(
         MIGRATION_VERSION,
         MIGRATION_ID,
-        JUDGE_FEEDBACK_MIGRATION_PATH.read_text(encoding="utf-8"),
+        EVALUATION_BUDGET_MIGRATION_PATH.read_text(encoding="utf-8"),
         REQUIRED_TABLES,
     )
     verify_schema(connection, schema_hash(latest_migration_sql()))

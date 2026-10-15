@@ -150,3 +150,36 @@ def transition_candidate(
     )
     connection.commit()
     return cursor.rowcount == 1
+
+
+def reuse_final_evaluation(
+    connection: sqlite3.Connection, candidate_id: str, evaluation_id: str,
+) -> bool:
+    """Reuse a verified content verdict without claiming an execution or charging a slot."""
+    row = connection.execute(
+        "SELECT e.status,e.reason_code,s.candidate_revision_id,s.workspace,s.candidate_hash "
+        "FROM ab_evaluations e JOIN evolution_candidate_staging s "
+        "ON s.workspace=e.workspace AND s.candidate_hash=e.candidate_hash "
+        "WHERE s.candidate_id=? AND s.status='queued' AND e.evaluation_id=? "
+        "AND e.protocol_version='two-round-v1' AND e.status IN ('passed','failed')",
+        (candidate_id, evaluation_id),
+    ).fetchone()
+    if row is None:
+        return False
+    status = "failed"
+    if row[0] == "passed":
+        proposal = connection.execute(
+            "SELECT 1 FROM skill_proposals WHERE workspace=? AND candidate_revision_id=? AND candidate_hash=? "
+            "AND status NOT IN ('failed','rejected_by_admin','expired','rolled_back')",
+            (row[3], row[2], row[4]),
+        ).fetchone()
+        if proposal is None:
+            return False
+        status = "proposal_eligible"
+    cursor = connection.execute(
+        "UPDATE evolution_candidate_staging SET status=?,reason=?,last_error=?,updated_at=? "
+        "WHERE candidate_id=? AND workspace=? AND candidate_hash=? AND status='queued'",
+        (status, row[1], None if row[0] == "passed" else row[1], _timestamp(), candidate_id, row[3], row[4]),
+    )
+    connection.commit()
+    return cursor.rowcount == 1
