@@ -5,8 +5,8 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-MIGRATION_VERSION = 21
-MIGRATION_ID = "0021_evolution_queue_leases"
+MIGRATION_VERSION = 22
+MIGRATION_ID = "0022_judge_feedback"
 APP_BUILD = "memory-phase1"
 
 MIGRATIONS_DIR = Path(__file__).with_name("migrations")
@@ -31,12 +31,13 @@ FAILURE_CANDIDATE_EVALUATION_HASHES_MIGRATION_PATH = MIGRATIONS_DIR / "0018_fail
 FAILURE_CANDIDATE_HASH_RETRY_MIGRATION_PATH = MIGRATIONS_DIR / "0019_failure_candidate_hash_retry.sql"
 
 QUEUE_LEASES_MIGRATION_PATH = MIGRATIONS_DIR / "0021_evolution_queue_leases.sql"
+JUDGE_FEEDBACK_MIGRATION_PATH = MIGRATIONS_DIR / "0022_judge_feedback.sql"
 
 
 def migration_sql() -> str:
     """Return the checked-in latest migration SQL."""
 
-    return QUEUE_LEASES_MIGRATION_PATH.read_text(encoding="utf-8")
+    return JUDGE_FEEDBACK_MIGRATION_PATH.read_text(encoding="utf-8")
 
 
 def latest_migration_sql() -> str:
@@ -131,6 +132,7 @@ STEPWISE_EVOLUTION_TABLES = frozenset(
 CANDIDATE_STAGING_TABLES = frozenset({"evolution_candidate_staging"})
 
 REQUIRED_COLUMNS = {
+    "ab_case_results": frozenset({"judge_feedback"}),
     "failure_issues": frozenset({"group_openid"}),
     "evolution_candidate_staging": frozenset({
         "lease_owner", "lease_expires_at", "attempt_count", "last_error",

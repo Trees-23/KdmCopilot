@@ -21,6 +21,7 @@ from nanobot.memory.schema import (
     FAILURE_ISSUE_CANDIDATES_MIGRATION_PATH,
     FAILURE_ISSUE_GROUP_BINDING_MIGRATION_PATH,
     FAILURE_ISSUES_MIGRATION_PATH,
+    JUDGE_FEEDBACK_MIGRATION_PATH,
     MIGRATION_ID,
     MIGRATION_VERSION,
     PROPOSAL_REVIEW_MIGRATION_PATH,
@@ -313,11 +314,17 @@ def apply_migrations(
         REQUIRED_TABLES,
     )
     apply_one(
-        MIGRATION_VERSION,
-        MIGRATION_ID,
+        21,
+        "0021_evolution_queue_leases",
         QUEUE_LEASES_MIGRATION_PATH.read_text(encoding="utf-8"),
         REQUIRED_TABLES,
         _validate_queue_upgrade,
+    )
+    apply_one(
+        MIGRATION_VERSION,
+        MIGRATION_ID,
+        JUDGE_FEEDBACK_MIGRATION_PATH.read_text(encoding="utf-8"),
+        REQUIRED_TABLES,
     )
     verify_schema(connection, schema_hash(latest_migration_sql()))
 
