@@ -12,7 +12,7 @@ import json
 import re
 import sqlite3
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any, Iterable, Mapping, Sequence
@@ -49,8 +49,6 @@ class Phase6RuntimeConfig:
     notification_failure_rate_pause_threshold: float = 1.0
     unauthorized_pause_threshold: int = 1
     max_memory_growth_ratio: float = 0.5
-    retention_days: int = 18
-    payload_retention_days: int = 7
     ab_evaluation_mode: str = "enforced"
     ab_evaluation_model: str = "glm-5.3-flash"
     ab_evaluation_reasoning_effort: str = "high"
@@ -129,8 +127,6 @@ class Phase6RuntimeConfig:
             raise ValueError("unauthorized_pause_threshold must be positive")
         if not 0 <= self.max_memory_growth_ratio:
             raise ValueError("max_memory_growth_ratio must not be negative")
-        if self.payload_retention_days < 1 or self.retention_days < self.payload_retention_days:
-            raise ValueError("retention_days must be >= payload_retention_days >= 1")
         if self.ab_evaluation_mode not in {"disabled", "shadow", "enforced"}:
             raise ValueError("ab_evaluation_mode must be disabled, shadow, or enforced")
         if self.ab_evaluation_reasoning_effort not in {"low", "medium", "high"}:
@@ -182,13 +178,6 @@ class Phase6State:
     pause_reason: str | None = None
     consecutive_regressions: int = 0
     generation: int = 0
-
-
-@dataclass(frozen=True, slots=True)
-class RetentionPlan:
-    payload_expiry_trace_ids: tuple[str, ...]
-    summary_review_trace_ids: tuple[str, ...]
-    protected_summary_trace_ids: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -302,41 +291,6 @@ def select_low_risk_tasks(
     ]
     candidates.sort(key=lambda item: (-item.frequency, -item.value_score, item.task_key))
     return tuple(candidates[: int(_config_value(config, "max_candidates_per_cycle", 20))])
-
-
-def load_trace_records(connection: sqlite3.Connection) -> tuple[dict[str, Any], ...]:
-    """Read only redacted Trace index summaries for the selector."""
-
-    rows = connection.execute(
-        "SELECT trace_id,outcome,summary,event_count,tool_count FROM trace_index ORDER BY started_at"
-    ).fetchall()
-    records: list[dict[str, Any]] = []
-    for row in rows:
-        record: dict[str, Any] = {
-            "trace_id": row[0], "outcome": row[1], "summary": row[2],
-            "event_count": row[3], "tool_count": row[4],
-        }
-        # Tool names are already part of the redacted summary projection. Do
-        # not read Audit payloads here; expose only this safe category metadata.
-        try:
-            parsed = json.loads(str(row[2] or ""))
-            tools = parsed.get("tool_names", []) if isinstance(parsed, Mapping) else []
-            if isinstance(tools, list):
-                record["tools"] = tuple(str(tool) for tool in tools if str(tool))
-        except (TypeError, ValueError, json.JSONDecodeError):
-            pass
-        records.append(record)
-    return tuple(records)
-
-
-def load_failed_trace_records(connection: sqlite3.Connection) -> tuple[dict[str, Any], ...]:
-    """Return failed/partial/blocked summaries without provider payloads."""
-
-    rows = connection.execute(
-        "SELECT trace_id,outcome,summary FROM trace_index "
-        "WHERE outcome IN ('failure','failed','partial','blocked') ORDER BY started_at"
-    ).fetchall()
-    return tuple({"trace_id": row[0], "outcome": row[1], "summary": row[2]} for row in rows)
 
 
 def next_evalpack_version(connection: sqlite3.Connection, skill_revision_id: str) -> int:
@@ -453,8 +407,6 @@ def update_health(
         reasons.append("regression_threshold")
     if int(metrics.get("permission_denials", 0)) > 0:
         reasons.append("permission_denial")
-    if bool(metrics.get("fts_rebuild_failed", False)):
-        reasons.append("fts_rebuild_failed")
     growth = float(metrics.get("memory_growth_ratio", 0.0))
     if growth > float(_config_value(config, "max_memory_growth_ratio", 0.5)):
         reasons.append("memory_capacity")
@@ -489,31 +441,25 @@ def update_health(
 def collect_capacity_metrics(
     connection: sqlite3.Connection,
     *,
-    baseline_memory_records: int = 0,
-    max_memory_records: int = 100_000,
+    baseline_assets: int = 0,
+    max_assets: int = 100_000,
     max_retrieval_events: int = 200_000,
 ) -> dict[str, Any]:
     """Collect bounded counts without reading or deleting provider payloads."""
 
-    memory_count = int(connection.execute("SELECT count(*) FROM memory_records").fetchone()[0])
+    asset_count = int(connection.execute("SELECT count(*) FROM memory_assets").fetchone()[0])
     retrieval_count = int(connection.execute("SELECT count(*) FROM retrieval_events").fetchone()[0])
-    trace_count = int(connection.execute("SELECT count(*) FROM trace_index").fetchone()[0])
+    queue_count = int(connection.execute("SELECT count(*) FROM evolution_candidate_staging").fetchone()[0])
     growth = 0.0
-    if baseline_memory_records > 0:
-        growth = (memory_count - baseline_memory_records) / baseline_memory_records
+    if baseline_assets > 0:
+        growth = (asset_count - baseline_assets) / baseline_assets
     return {
-        "memory_records": memory_count,
+        "memory_assets": asset_count,
         "retrieval_events": retrieval_count,
-        "trace_index": trace_count,
+        "evolution_candidate_staging": queue_count,
         "memory_growth_ratio": growth,
-        "capacity_exceeded": memory_count >= max_memory_records or retrieval_count >= max_retrieval_events,
+        "capacity_exceeded": asset_count >= max_assets or retrieval_count >= max_retrieval_events,
     }
-
-
-def record_index_failure(workspace: str | Path, error: str, config: Any) -> Phase6State:
-    """Persist a redacted index failure and enter the normal pause path."""
-
-    return update_health(workspace, {"fts_rebuild_failed": True, "error": error}, config)
 
 
 def pause_and_rollback(
@@ -590,31 +536,6 @@ def resume_after_review(workspace: str | Path, config: Any, *, actor: str, reaso
     save_state(workspace, state)
     append_evidence(workspace, EvidenceRecord("resume", _iso(), status="ok", reason=f"{actor}: {reason}"), config)
     return state
-
-
-def plan_retention(
-    connection: sqlite3.Connection,
-    *,
-    now: datetime | None = None,
-    payload_days: int = 7,
-    trace_days: int = 18,
-) -> RetentionPlan:
-    """Plan expiry without deleting traces or long-lived summaries."""
-
-    current = _now(now)
-    payload_cutoff = _iso(current - timedelta(days=payload_days))
-    trace_cutoff = _iso(current - timedelta(days=trace_days))
-    rows = connection.execute(
-        "SELECT trace_id,ended_at,summary FROM trace_index WHERE ended_at IS NOT NULL AND ended_at<=?",
-        (payload_cutoff,),
-    ).fetchall()
-    payload = tuple(sorted(str(row[0]) for row in rows))
-    old = connection.execute(
-        "SELECT trace_id FROM trace_index WHERE ended_at IS NOT NULL AND ended_at<=?",
-        (trace_cutoff,),
-    ).fetchall()
-    summary = tuple(sorted(str(row[0]) for row in old))
-    return RetentionPlan(payload, summary, summary)
 
 
 def make_proposal(
@@ -714,10 +635,10 @@ def rollback_skill_revision(
 __all__ = [
     "EvidenceRecord", "Phase6CycleResult", "Phase6Disabled", "Phase6DisabledError", "Phase6Proposal",
     "Phase6RuntimeConfig", "Phase6State",
-    "RetentionPlan", "TraceCandidate", "append_evidence", "build_versioned_evalpack",
-    "load_failed_trace_records", "load_state", "load_trace_records", "make_proposal", "persist_proposal",
-    "next_evalpack_version", "phase6_active", "plan_retention",
-    "record_index_failure", "require_active", "resume_after_review",
+    "TraceCandidate", "append_evidence", "build_versioned_evalpack",
+    "load_state", "make_proposal", "persist_proposal",
+    "next_evalpack_version", "phase6_active",
+    "require_active", "resume_after_review",
     "rollback_skill_revision", "run_cycle", "save_state", "select_low_risk_tasks", "update_health",
     "collect_capacity_metrics", "pause_and_rollback",
 ]

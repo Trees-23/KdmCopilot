@@ -7,7 +7,6 @@ never changes an Agent context, a Proposal, or a remote repository.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 import sqlite3
@@ -28,14 +27,6 @@ class RecoveryEpisode:
     failure_trace_id: str
     recovery_trace_id: str | None
     status: str
-
-
-@dataclass(frozen=True, slots=True)
-class RecoveryReview:
-    recovery_key: str
-    episode_ids: tuple[str, ...]
-    status: str
-    reason_code: str
 
 
 def _now() -> datetime:
@@ -257,10 +248,8 @@ def link_successful_correction(
 ) -> RecoveryEpisode | None:
     """Link only the latest same-session eligible failure to a success.
 
-    This deliberately refuses broad temporal correlation.  The later M13
-    quality review requires repeated recovery episodes before even a read-only
-    Case card can be surfaced; the episodes may come from one long-lived
-    session such as a QQ group session.
+    This deliberately refuses broad temporal correlation. Episodes remain
+    source facts for L1 projection and may come from one long-lived session.
     """
 
     if source_type != "user" or not trace_id or not session_key:
@@ -323,144 +312,4 @@ def link_successful_correction(
     return RecoveryEpisode(str(row[0]), str(row[1]), trace_id, "recovered")
 
 
-def _recovery_key(
-    operation_family: str,
-    failure_family: str,
-    task_family: str,
-    correction_family: str,
-) -> str:
-    payload = "|".join((operation_family, failure_family, task_family, correction_family))
-    return "recovery:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
-
-
-def review_recovery_episodes(
-    connection: sqlite3.Connection,
-    *,
-    workspace: str,
-    min_episodes: int = 2,
-    min_sessions: int = 1,
-    window_days: int = 90,
-) -> tuple[RecoveryReview, ...]:
-    """Create auditable Issue-quality decisions without creating a Skill.
-
-    M17 deliberately aggregates structured families instead of complete file
-    names or raw user sentences.  The rolling window limits stale incidents;
-    one long-lived QQ session remains a valid evidence source.
-    """
-
-    if min_episodes < 1 or min_sessions < 1 or window_days < 1:
-        raise ValueError("recovery review thresholds must be positive")
-    cutoff = _iso(_now() - timedelta(days=window_days))
-
-    rows = connection.execute(
-        """SELECT episode_id,session_key,failure_goal,failure_class,correction_goal,correction_intent,recovery_tools_json,
-                  operation_family,failure_family,task_family,correction_family,recovered_at
-           FROM recovery_episodes
-           WHERE workspace=? AND status='recovered' AND redaction_status='safe' AND recovered_at>=?
-           ORDER BY recovered_at,episode_id""",
-        (workspace, cutoff),
-    ).fetchall()
-    groups: dict[str, list[tuple[str, str]]] = {}
-    for (
-        episode_id, session_key, failure_goal, failure_class, correction_goal, correction_intent, tools_json,
-        operation_family, failure_family, task_family, correction_family, _recovered_at,
-    ) in rows:
-        if not failure_goal or not correction_intent:
-            continue
-        try:
-            raw_tools = json.loads(tools_json or "[]") if tools_json else ()
-        except (TypeError, ValueError, json.JSONDecodeError):
-            raw_tools = ()
-        tools = _tools(raw_tools)
-        operation_value = str(operation_family or "")
-        failure_value = str(failure_family or "")
-        task_value = str(task_family or "")
-        correction_value = str(correction_family or "")
-        operation = (
-            _operation_family(tools)
-            if operation_value in {"", "unknown_operation"}
-            else operation_value
-        )
-        failure = failure_value if failure_value not in {"", "unknown_failure"} else "unknown_failure"
-        task = (
-            _task_family(str(failure_goal), tools)
-            if task_value in {"", "unknown_task"}
-            else task_value
-        )
-        correction = (
-            _correction_family(str(correction_goal))
-            if correction_value in {"", "unknown_correction"}
-            else correction_value
-        )
-        key = _recovery_key(operation, failure, task, correction)
-        groups.setdefault(key, []).append((str(episode_id), str(session_key)))
-    reviews: list[RecoveryReview] = []
-    timestamp = _iso()
-    for key, episodes in groups.items():
-        episode_ids = tuple(sorted(item[0] for item in episodes))
-        sessions = {item[1] for item in episodes}
-        if len(episode_ids) >= min_episodes and len(sessions) >= min_sessions:
-            status, code, text = (
-                "passed",
-                "repeated_verified_recovery",
-                "两次同类失败、人工纠正与验证成功已形成恢复 Issue；等待管理员评论，不生成 Skill。",
-            )
-        else:
-            status, code, text = (
-                "insufficient_recovery_evidence",
-                "insufficient_recovery_episodes",
-                "同类恢复次数不足 2 次；仅保留审计，不生成 Issue。",
-            )
-        connection.execute(
-            """INSERT OR IGNORE INTO recovery_case_reviews
-               (review_id,workspace,recovery_key,episode_ids_json,status,reason_code,reason_text,created_at)
-               VALUES(?,?,?,?,?,?,?,?)""",
-            (f"recovery-review:{uuid4()}", workspace, key, json.dumps(episode_ids), status, code, text, timestamp),
-        )
-        reviews.append(RecoveryReview(key, episode_ids, status, code))
-    connection.commit()
-    return tuple(reviews)
-
-
-def list_recovery_reviews(connection: sqlite3.Connection, *, workspace: str, limit: int = 20) -> tuple[dict[str, object], ...]:
-    """Read only the Case-card projection permitted to an approval group."""
-
-    if limit < 1 or limit > 100:
-        raise ValueError("recovery review list limit must be between 1 and 100")
-    rows = connection.execute(
-        """SELECT recovery_key,episode_ids_json,status,reason_code,reason_text,created_at
-           FROM recovery_case_reviews WHERE workspace=? ORDER BY created_at DESC LIMIT ?""",
-        (workspace, limit),
-    ).fetchall()
-    cards: list[dict[str, object]] = []
-    for recovery_key, episode_ids_json, status, reason_code, reason_text, created_at in rows:
-        try:
-            episode_ids = tuple(str(value) for value in json.loads(episode_ids_json or "[]") if str(value))
-        except (TypeError, ValueError, json.JSONDecodeError):
-            episode_ids = ()
-        sample = None
-        if episode_ids:
-            placeholders = ",".join("?" for _ in episode_ids)
-            sample = connection.execute(
-                "SELECT failure_goal,failure_class,correction_goal,operation_family,failure_family,task_family,correction_family FROM recovery_episodes "
-                f"WHERE workspace=? AND episode_id IN ({placeholders}) ORDER BY created_at LIMIT 1",
-                (workspace, *episode_ids),
-            ).fetchone()
-        cards.append({
-            "recovery_key": str(recovery_key), "episode_count": len(episode_ids), "status": str(status),
-            "reason_code": str(reason_code), "reason_text": str(reason_text), "created_at": str(created_at),
-            "failure_goal": str(sample[0]) if sample and sample[0] else "未记录",
-            "failure_class": str(sample[1]) if sample and sample[1] else "未记录",
-            "correction_goal": str(sample[2]) if sample and sample[2] else "未记录",
-            "operation_family": str(sample[3]) if sample and sample[3] else "unknown_operation",
-            "failure_family": str(sample[4]) if sample and sample[4] else "unknown_failure",
-            "task_family": str(sample[5]) if sample and sample[5] else "unknown_task",
-            "correction_family": str(sample[6]) if sample and sample[6] else "unknown_correction",
-        })
-    return tuple(cards)
-
-
-__all__ = [
-    "RecoveryEpisode", "RecoveryReview", "link_successful_correction", "list_recovery_reviews",
-    "record_failed_episode", "review_recovery_episodes",
-]
+__all__ = ["RecoveryEpisode", "record_failed_episode", "link_successful_correction"]

@@ -674,6 +674,19 @@ class CronService:
         logger.info("Cron: registered system job '{}' ({})", job.name, job.id)
         return job
 
+    def unregister_system_job(self, job_id: str) -> bool:
+        """Retire a known internal job without deleting a user's agent job."""
+        store = self._require_store()
+        retained = [job for job in store.jobs if not (
+            job.id == job_id and job.payload.kind == "system_event"
+        )]
+        if len(retained) == len(store.jobs):
+            return False
+        store.jobs = retained
+        self._save_store()
+        self._arm_timer()
+        return True
+
     def remove_job(self, job_id: str) -> Literal["removed", "protected", "not_found"]:
         """Remove a job by ID, unless it is a protected system job."""
         store = self._require_store()

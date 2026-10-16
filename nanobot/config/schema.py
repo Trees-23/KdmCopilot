@@ -552,21 +552,6 @@ class Phase6EvolutionConfig(Base):
     evaluation_lease_seconds: int = Field(default=900, ge=1)
     evaluation_timeout_seconds: int = Field(default=900, ge=1)
     evaluation_max_attempts: int = Field(default=3, ge=1, le=3)
-    recovery_review_enabled: bool = Field(
-        default=True,
-        validation_alias=AliasChoices("recoveryReviewEnabled", "recovery_review_enabled"),
-        serialization_alias="recoveryReviewEnabled",
-    )
-    recovery_notifications_enabled: bool = Field(
-        default=False,
-        validation_alias=AliasChoices("recoveryNotificationsEnabled", "recovery_notifications_enabled"),
-        serialization_alias="recoveryNotificationsEnabled",
-    )
-    recovery_skill_candidate_enabled: bool = Field(
-        default=False,
-        validation_alias=AliasChoices("recoverySkillCandidateEnabled", "recovery_skill_candidate_enabled"),
-        serialization_alias="recoverySkillCandidateEnabled",
-    )
     stepwise_evidence_enabled: bool = Field(
         default=False,
         validation_alias=AliasChoices("stepwiseEvidenceEnabled", "stepwise_evidence_enabled"),
@@ -620,14 +605,6 @@ class Phase6Config(Base):
     notification_failure_rate_pause_threshold: float = Field(default=1.0, ge=0, le=1)
     unauthorized_pause_threshold: int = Field(default=1, ge=1)
     max_memory_growth_ratio: float = Field(default=0.5, ge=0)
-    retention_days: int = Field(default=18, ge=1)
-    payload_retention_days: int = Field(default=7, ge=1)
-
-    @model_validator(mode="after")
-    def _validate_retention_window(self) -> "Phase6Config":
-        if self.payload_retention_days > self.retention_days:
-            raise ValueError("payload_retention_days must not exceed retention_days")
-        return self
 
 
 class Config(BaseSettings):

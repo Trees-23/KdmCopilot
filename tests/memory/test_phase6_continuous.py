@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 import pytest
 
-from nanobot.config.schema import Config, Phase6Config
+from nanobot.config.schema import Config
 from nanobot.memory.continuous import (
     EvidenceRecord,
     Phase6Disabled,
@@ -14,14 +14,11 @@ from nanobot.memory.continuous import (
     append_evidence,
     build_versioned_evalpack,
     collect_capacity_metrics,
-    load_failed_trace_records,
     load_state,
-    load_trace_records,
     make_proposal,
     pause_and_rollback,
     persist_proposal,
     phase6_active,
-    plan_retention,
     resume_after_review,
     rollback_skill_revision,
     run_cycle,
@@ -60,9 +57,6 @@ def _skill(connection: sqlite3.Connection) -> None:
 def test_phase6_is_off_by_default_and_kill_switch_is_immediate() -> None:
     assert phase6_active(Phase6RuntimeConfig()) is False
     assert Config().phase6.enabled is False
-    assert Phase6Config(payload_retention_days=7, retention_days=18).retention_days == 18
-    with pytest.raises(ValueError):
-        Phase6Config(payload_retention_days=19, retention_days=18)
     with pytest.raises(Phase6Disabled):
         select_low_risk_tasks([], Phase6RuntimeConfig())
     assert phase6_active(_cfg(kill_switch=True)) is False
@@ -83,25 +77,6 @@ def test_low_risk_selector_requires_repetition_and_excludes_sensitive_or_write_t
     assert len(candidates) == 1
     assert candidates[0].trace_ids == ("t1", "t2", "t3")
     assert candidates[0].frequency == 3
-
-
-def test_trace_index_loaders_remain_payload_free(tmp_path) -> None:
-    _workspace, connection = _db(tmp_path)
-    connection.execute(
-        "INSERT INTO trace_index(trace_id,workspace,started_at,outcome,summary,event_count,tool_count,redaction_version,source_path,created_at,updated_at) "
-        "VALUES('t1',?,'now','success','read only',1,0,'v1','derived://trace','now','now')",
-        (str(tmp_path),),
-    )
-    connection.execute(
-        "INSERT INTO trace_index(trace_id,workspace,started_at,outcome,summary,event_count,tool_count,redaction_version,source_path,created_at,updated_at) "
-        "VALUES('t2',?,'now','failure','secret: hidden',1,1,'v1','derived://trace','now','now')",
-        (str(tmp_path),),
-    )
-    connection.commit()
-    assert len(load_trace_records(connection)) == 2
-    assert load_failed_trace_records(connection)[0]["trace_id"] == "t2"
-    assert "payload" not in load_trace_records(connection)[0]
-    connection.close()
 
 
 def test_versioned_evalpack_and_evidence_are_append_only_and_redacted(tmp_path) -> None:
@@ -147,25 +122,6 @@ def test_health_pauses_and_requires_independent_resume(tmp_path) -> None:
     assert load_state(tmp_path).generation == 2
     evidence = (tmp_path / ".nanobot" / "phase6" / "evidence.jsonl").read_text(encoding="utf-8")
     assert "health_check" in evidence and "resume" in evidence
-
-
-def test_retention_never_deletes_long_lived_summary(tmp_path) -> None:
-    _workspace, connection = _db(tmp_path)
-    now = datetime(2026, 2, 1, tzinfo=UTC)
-    for trace_id, ended_at in (("recent", now - timedelta(days=1)), ("payload", now - timedelta(days=8)),
-                               ("long", now - timedelta(days=20))):
-        connection.execute(
-            "INSERT INTO trace_index(trace_id,workspace,started_at,ended_at,outcome,summary,redaction_version,source_path,created_at,updated_at) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?)",
-            (trace_id, str(tmp_path), ended_at.isoformat(), ended_at.isoformat(), "success", "long summary", "v1", "derived://trace", ended_at.isoformat(), ended_at.isoformat()),
-        )
-    connection.commit()
-    plan = plan_retention(connection, now=now)
-    assert plan.payload_expiry_trace_ids == ("long", "payload")
-    assert plan.summary_review_trace_ids == ("long",)
-    assert plan.protected_summary_trace_ids == ("long",)
-    assert connection.execute("SELECT count(*) FROM trace_index").fetchone()[0] == 3
-    connection.close()
 
 
 def test_proposal_is_traceable_and_rollback_is_explicit_cas(tmp_path) -> None:
@@ -231,7 +187,7 @@ def test_cycle_is_bounded_and_failed_trace_case_is_staged(tmp_path) -> None:
 def test_capacity_alert_and_regression_pause_roll_back_current(tmp_path) -> None:
     workspace, connection = _db(tmp_path)
     _skill(connection)
-    metrics = collect_capacity_metrics(connection, baseline_memory_records=1, max_memory_records=0)
+    metrics = collect_capacity_metrics(connection, baseline_assets=1, max_assets=0)
     assert metrics["capacity_exceeded"] is True
     state, rolled_back = pause_and_rollback(
         connection, workspace, {"regression_failures": 3}, _cfg(), skill_id="s",

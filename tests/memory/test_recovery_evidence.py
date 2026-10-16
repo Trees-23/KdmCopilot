@@ -4,9 +4,7 @@ from nanobot.memory.db import connect_memory_db
 from nanobot.memory.migrations.runner import apply_migrations
 from nanobot.memory.recovery_evidence import (
     link_successful_correction,
-    list_recovery_reviews,
     record_failed_episode,
-    review_recovery_episodes,
 )
 
 
@@ -38,14 +36,9 @@ def test_recovery_case_requires_repeated_verified_corrections_in_one_session(tmp
         assert linked is not None
         assert linked.status == "recovered"
 
-    reviews = review_recovery_episodes(connection, workspace=workspace)
-    assert len(reviews) == 1
-    assert reviews[0].status == "passed"
-    cards = list_recovery_reviews(connection, workspace=workspace)
-    assert len(cards) == 1
-    assert cards[0]["episode_count"] == 3
-    assert "private-value" not in str(cards[0])
-    assert "[REDACTED:CREDENTIAL]" in str(cards[0])
+    rows = connection.execute("SELECT failure_goal,status FROM recovery_episodes").fetchall()
+    assert len(rows) == 3 and all(row[1] == "recovered" for row in rows)
+    assert "private-value" not in str([tuple(row) for row in rows])
     connection.close()
 
 
@@ -141,63 +134,4 @@ def test_m17_two_different_file_names_share_a_structured_family(tmp_path) -> Non
     assert {tuple(row) for row in rows} == {
         ("file_read", "resource_not_found", "workspace_file_lookup", "correct_path")
     }
-    reviews = review_recovery_episodes(connection, workspace=workspace)
-    assert len(reviews) == 1
-    assert reviews[0].status == "passed"
-    assert len(reviews[0].episode_ids) == 2
-    connection.close()
-
-
-def test_m17_single_recovery_or_different_error_family_does_not_create_issue(tmp_path) -> None:
-    connection = connect_memory_db(tmp_path)
-    apply_migrations(connection)
-    workspace = str(tmp_path.resolve())
-    record_failed_episode(
-        connection, workspace=workspace, trace_id="single-failure", session_key="qq",
-        source_type="user", stop_reason="tool_error", user_text="请读取不存在的 missing.md",
-        tools=("read_file",), failure_error_code="file_not_found",
-    )
-    assert link_successful_correction(
-        connection, workspace=workspace, trace_id="single-success", session_key="qq",
-        source_type="user", user_text="路径写错了，请读取 README.md", tools=("read_file",),
-    ) is not None
-    record_failed_episode(
-        connection, workspace=workspace, trace_id="permission-failure", session_key="qq",
-        source_type="user", stop_reason="tool_error", user_text="请读取受限的 private.md",
-        tools=("read_file",), failure_error_code="permission_denied",
-    )
-    assert link_successful_correction(
-        connection, workspace=workspace, trace_id="permission-success", session_key="qq",
-        source_type="user", user_text="路径写错了，请读取 README.md", tools=("read_file",),
-    ) is not None
-    reviews = review_recovery_episodes(connection, workspace=workspace)
-    assert len(reviews) == 2
-    assert all(review.status == "insufficient_recovery_evidence" for review in reviews)
-    from nanobot.memory.failure_issues import create_failure_issues
-
-    assert create_failure_issues(connection, workspace=workspace) == ()
-    connection.close()
-
-
-def test_m17_rolling_window_excludes_stale_recovery_evidence(tmp_path) -> None:
-    connection = connect_memory_db(tmp_path)
-    apply_migrations(connection)
-    workspace = str(tmp_path.resolve())
-    for index in range(2):
-        record_failed_episode(
-            connection, workspace=workspace, trace_id=f"stale-failure-{index}", session_key="qq",
-            source_type="user", stop_reason="tool_error", user_text="请读取不存在的 stale.md",
-            tools=("read_file",), failure_error_code="file_not_found",
-        )
-        assert link_successful_correction(
-            connection, workspace=workspace, trace_id=f"stale-success-{index}", session_key="qq",
-            source_type="user", user_text="路径写错了，请读取 README.md", tools=("read_file",),
-        ) is not None
-    connection.execute(
-        "UPDATE recovery_episodes SET recovered_at=?,created_at=?",
-        ("2025-01-01T00:00:00+00:00", "2025-01-01T00:00:00+00:00"),
-    )
-    connection.commit()
-    reviews = review_recovery_episodes(connection, workspace=workspace)
-    assert reviews == ()
     connection.close()

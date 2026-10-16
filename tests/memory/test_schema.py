@@ -54,14 +54,11 @@ def test_all_required_tables_and_schema_meta_are_applied() -> None:
         )
     }
     assert {
-        "memory_records",
-        "memory_revisions",
         "wiki_pages",
         "wiki_relations",
         "cases",
         "skills",
         "skill_revisions",
-        "trace_index",
         "eval_packs",
         "eval_runs",
         "eval_case_results",
@@ -78,25 +75,6 @@ def test_all_required_tables_and_schema_meta_are_applied() -> None:
         "schema_meta",
     } <= tables
     assert connection.execute("SELECT status FROM schema_meta WHERE version=1").fetchone()[0] == "applied"
-
-
-def test_memory_revision_foreign_keys_and_deferred_current_pointer() -> None:
-    connection = _db()
-    connection.execute("BEGIN")
-    connection.execute(
-        "INSERT INTO memory_records(memory_id,memory_type,source_actor,created_at,updated_at,current_revision_id) "
-        "VALUES('m1','fact','test','now','now','r1')"
-    )
-    connection.execute(
-        "INSERT INTO memory_revisions(revision_id,memory_id,revision_no,content,content_hash,author_actor,reason,created_at) "
-        "VALUES('r1','m1',1,'body','sha256:x','test','test','now')"
-    )
-    connection.commit()
-    with pytest.raises(sqlite3.IntegrityError):
-        connection.execute(
-            "INSERT INTO memory_revisions(revision_id,memory_id,revision_no,content,content_hash,author_actor,reason,created_at) "
-            "VALUES('bad','missing',1,'body','sha256:y','test','test','now')"
-        )
 
 
 def test_skills_and_skill_revisions_foreign_keys() -> None:

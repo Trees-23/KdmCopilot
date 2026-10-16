@@ -56,7 +56,7 @@ class RetrievalResult:
 
     def render(self) -> str:
         if not self.hits:
-            if self.error_code and self.intent in {"history_query", "trace_query", "review"}:
+            if self.error_code and self.intent in {"history_query", "review"}:
                 return f"[Memory retrieval unavailable: {self.error_code}]"
             return ""
         lines = ["# Retrieved Memory (read-only)"]
@@ -180,21 +180,6 @@ class MemoryRetriever:
         # SQLite filtering is intentionally broad; token matching below handles
         # multi-word requests without requiring the complete sentence in a row.
         needle = "%"
-        if scope.allows("memory"):
-            rows = connection.execute(
-                """SELECT memory_id,memory_type,title,summary,current_revision_id,source_refs_json,
-                          effective_score,authority,updated_at
-                   FROM memory_records
-                   WHERE status NOT IN ('archived','tombstone') AND deletion_state='none'
-                     AND (title LIKE ? OR summary LIKE ? OR tags_json LIKE ?)
-                   ORDER BY effective_score DESC,updated_at DESC LIMIT ?""",
-                (needle, needle, needle, limit),
-            )
-            hits.extend(
-                self._memory_hits(
-                    (row for row in rows if _matches_query(query, str(row[2]), str(row[3]))), now
-                )
-            )
         if scope.allows("skill"):
             rows = connection.execute(
                 """SELECT skill_id,name,description,current_revision_id,source_path,updated_at
@@ -211,39 +196,9 @@ class MemoryRetriever:
                             source_index=4, freshness_index=5,
                         )
                     )
-        if scope.allows("trace"):
-            rows = connection.execute(
-                """SELECT trace_id,session_key,summary,summary,NULL,source_path,
-                          started_at,tool_count,event_count
-                   FROM trace_index
-                   WHERE workspace=? AND index_status='indexed'
-                     AND (trace_expire_at IS NULL OR trace_expire_at > ?)
-                     AND (?='' OR session_key=?)
-                     AND (summary LIKE ? OR outcome LIKE ?)
-                   ORDER BY started_at DESC LIMIT ?""",
-                (str(workspace.resolve()), now.isoformat(), session_key, session_key, needle, needle, limit),
-            )
-            for row in rows:
-                if _matches_query(query, str(row[2]), str(row[3])):
-                    hits.append(self._hit_from_row("trace", row, now, base=0.1, query=query))
         deduped = {hit.identifier: hit for hit in hits}
         return sorted(deduped.values(), key=lambda hit: (-hit.score, -hit.freshness, hit.identifier))[:limit]
 
-    @staticmethod
-    def _memory_hits(rows: Iterable[sqlite3.Row], now: datetime) -> list[MemoryHit]:
-        hits: list[MemoryHit] = []
-        for row in rows:
-            freshness = MemoryRetriever._freshness(row[8], now)
-            authority = _safe_float(row[7])
-            hits.append(
-                MemoryHit(
-                    object_id=str(row[0]), object_type=f"memory:{row[1]}", title=str(row[2]), summary=str(row[3]),
-                    revision_id=row[4], source_ref=next(iter(_json_value(row[5], []) or []), None),
-                    score=_safe_float(row[6]) + 0.15 * freshness + 0.1 * authority,
-                    freshness=freshness, authority=authority,
-                )
-            )
-        return hits
 
     @staticmethod
     def _hit_from_row(

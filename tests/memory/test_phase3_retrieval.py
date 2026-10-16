@@ -23,7 +23,7 @@ def _workspace_db(tmp_path):
 def test_intent_router_is_rule_first_and_explicit():
     router = IntentRouter()
     assert router.classify("请查一下之前的历史对话").intent == "history_query"
-    assert router.classify("show me the latest trace").scopes == ("trace",)
+    assert router.classify("show me the latest trace").intent == "task"
     assert router.classify("please remember this decision").intent == "memory_write"
     assert router.classify("normal coding task").intent == "task"
     assert MemoryScopePolicy().for_intent(router.classify("review the case")).allows("asset")

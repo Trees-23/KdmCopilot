@@ -12,10 +12,8 @@ from nanobot.memory.evaluation import (
     create_eval_run,
     evaluate_gate,
     finish_eval_run,
-    mark_stale_if_identity_changed,
     record_case_result,
     replay_cases,
-    replay_consistency,
 )
 from nanobot.memory.maintenance import open_maintenance_db
 
@@ -87,9 +85,6 @@ def test_replay_results_gate_and_stale_identity(tmp_path):
     finish_eval_run(connection, run_id)
     gate = evaluate_gate(connection, eval_run_id=run_id)
     assert gate.eligible is True
-    assert mark_stale_if_identity_changed(connection, eval_run_id=run_id, tool_schema_digest="changed",
-                                          fixture_hash="fixture", dataset_hash=draft.dataset_hash)
-    assert connection.execute("SELECT gate_result FROM eval_runs WHERE eval_run_id=?", (run_id,)).fetchone()[0] == "stale_baseline"
     connection.close()
 
 
@@ -106,10 +101,3 @@ def test_replay_cases_removes_fixture_after_failure(tmp_path):
     with pytest.raises(RuntimeError):
         replay_cases((type("Case", (), {"case_key": "bad", "prompt": "x"})(),), replay)
     assert seen and not seen[0].exists()
-
-
-def test_limited_replay_consistency_is_explicit():
-    first = {"case": ReplayEvidence("ok", security_violation=False)}
-    second = {"case": ReplayEvidence("ok", security_violation=False)}
-    assert replay_consistency(first, second) == "consistent"
-    assert replay_consistency(first, {"case": ReplayEvidence("different")}) == "inconsistent"

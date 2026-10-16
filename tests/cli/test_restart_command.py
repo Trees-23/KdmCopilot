@@ -297,13 +297,16 @@ class TestRestartCommand:
 
     @pytest.mark.asyncio
     async def test_run_agent_loop_estimates_usage_when_provider_omits_it(self, monkeypatch):
+        from importlib import import_module
+
+        runner_module = import_module("nanobot.agent.runner")
         loop, _bus = _make_loop()
         monkeypatch.setattr(
-            "nanobot.agent.runner.estimate_prompt_tokens_chain",
+            runner_module, "estimate_prompt_tokens_chain",
             lambda *_args, **_kwargs: (123, "test"),
         )
         monkeypatch.setattr(
-            "nanobot.agent.runner.estimate_message_tokens",
+            runner_module, "estimate_message_tokens",
             lambda _message: 7,
         )
         loop.provider.chat_with_retry = AsyncMock(side_effect=[

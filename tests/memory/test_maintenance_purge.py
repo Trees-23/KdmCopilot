@@ -17,13 +17,13 @@ from typer.testing import CliRunner
 from nanobot.cli.memory import create_memory_app
 from nanobot.memory.legacy_purge import MARKER_TABLE, PurgeError
 from nanobot.memory.lock import acquire_lock, release_lock
-from nanobot.memory.maintenance import open_maintenance_db
 from nanobot.memory.maintenance_purge import (
     PURGE_ID,
     _purge_maintenance,
     preview_maintenance_purge,
     purge_maintenance_data,
 )
+from tests.memory.legacy_schema import open_pre_q4_db as open_maintenance_db
 from tests.memory.test_legacy_purge import _execute, _row
 
 

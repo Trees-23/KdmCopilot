@@ -37,6 +37,10 @@ ASSET_LESSON_VERSIONS_MIGRATION_PATH = MIGRATIONS_DIR / "0031_asset_lesson_versi
 
 QUEUE_LEASES_MIGRATION_PATH = MIGRATIONS_DIR / "0021_evolution_queue_leases.sql"
 JUDGE_FEEDBACK_MIGRATION_PATH = MIGRATIONS_DIR / "0022_judge_feedback.sql"
+DROP_ISSUE_MIGRATION_PATH = MIGRATIONS_DIR / "0025_drop_issue_line.sql"
+DROP_TRACE_MIGRATION_PATH = MIGRATIONS_DIR / "0026_drop_trace_index.sql"
+DROP_MEMORY_MIGRATION_PATH = MIGRATIONS_DIR / "0027_drop_memory_records.sql"
+
 EVALUATION_BUDGET_MIGRATION_PATH = MIGRATIONS_DIR / "0028_evaluation_budget_rounds.sql"
 
 
@@ -81,14 +85,11 @@ REQUIRED_TABLES = frozenset(
     {
         "schema_meta",
         "memory_assets",
-        "memory_records",
-        "memory_revisions",
         "wiki_pages",
         "wiki_relations",
         "cases",
         "skills",
         "skill_revisions",
-        "trace_index",
         "eval_packs",
         "eval_runs",
         "eval_case_results",
@@ -106,39 +107,29 @@ REQUIRED_TABLES = frozenset(
         "semantic_task_evidence",
         "semantic_quality_reviews",
         "recovery_episodes",
-        "recovery_case_reviews",
         "ab_evaluations",
         "ab_case_results",
-        "failure_issues",
-        "failure_issue_actions",
-        "failure_issue_deliveries",
-        "failure_issue_candidates",
         "evolution_task_evidence",
         "evolution_step_evidence",
         "evolution_task_links",
         "evolution_candidate_staging",
     }
 )
-
 EVALUATION_BUDGET_TABLES = frozenset({"evaluation_candidate_admissions", "evaluation_model_call_reservations"})
 REQUIRED_TABLES = REQUIRED_TABLES | EVALUATION_BUDGET_TABLES
-
 BASE_REQUIRED_TABLES = REQUIRED_TABLES - frozenset(
     {
         "skill_proposals", "proposal_deliveries", "proposal_actions", "group_memory_scopes",
         "phase6_alert_deliveries", "eval_cases", "semantic_task_evidence",
-        "semantic_quality_reviews", "recovery_episodes", "recovery_case_reviews", "ab_evaluations",
-        "ab_case_results", "failure_issues", "failure_issue_actions", "failure_issue_deliveries",
-        "failure_issue_candidates",
+        "semantic_quality_reviews", "recovery_episodes", "ab_evaluations",
+        "ab_case_results",
         "evolution_task_evidence", "evolution_step_evidence", "evolution_task_links",
         "evolution_candidate_staging",
     }
 )
-
 STEPWISE_EVOLUTION_TABLES = frozenset(
     {"evolution_task_evidence", "evolution_step_evidence", "evolution_task_links"}
 )
-
 CANDIDATE_STAGING_TABLES = frozenset({"evolution_candidate_staging"})
 
 REQUIRED_COLUMNS = {
@@ -147,7 +138,6 @@ REQUIRED_COLUMNS = {
     "evolution_step_evidence": frozenset({"resource_class", "error_code", "error_type", "error_source", "retryability"}),
     "ab_case_results": frozenset({"judge_feedback", "sample_round"}),
     "ab_evaluations": frozenset({"protocol_version", "execution_deadline"}),
-    "failure_issues": frozenset({"group_openid"}),
     "evolution_candidate_staging": frozenset({
         "lease_owner", "lease_expires_at", "attempt_count", "last_error",
     }),

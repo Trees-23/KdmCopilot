@@ -29,8 +29,8 @@ class MemoryScope:
 class MemoryScopePolicy:
     """Convert an intent decision into an immutable, read-only scope."""
 
-    _ALIASES = {"skills": "skill", "asset": "asset", "assets": "asset", "traces": "trace", "history": "memory"}
-    _SCOPES = frozenset({"memory", "asset", "skill", "trace"})
+    _ALIASES = {"skills": "skill", "asset": "asset", "assets": "asset"}
+    _SCOPES = frozenset({"asset", "skill"})
 
     def for_intent(self, decision: IntentDecision) -> MemoryScope:
         scopes = self.normalize(decision.scopes)

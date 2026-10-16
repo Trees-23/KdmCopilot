@@ -40,7 +40,7 @@ def test_assets_are_independent_of_case_wiki_or_legacy_memory_tables(tmp_path):
     connection=open_maintenance_db(tmp_path)
     _asset(connection,tmp_path,"case")
     for name in ("cases","wiki_relations","wiki_pages","memory_revisions","memory_records","trace_index"):
-        connection.execute("DROP TABLE "+name)
+        connection.execute("DROP TABLE IF EXISTS "+name)
     connection.commit()
     result=retrieve_asset_context("fixture",workspace=tmp_path,session_key="s",trace_id="trace",turn_id="turn")
     assert result.outcome=="indexed" and result.injected_ids==("case",)

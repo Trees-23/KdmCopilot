@@ -279,11 +279,6 @@ def adopt_workspace_proposal(
             "WHERE candidate_revision_id=? AND workspace=?",
             ("M15 通过并完成 workspace 原子采用", timestamp, candidate_revision, str(proposal_workspace)),
         )
-        connection.execute(
-            "UPDATE failure_issue_candidates SET status='adopted',reason=?,updated_at=? "
-            "WHERE candidate_revision_id=? AND workspace=?",
-            ("M15 通过并完成 workspace 原子采用", timestamp, candidate_revision, str(proposal_workspace)),
-        )
         _record_action(
             connection,
             proposal_id=proposal_id,
@@ -376,11 +371,6 @@ def rollback_workspace_proposal(
         )
         connection.execute(
             "UPDATE evolution_candidate_staging SET status='closed',reason=?,updated_at=?,lease_owner=NULL,lease_expires_at=NULL "
-            "WHERE candidate_revision_id=? AND workspace=?",
-            ("workspace Skill 已回滚到 baseline", timestamp, candidate_revision, str(proposal_workspace)),
-        )
-        connection.execute(
-            "UPDATE failure_issue_candidates SET status='failed',reason=?,updated_at=? "
             "WHERE candidate_revision_id=? AND workspace=?",
             ("workspace Skill 已回滚到 baseline", timestamp, candidate_revision, str(proposal_workspace)),
         )

@@ -24,7 +24,7 @@ from nanobot.memory.legacy_purge import (
     preview_legacy_purge,
     purge_legacy_data,
 )
-from nanobot.memory.maintenance import open_maintenance_db
+from tests.memory.legacy_schema import open_pre_q4_db as open_maintenance_db
 from tests.memory.test_asset_retrieval import _asset
 
 
