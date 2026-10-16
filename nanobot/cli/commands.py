@@ -8,6 +8,7 @@ import sys
 import time
 from collections.abc import Callable, Iterable
 from contextlib import nullcontext, suppress
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -73,6 +74,7 @@ from nanobot.bus.outbound_events import (  # noqa: E402
     outbound_event_from_message,
 )
 from nanobot.cli.audit import create_audit_app  # noqa: E402
+from nanobot.cli.evolution import evolution_worker  # noqa: E402
 from nanobot.cli.gateway import create_gateway_app  # noqa: E402
 from nanobot.cli.memory import create_memory_app  # noqa: E402
 from nanobot.cli.stream import StreamRenderer, ThinkingSpinner  # noqa: E402
@@ -229,6 +231,7 @@ app = typer.Typer(
 )
 
 console = Console()
+app.command("evolution-worker")(evolution_worker)
 app.add_typer(create_audit_app(console=console), name="audit")
 app.add_typer(create_memory_app(console=console), name="memory")
 EXIT_COMMANDS = {"exit", "quit", "/exit", "/quit", ":q"}
@@ -1894,39 +1897,25 @@ def _run_gateway(
         # Phase 6 review is a protected system task.  It scans redacted Trace
         # projections directly; it never asks the Agent to interpret a prompt
         # or decide whether to write, notify, merge, or publish.
-        from nanobot.memory.asset_lesson import ASSET_LESSON_JOB_ID, run_asset_lesson_scan
-        from nanobot.memory.phase6_runtime import build_overlay_pipeline
-        from nanobot.memory.phase6_trigger import (
-            PHASE6_REVIEW_JOB_ID,
-            run_phase6_review_scan_async,
-        )
+        from nanobot.memory.asset_lesson import ASSET_LESSON_JOB_ID
+        from nanobot.memory.maintenance import open_maintenance_db
+        from nanobot.memory.phase6_trigger import PHASE6_REVIEW_JOB_ID
+        from nanobot.memory.work_queue import enqueue_work
 
-        if job.name == ASSET_LESSON_JOB_ID:
-            result = await run_asset_lesson_scan(
-                config.workspace_path, config.phase6, provider=agent.provider, model=agent.model,
-                audit_runtime=agent.audit_runtime,
-            )
-            logger.info("Asset lesson scan completed status={} created={} failed={}",
-                        result["status"], len(result["created"]), result.get("failed", 0))
-            return result["status"]
-
-        if job.name == PHASE6_REVIEW_JOB_ID:
-            result = await run_phase6_review_scan_async(
-                config.workspace_path,
-                config.phase6,
-                overlay_pipeline_factory=(
-                    lambda connection, workspace, phase6_config: build_overlay_pipeline(
-                        connection,
-                        workspace,
-                        phase6_config,
-                        notifier=channels.proposal_notifier,
-                    )
-                ),
-                notify_error=channels.proposal_notifier.enqueue_scan_failure,
-                active_agent=agent,
-            )
-            logger.info("Phase 6 scheduled review completed: {}", getattr(result, "status", result))
-            return str(getattr(result, "status", "completed"))
+        if job.name in {ASSET_LESSON_JOB_ID, PHASE6_REVIEW_JOB_ID}:
+            trigger_id = f"{job.name}:{datetime.now(UTC).strftime('%Y%m%dT%H%M')}"
+            connection = open_maintenance_db(config.workspace_path)
+            try:
+                work_id = enqueue_work(
+                    connection,
+                    str(config.workspace_path.resolve()),
+                    "lesson" if job.name == ASSET_LESSON_JOB_ID else "review",
+                    trigger_id,
+                )
+            finally:
+                connection.close()
+            logger.info("Phase 6 worker trigger queued job={} work_id={}", job.name, work_id)
+            return "queued"
 
         if is_bound_cron_job(job):
             return await run_bound_cron_job(job, agent=agent, cron=cron)

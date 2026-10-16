@@ -12,7 +12,7 @@ def open_pre_q4_db(workspace: Path):
         return connection
     for path in sorted(MIGRATIONS_DIR.glob("*.sql")):
         version = int(path.name[:4])
-        if version in {25, 26, 27}:
+        if version in {25, 26, 27, 32}:
             continue
         text = path.read_text()
         connection.executescript(text)

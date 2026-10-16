@@ -128,7 +128,7 @@ def test_mid_upgrade_failure_rolls_back_and_next_start_recovers(monkeypatch):
 
 def test_new_database_replays_immutable_history_and_leaves_reserved_versions_empty():
     connection = _db()
-    assert {row[0] for row in connection.execute("SELECT version FROM schema_meta")} == {*range(1, 23), 25, 26, 27, 28, 29, 30, 31}
+    assert {row[0] for row in connection.execute("SELECT version FROM schema_meta")} == {*range(1, 23), 25, 26, 27, 28, 29, 30, 31, 32}
     assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
     assert connection.execute("SELECT count(*) FROM evolution_candidate_staging").fetchone()[0] == 0
 

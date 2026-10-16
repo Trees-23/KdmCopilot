@@ -5,8 +5,8 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-MIGRATION_VERSION = 31
-MIGRATION_ID = "0031_asset_lesson_versions"
+MIGRATION_VERSION = 32
+MIGRATION_ID = "0032_evolution_work_items"
 APP_BUILD = "memory-phase1"
 
 MIGRATIONS_DIR = Path(__file__).with_name("migrations")
@@ -34,6 +34,7 @@ MEMORY_ASSETS_MIGRATION_PATH = MIGRATIONS_DIR / "0020_memory_assets.sql"
 ASSET_STEP_FACTS_MIGRATION_PATH = MIGRATIONS_DIR / "0029_asset_step_facts.sql"
 ASSET_REUSE_SIGNALS_MIGRATION_PATH = MIGRATIONS_DIR / "0030_asset_reuse_signals.sql"
 ASSET_LESSON_VERSIONS_MIGRATION_PATH = MIGRATIONS_DIR / "0031_asset_lesson_versions.sql"
+EVOLUTION_WORK_MIGRATION_PATH = MIGRATIONS_DIR / "0032_evolution_work_items.sql"
 
 QUEUE_LEASES_MIGRATION_PATH = MIGRATIONS_DIR / "0021_evolution_queue_leases.sql"
 JUDGE_FEEDBACK_MIGRATION_PATH = MIGRATIONS_DIR / "0022_judge_feedback.sql"
@@ -47,7 +48,7 @@ EVALUATION_BUDGET_MIGRATION_PATH = MIGRATIONS_DIR / "0028_evaluation_budget_roun
 def migration_sql() -> str:
     """Return the checked-in latest migration SQL."""
 
-    return ASSET_LESSON_VERSIONS_MIGRATION_PATH.read_text(encoding="utf-8")
+    return EVOLUTION_WORK_MIGRATION_PATH.read_text(encoding="utf-8")
 
 
 def latest_migration_sql() -> str:
@@ -85,6 +86,7 @@ REQUIRED_TABLES = frozenset(
     {
         "schema_meta",
         "memory_assets",
+        "evolution_work_items",
         "wiki_pages",
         "wiki_relations",
         "cases",
@@ -119,6 +121,7 @@ EVALUATION_BUDGET_TABLES = frozenset({"evaluation_candidate_admissions", "evalua
 REQUIRED_TABLES = REQUIRED_TABLES | EVALUATION_BUDGET_TABLES
 BASE_REQUIRED_TABLES = REQUIRED_TABLES - frozenset(
     {
+        "evolution_work_items",
         "skill_proposals", "proposal_deliveries", "proposal_actions", "group_memory_scopes",
         "phase6_alert_deliveries", "eval_cases", "semantic_task_evidence",
         "semantic_quality_reviews", "recovery_episodes", "ab_evaluations",
