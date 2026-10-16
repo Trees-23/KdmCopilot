@@ -70,6 +70,18 @@ nanobot memory purge-legacy --database runtime/workspace/.nanobot/memory.sqlite3
 五个历史运行目录需要另行授权和处理，数据库完成标记不代表文件已删除。
 成功后应在恢复写入前核对清空结果，再按部署流程恢复 Gateway；此入口不会自动停启服务。
 
+## 独立 C-P6 维护表清理
+
+P6 完成后，`nanobot memory purge-maintenance --database <已有数据库> --dry-run` 只读预览
+`maintenance_jobs` → `maintenance_lock` 两张表；默认行为同样是预览。它不属于 P6 的23步，
+真实执行必须另获 C-P6 授权、暂停所有相关执行者、确认无有效租约，并重新核对预览摘要。
+
+独立授权后的执行参数为 `--execute --writers-stopped --confirm-plan <最新摘要>`。
+本入口保持外键开启，在独立事务内删除两表历史行、检查外键并写固定标记
+`legacy-maintenance-cp6-v1`；表/索引与活锁函数保留。未完成P6时拒绝，失败回滚；
+成功后重跑保留后来新写的维护任务和租约。锁文件与P6共享，完成标记分别记账。
+不备份、不清 `memory_outbox`、资产、审计、P6标记或文件目录；不自动停启服务。
+
 ## Common Patterns
 
 Most day-to-day commands use the default config and workspace. Advanced or multi-instance runs usually pass both paths explicitly:
