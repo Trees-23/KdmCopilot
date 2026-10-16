@@ -59,7 +59,9 @@ async def execute_work(kind: str, config: Any) -> dict:
     from nanobot.memory.proposal_notifier import ProposalNotifier
 
     bus = MessageBus()
-    agent = AgentLoop.from_config(config, bus=bus, mcp_servers={}, publish_callbacks=None)
+    # ``from_config`` supplies the configured MCP map itself. Passing a second
+    # value here would create duplicate keyword arguments and abort the worker.
+    agent = AgentLoop.from_config(config, bus=bus, publish_callbacks=None)
     notifier = ProposalNotifier(str(config.workspace_path), config.phase6, bus)
 
     def notify(proposal_id: str) -> None:
