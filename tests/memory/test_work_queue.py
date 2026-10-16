@@ -98,3 +98,28 @@ async def test_worker_tick_executes_and_acknowledges_claimed_work_without_gatewa
     assert result["status"] == "acknowledged" and seen == ["lesson"]
     connection = open_maintenance_db(tmp_path)
     assert tuple(connection.execute("SELECT status,attempt_count FROM evolution_work_items").fetchone()) == ("completed", 1)
+
+
+@pytest.mark.asyncio
+async def test_worker_tick_records_bounded_exception_and_schedules_retry(tmp_path):
+    from types import SimpleNamespace
+
+    from nanobot.memory.evolution_worker import worker_tick
+
+    connection = open_maintenance_db(tmp_path)
+    enqueue_work(connection, str(tmp_path), "review", "review:failure", now=NOW)
+    connection.close()
+    config = SimpleNamespace(workspace_path=tmp_path, phase6=SimpleNamespace(
+        enabled=True, kill_switch=False, evolution=SimpleNamespace(evaluation_max_attempts=3),
+    ))
+
+    async def fail(_kind, _config):
+        raise ValueError("sensitive details are not persisted")
+
+    result = await worker_tick(config, owner="worker-failure", execute=fail)
+    assert result["status"] == "acknowledged"
+    connection = open_maintenance_db(tmp_path)
+    row = connection.execute("SELECT status,attempt_count,error_code FROM evolution_work_items").fetchone()
+    assert tuple(row) == ("queued", 1, "ValueError")
+    assert "sensitive details" not in str(row)
+    assert claim_work(connection, str(tmp_path), "too-early", now=NOW) is None

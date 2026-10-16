@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import os
 import uuid
@@ -61,7 +62,9 @@ async def execute_work(kind: str, config: Any) -> dict:
     bus = MessageBus()
     # ``from_config`` supplies the configured MCP map itself. Passing a second
     # value here would create duplicate keyword arguments and abort the worker.
-    agent = AgentLoop.from_config(config, bus=bus, publish_callbacks=None)
+    worker_config = copy.deepcopy(config)
+    worker_config.tools.mcp_servers = {}
+    agent = AgentLoop.from_config(worker_config, bus=bus, publish_callbacks=None)
     notifier = ProposalNotifier(str(config.workspace_path), config.phase6, bus)
 
     def notify(proposal_id: str) -> None:

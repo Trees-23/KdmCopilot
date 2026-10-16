@@ -2683,6 +2683,15 @@ def test_gateway_bound_cron_runs_as_session_turn(
     assert asyncio.run(cron.on_job(lesson_job)) == "queued"
     assert tuple(connection.execute("SELECT kind,status FROM evolution_work_items").fetchone()) == ("lesson", "queued")
     assert connection.execute("SELECT count(*) FROM memory_assets WHERE asset_level='L2'").fetchone()[0] == 0
+    from nanobot.memory.phase6_trigger import PHASE6_REVIEW_JOB_ID
+
+    review_job = CronJob(id=PHASE6_REVIEW_JOB_ID, name=PHASE6_REVIEW_JOB_ID,
+                         payload=CronPayload(kind="system_event"))
+    assert asyncio.run(cron.on_job(review_job)) == "queued"
+    assert {tuple(row) for row in connection.execute(
+        "SELECT kind,status FROM evolution_work_items ORDER BY kind"
+    )} == {("lesson", "queued"), ("review", "queued")}
+    assert connection.execute("SELECT count(*) FROM memory_assets WHERE asset_level='L2'").fetchone()[0] == 0
     connection.close()
 
 
