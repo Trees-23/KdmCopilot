@@ -5,8 +5,8 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-MIGRATION_VERSION = 30
-MIGRATION_ID = "0030_asset_reuse_signals"
+MIGRATION_VERSION = 31
+MIGRATION_ID = "0031_asset_lesson_versions"
 APP_BUILD = "memory-phase1"
 
 MIGRATIONS_DIR = Path(__file__).with_name("migrations")
@@ -33,6 +33,7 @@ FAILURE_CANDIDATE_HASH_RETRY_MIGRATION_PATH = MIGRATIONS_DIR / "0019_failure_can
 MEMORY_ASSETS_MIGRATION_PATH = MIGRATIONS_DIR / "0020_memory_assets.sql"
 ASSET_STEP_FACTS_MIGRATION_PATH = MIGRATIONS_DIR / "0029_asset_step_facts.sql"
 ASSET_REUSE_SIGNALS_MIGRATION_PATH = MIGRATIONS_DIR / "0030_asset_reuse_signals.sql"
+ASSET_LESSON_VERSIONS_MIGRATION_PATH = MIGRATIONS_DIR / "0031_asset_lesson_versions.sql"
 
 QUEUE_LEASES_MIGRATION_PATH = MIGRATIONS_DIR / "0021_evolution_queue_leases.sql"
 JUDGE_FEEDBACK_MIGRATION_PATH = MIGRATIONS_DIR / "0022_judge_feedback.sql"
@@ -42,7 +43,7 @@ EVALUATION_BUDGET_MIGRATION_PATH = MIGRATIONS_DIR / "0028_evaluation_budget_roun
 def migration_sql() -> str:
     """Return the checked-in latest migration SQL."""
 
-    return ASSET_REUSE_SIGNALS_MIGRATION_PATH.read_text(encoding="utf-8")
+    return ASSET_LESSON_VERSIONS_MIGRATION_PATH.read_text(encoding="utf-8")
 
 
 def latest_migration_sql() -> str:
@@ -142,7 +143,7 @@ CANDIDATE_STAGING_TABLES = frozenset({"evolution_candidate_staging"})
 
 REQUIRED_COLUMNS = {
     "retrieval_events": frozenset({"asset_workspace", "asset_settled_outcome"}),
-    "memory_assets": frozenset({"asset_id", "asset_level", "origin_table", "origin_id", "steps_json", "family_key", "expires_at"}),
+    "memory_assets": frozenset({"asset_id", "asset_level", "origin_table", "origin_id", "steps_json", "family_key", "expires_at", "lesson_input_version", "lesson_source_ids_json", "lesson_output_digests_json", "lesson_trace_id"}),
     "evolution_step_evidence": frozenset({"resource_class", "error_code", "error_type", "error_source", "retryability"}),
     "ab_case_results": frozenset({"judge_feedback", "sample_round"}),
     "ab_evaluations": frozenset({"protocol_version", "execution_deadline"}),

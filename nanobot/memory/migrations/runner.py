@@ -11,6 +11,7 @@ from nanobot.memory.schema import (
     AB_QUALITY_EVALUATIONS_MIGRATION_PATH,
     ALERT_DELIVERY_MIGRATION_PATH,
     APP_BUILD,
+    ASSET_LESSON_VERSIONS_MIGRATION_PATH,
     ASSET_REUSE_SIGNALS_MIGRATION_PATH,
     ASSET_STEP_FACTS_MIGRATION_PATH,
     BASE_REQUIRED_TABLES,
@@ -343,7 +344,8 @@ def apply_migrations(
         REQUIRED_TABLES,
     )
     apply_one(29, "0029_asset_step_facts", ASSET_STEP_FACTS_MIGRATION_PATH.read_text(encoding="utf-8"), REQUIRED_TABLES)
-    apply_one(MIGRATION_VERSION, MIGRATION_ID, ASSET_REUSE_SIGNALS_MIGRATION_PATH.read_text(encoding="utf-8"), REQUIRED_TABLES)
+    apply_one(30, "0030_asset_reuse_signals", ASSET_REUSE_SIGNALS_MIGRATION_PATH.read_text(encoding="utf-8"), REQUIRED_TABLES)
+    apply_one(MIGRATION_VERSION, MIGRATION_ID, ASSET_LESSON_VERSIONS_MIGRATION_PATH.read_text(encoding="utf-8"), REQUIRED_TABLES)
     verify_schema(connection, schema_hash(latest_migration_sql()))
 
 

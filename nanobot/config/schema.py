@@ -547,6 +547,8 @@ class Phase6EvolutionConfig(Base):
     asset_layer_enabled: bool = False
     asset_retrieval_enabled: bool = False
     asset_injection_token_budget: int = Field(default=600, ge=1, le=600)
+    lesson_min_cases: int = Field(default=3, ge=1)
+    lesson_abstraction_enabled: bool = False
     evaluation_lease_seconds: int = Field(default=900, ge=1)
     evaluation_timeout_seconds: int = Field(default=900, ge=1)
     evaluation_max_attempts: int = Field(default=3, ge=1, le=3)
@@ -595,6 +597,8 @@ class Phase6EvolutionConfig(Base):
     def validate_asset_dependencies(self):
         if self.asset_retrieval_enabled and not self.asset_layer_enabled:
             raise ValueError("asset retrieval requires asset layer")
+        if self.lesson_abstraction_enabled and not self.asset_layer_enabled:
+            raise ValueError("lesson abstraction requires asset layer")
         return self
 
 

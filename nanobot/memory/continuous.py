@@ -60,6 +60,8 @@ class Phase6RuntimeConfig:
     asset_layer_enabled: bool = False
     asset_retrieval_enabled: bool = False
     asset_injection_token_budget: int = 600
+    lesson_min_cases: int = 3
+    lesson_abstraction_enabled: bool = False
     evaluation_lease_seconds: int = 900
     evaluation_timeout_seconds: int = 900
     evaluation_max_attempts: int = 3
@@ -96,6 +98,7 @@ class Phase6RuntimeConfig:
                     "ab_evaluation_max_model_calls_per_day",
                     "evaluation_lease_seconds", "evaluation_timeout_seconds", "evaluation_max_attempts",
                     "asset_layer_enabled", "asset_retrieval_enabled", "asset_injection_token_budget",
+                    "lesson_min_cases", "lesson_abstraction_enabled",
                     "adoption_enabled", "workspace_skill_allowlist",
                     "stepwise_evidence_enabled", "stepwise_evidence_mode", "mixed_risk_policy",
                     "stepwise_candidate_enabled", "case_candidate_promotion",
@@ -109,6 +112,10 @@ class Phase6RuntimeConfig:
             raise ValueError("asset token budget must be between 1 and 600")
         if self.asset_retrieval_enabled and not self.asset_layer_enabled:
             raise ValueError("asset retrieval requires asset layer")
+        if self.lesson_min_cases < 1:
+            raise ValueError("lesson minimum must be positive")
+        if self.lesson_abstraction_enabled and not self.asset_layer_enabled:
+            raise ValueError("lesson abstraction requires asset layer")
         if self.min_repeat_count < 3:
             raise ValueError("min_repeat_count must be at least 3")
         if self.max_candidates_per_cycle < 1:

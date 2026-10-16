@@ -16,7 +16,7 @@ def test_upgrade_creates_empty_assets_and_never_backfills_legacy_completed(tmp_p
     connection.execute("DROP TABLE memory_assets")
     for name in ("retryability","error_source","error_type","error_code","resource_class"):
         connection.execute("ALTER TABLE evolution_step_evidence DROP COLUMN "+name)
-    connection.execute("DELETE FROM schema_meta WHERE version IN (20,29)")
+    connection.execute("DELETE FROM schema_meta WHERE version IN (20,29,31)")
     connection.execute(
         "INSERT INTO evolution_task_evidence(task_id,workspace,goal,actual_outcome,qualification,redaction_status,created_at,updated_at) "
         "VALUES('old',?,'old fact','completed','partial_evidence','safe','original-created','original-updated')",(str(tmp_path),),
@@ -37,7 +37,7 @@ def test_upgrade_creates_empty_assets_and_never_backfills_legacy_completed(tmp_p
     assert connection.execute("SELECT count(*) FROM memory_assets").fetchone()[0]==0
     assert not any(s.lstrip().upper().startswith("DELETE") for s in statements)
     assert connection.execute("PRAGMA foreign_key_check").fetchall()==[]
-    assert {row[0] for row in connection.execute("SELECT version FROM schema_meta WHERE version>=20")}=={20,21,22,28,29,30}
+    assert {row[0] for row in connection.execute("SELECT version FROM schema_meta WHERE version>=20")}=={20,21,22,28,29,30,31}
 
 
 @pytest.mark.parametrize("field,value",[("steps_json",'[{}]'),("expires_at","2099-01-01"),

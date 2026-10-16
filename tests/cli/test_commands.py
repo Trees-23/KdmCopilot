@@ -2668,6 +2668,26 @@ def test_gateway_bound_cron_runs_as_session_turn(
     assert msg.metadata["message_id"] == "om_root123"
     assert msg.metadata["thread_id"] == "om_root123"
 
+    # The protected L2 job calls the offline pipeline directly with the live
+    # provider and audit runtime, without submitting a conversational Agent turn.
+    from nanobot.audit.runtime import AuditRuntime
+    from nanobot.memory.asset_lesson import ASSET_LESSON_JOB_ID
+    from nanobot.memory.maintenance import open_maintenance_db
+    from tests.memory.test_asset_lesson import _fixtures, _provider
+
+    config.workspace_path.mkdir(parents=True, exist_ok=True)
+    connection = open_maintenance_db(config.workspace_path)
+    _fixtures(connection, config.workspace_path)
+    config.phase6.evolution.asset_layer_enabled = True
+    config.phase6.evolution.lesson_abstraction_enabled = True
+    seen["agent"].provider = _provider(connection, config.workspace_path)
+    seen["agent"].audit_runtime = AuditRuntime.disabled()
+    lesson_job = CronJob(id=ASSET_LESSON_JOB_ID, name=ASSET_LESSON_JOB_ID,
+                         payload=CronPayload(kind="system_event"))
+    assert asyncio.run(cron.on_job(lesson_job)) == "completed"
+    assert connection.execute("SELECT count(*) FROM memory_assets WHERE asset_level='L2'").fetchone()[0] == 1
+    connection.close()
+
 
 def test_gateway_local_trigger_queue_submits_agent_turns(
     monkeypatch,

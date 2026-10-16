@@ -1892,6 +1892,7 @@ def _run_gateway(
         # Phase 6 review is a protected system task.  It scans redacted Trace
         # projections directly; it never asks the Agent to interpret a prompt
         # or decide whether to write, notify, merge, or publish.
+        from nanobot.memory.asset_lesson import ASSET_LESSON_JOB_ID, run_asset_lesson_scan
         from nanobot.memory.phase6_runtime import build_overlay_pipeline
         from nanobot.memory.phase6_trigger import (
             PHASE6_REVIEW_JOB_ID,
@@ -1899,6 +1900,15 @@ def _run_gateway(
             run_phase6_review_scan_async,
             run_recovery_issue_scan,
         )
+
+        if job.name == ASSET_LESSON_JOB_ID:
+            result = await run_asset_lesson_scan(
+                config.workspace_path, config.phase6, provider=agent.provider, model=agent.model,
+                audit_runtime=agent.audit_runtime,
+            )
+            logger.info("Asset lesson scan completed status={} created={} failed={}",
+                        result["status"], len(result["created"]), result.get("failed", 0))
+            return result["status"]
 
         if job.name == PHASE6_REVIEW_JOB_ID:
             from nanobot.config.paths import get_audit_dir
@@ -2090,11 +2100,14 @@ def _run_gateway(
             payload=CronPayload(kind="system_event"),
         ))
 
+    from nanobot.memory.asset_lesson import register_asset_lesson_job
     from nanobot.memory.phase6_trigger import (
         register_phase6_review_job,
         register_recovery_issue_review_job,
     )
 
+    if register_asset_lesson_job(cron, config.phase6):
+        console.print("[green]✓[/green] Asset lesson abstraction: 每分钟检查新案例")
     if register_phase6_review_job(cron, config.phase6):
         console.print("[green]✓[/green] Phase 6 review: 每天 14:00（北京时间）")
     if register_recovery_issue_review_job(cron, config.phase6):
