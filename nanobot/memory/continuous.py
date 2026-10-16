@@ -499,17 +499,16 @@ def collect_governance_metrics(
         "IN ('permission_denied','permission-denied') AND created_at>=?", (since,),
     ).fetchone()[0])
     dead_letters = sum(int(connection.execute(
-        f"SELECT count(*) FROM {table} WHERE status='dead_letter'" +
-        (" AND workspace=?" if table == "proposal_deliveries" else ""),
-        (workspace,) if table == "proposal_deliveries" else (),
+        f"SELECT count(*) FROM {table} WHERE workspace=? AND status='dead_letter'",
+        (workspace,),
     ).fetchone()[0]) for table in ("proposal_deliveries", "phase6_alert_deliveries"))
     delivery_totals = connection.execute(
         "SELECT count(*),sum(status IN ('retry_wait','dead_letter')) FROM proposal_deliveries "
-        "WHERE status IN ('sent','retry_wait','dead_letter')"
+        "WHERE workspace=? AND status IN ('sent','retry_wait','dead_letter')", (workspace,),
     ).fetchone()
     alert_totals = connection.execute(
         "SELECT count(*),sum(status IN ('retry_wait','dead_letter')) FROM phase6_alert_deliveries "
-        "WHERE status IN ('sent','retry_wait','dead_letter')"
+        "WHERE workspace=? AND status IN ('sent','retry_wait','dead_letter')", (workspace,),
     ).fetchone()
     total = sum(int(row[0] or 0) for row in (delivery_totals, alert_totals))
     failed = sum(int(row[1] or 0) for row in (delivery_totals, alert_totals))

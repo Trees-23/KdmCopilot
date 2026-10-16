@@ -138,10 +138,15 @@ def test_governance_metrics_use_live_tables_and_persist_workspace_asset_baseline
         "next_attempt_at,created_at,updated_at) VALUES('dead',?,'g','scan','f','safe','dead_letter','now','now','now')",
         (str(workspace.resolve()),),
     )
+    connection.execute(
+        "INSERT INTO phase6_alert_deliveries(alert_id,workspace,group_openid,category,fingerprint,payload,status,"
+        "next_attempt_at,created_at,updated_at) VALUES('foreign-dead','other','g','scan','ff','safe','dead_letter','now','now','now')"
+    )
     connection.commit()
     metrics = collect_governance_metrics(connection, workspace=str(workspace.resolve()), baseline_assets=None)
     assert metrics["asset_baseline_count"] == 1 and metrics["memory_growth_ratio"] == 0
     assert metrics["dead_letter_count"] == 1 and metrics["unauthorized_attempts"] == 0
+    assert metrics["notification_failure_rate"] == 1.0 and metrics["notifications"] == 1
     state, rollbacks = govern_workspace(connection, workspace, _cfg(dead_letter_pause_threshold=1), metrics)
     assert state.paused and "dead_letter_threshold" in state.pause_reason
     assert state.baseline_assets == 1 and not rollbacks
