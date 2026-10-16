@@ -429,11 +429,6 @@ class AuditConfig(Base):
 class Phase6EvolutionConfig(Base):
     """Independent gates for the Proposal notification and release lifecycle."""
 
-    shadow_mode: bool = Field(
-        default=False,
-        validation_alias=AliasChoices("shadowMode", "shadow_mode"),
-        serialization_alias="shadowMode",
-    )
     notifications_enabled: bool = Field(
         default=False,
         validation_alias=AliasChoices("notificationsEnabled", "notifications_enabled"),
@@ -572,12 +567,6 @@ class Phase6EvolutionConfig(Base):
         validation_alias=AliasChoices("stepwiseCandidateEnabled", "stepwise_candidate_enabled"),
         serialization_alias="stepwiseCandidateEnabled",
     )
-    case_candidate_promotion: bool = Field(
-        default=False,
-        validation_alias=AliasChoices("caseCandidatePromotion", "case_candidate_promotion"),
-        serialization_alias="caseCandidatePromotion",
-    )
-
     @model_validator(mode="after")
     def validate_asset_dependencies(self):
         if self.asset_retrieval_enabled and not self.asset_layer_enabled:

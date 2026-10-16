@@ -69,7 +69,6 @@ class Phase6RuntimeConfig:
     stepwise_evidence_mode: str = "shadow"
     mixed_risk_policy: str = "manual"
     stepwise_candidate_enabled: bool = False
-    case_candidate_promotion: bool = False
 
     @classmethod
     def from_config(cls, config: Any) -> "Phase6RuntimeConfig":
@@ -99,7 +98,7 @@ class Phase6RuntimeConfig:
                     "lesson_min_cases", "lesson_abstraction_enabled",
                     "adoption_enabled", "workspace_skill_allowlist",
                     "stepwise_evidence_enabled", "stepwise_evidence_mode", "mixed_risk_policy",
-                    "stepwise_candidate_enabled", "case_candidate_promotion",
+                    "stepwise_candidate_enabled",
                 ):
                     if hasattr(evolution, name):
                         values[name] = getattr(evolution, name)
