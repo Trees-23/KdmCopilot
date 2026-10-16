@@ -12,6 +12,7 @@ from tempfile import NamedTemporaryFile
 from typing import Any, Callable
 from urllib.request import ProxyHandler, build_opener
 
+from nanobot.memory.continuous import load_state
 from nanobot.memory.maintenance import open_maintenance_db
 from nanobot.memory.queue_state import reap_stale_evaluations
 from nanobot.memory.work_queue import claim_work, finish_work, reap_work, renew_work
@@ -54,6 +55,7 @@ async def execute_work(kind: str, config: Any) -> dict:
     """Initialize the same provider/tools/runtime as Gateway, without channels."""
     from nanobot.agent.loop import AgentLoop
     from nanobot.bus.queue import MessageBus
+    from nanobot.config.paths import get_audit_dir
     from nanobot.memory.asset_lesson import run_asset_lesson_scan
     from nanobot.memory.phase6_runtime import build_overlay_pipeline
     from nanobot.memory.phase6_trigger import run_phase6_review_scan_async
@@ -81,7 +83,7 @@ async def execute_work(kind: str, config: Any) -> dict:
         if kind != "review":
             raise ValueError("unknown worker kind")
         result = await run_phase6_review_scan_async(
-            config.workspace_path, config.phase6,
+            config.workspace_path, config.phase6, audit_root=get_audit_dir(config.audit.path),
             overlay_pipeline_factory=lambda connection, workspace, phase6_config: build_overlay_pipeline(
                 connection, workspace, phase6_config, notifier=notifier,
             ),
@@ -104,6 +106,8 @@ async def worker_tick(config: Any, *, owner: str, execute: Callable = execute_wo
         reap_work(connection, workspace)
         reap_stale_evaluations(connection, workspace=workspace,
                                max_attempts=config.phase6.evolution.evaluation_max_attempts)
+        if load_state(workspace).paused:
+            return {"status": "paused"}
         lease = claim_work(connection, workspace, owner)
         if lease is None:
             return {"status": "idle"}

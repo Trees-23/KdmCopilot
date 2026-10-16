@@ -16,8 +16,12 @@ from typing import Any
 from nanobot.cron.types import CronJob, CronPayload, CronSchedule
 from nanobot.memory.continuous import (
     EvidenceRecord,
+    Phase6CycleResult,
     Phase6RuntimeConfig,
     append_evidence,
+    collect_governance_metrics,
+    govern_workspace,
+    load_state,
     run_cycle,
 )
 from nanobot.memory.db import connect_memory_db
@@ -67,6 +71,7 @@ async def run_phase6_review_scan_async(
     workspace: str | Path,
     config: Any,
     *,
+    audit_root: str | Path | None = None,
     overlay_pipeline: Any | None = None,
     overlay_pipeline_factory: Any | None = None,
     notify_proposal: Any | None = None,
@@ -126,6 +131,17 @@ async def run_phase6_review_scan_async(
             )
         else:
             semantic_records = load_semantic_candidate_records(connection, str(root))
+        if runtime.enabled and not runtime.kill_switch:
+            health = collect_governance_metrics(
+                connection,
+                workspace=str(root),
+                baseline_assets=load_state(root).baseline_assets,
+                audit_root=audit_root,
+            )
+            health_state, rollback_results = govern_workspace(connection, root, runtime, health)
+            if health_state.paused:
+                return Phase6CycleResult("paused", paused=True,
+                                          rollback_applied=any(result for _, result in rollback_results))
         cycle = run_cycle(
             connection,
             root,

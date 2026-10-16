@@ -6,14 +6,17 @@ from datetime import UTC, datetime
 
 import pytest
 
-from nanobot.config.schema import Config
+from nanobot.config.schema import Config, Phase6EvolutionConfig
 from nanobot.memory.continuous import (
     EvidenceRecord,
     Phase6Disabled,
     Phase6RuntimeConfig,
+    Phase6State,
     append_evidence,
     build_versioned_evalpack,
     collect_capacity_metrics,
+    collect_governance_metrics,
+    govern_workspace,
     load_state,
     make_proposal,
     pause_and_rollback,
@@ -22,6 +25,7 @@ from nanobot.memory.continuous import (
     resume_after_review,
     rollback_skill_revision,
     run_cycle,
+    save_state,
     select_low_risk_tasks,
     update_health,
 )
@@ -122,6 +126,124 @@ def test_health_pauses_and_requires_independent_resume(tmp_path) -> None:
     assert load_state(tmp_path).generation == 2
     evidence = (tmp_path / ".nanobot" / "phase6" / "evidence.jsonl").read_text(encoding="utf-8")
     assert "health_check" in evidence and "resume" in evidence
+
+
+def test_governance_metrics_use_live_tables_and_persist_workspace_asset_baseline(tmp_path):
+    workspace, connection = _db(tmp_path)
+    from tests.memory.test_asset_retrieval import _asset
+
+    _asset(connection, workspace, "baseline")
+    connection.execute(
+        "INSERT INTO phase6_alert_deliveries(alert_id,workspace,group_openid,category,fingerprint,payload,status,"
+        "next_attempt_at,created_at,updated_at) VALUES('dead',?,'g','scan','f','safe','dead_letter','now','now','now')",
+        (str(workspace.resolve()),),
+    )
+    connection.commit()
+    metrics = collect_governance_metrics(connection, workspace=str(workspace.resolve()), baseline_assets=None)
+    assert metrics["asset_baseline_count"] == 1 and metrics["memory_growth_ratio"] == 0
+    assert metrics["dead_letter_count"] == 1 and metrics["unauthorized_attempts"] == 0
+    state, rollbacks = govern_workspace(connection, workspace, _cfg(dead_letter_pause_threshold=1), metrics)
+    assert state.paused and "dead_letter_threshold" in state.pause_reason
+    assert state.baseline_assets == 1 and not rollbacks
+    assert load_state(workspace).paused
+    connection.close()
+
+
+def test_governance_counts_only_policy_block_events_from_the_read_only_audit_index(tmp_path):
+    workspace, connection = _db(tmp_path)
+    audit_root = tmp_path / "audit"
+    (audit_root / "state").mkdir(parents=True)
+    index = sqlite3.connect(audit_root / "state/audit-index.sqlite")
+    index.execute("CREATE TABLE events(event_type TEXT NOT NULL, occurred_at TEXT NOT NULL)")
+    since = datetime.now(UTC).isoformat(timespec="microseconds")
+    index.executemany("INSERT INTO events VALUES(?,?)", [("policy_blocked", since), ("tool_finished", since)])
+    index.commit()
+    index.close()
+    metrics = collect_governance_metrics(
+        connection, workspace=str(workspace.resolve()), baseline_assets=None, audit_root=audit_root,
+    )
+    assert metrics["unauthorized_attempts"] == 1
+    assert metrics["permission_denials"] == 0
+    assert metrics["asset_baseline_count"] == 1
+    assert connection.execute("SELECT count(*) FROM memory_assets").fetchone()[0] == 0
+    connection.close()
+
+
+def test_governance_auto_rollback_is_cas_scoped_to_adopted_workspace_skills(tmp_path):
+    workspace, connection = _db(tmp_path)
+    _skill(connection)
+    connection.execute(
+        "INSERT INTO skill_proposals(proposal_id,workspace,skill_id,skill_name,source_kind,target,"
+        "baseline_revision_id,candidate_revision_id,baseline_hash,candidate_hash,gate_result,status,created_at,updated_at) "
+        "VALUES('adopted',?,'s','demo','workspace','workspace_adopt_proposal','r1','r2','sha256:r1','sha256:r2',"
+        "'passed','adopted','now','now')", (str(workspace.resolve()),),
+    )
+    connection.commit()
+    state, rollbacks = govern_workspace(connection, workspace, _cfg(), {"regression_failures": 3})
+    assert state.paused and rollbacks == (("adopted", True),)
+    assert connection.execute("SELECT current_revision_id FROM skills WHERE skill_id='s'").fetchone()[0] == 'r1'
+    assert any('rollback' in line for line in (workspace / '.nanobot/phase6/evidence.jsonl').read_text().splitlines())
+
+
+def test_review_cycle_does_not_select_candidates_after_workspace_pause(tmp_path):
+    workspace, connection = _db(tmp_path)
+    save_state(workspace, Phase6State(paused=True, pause_reason="permission_denial", baseline_assets=0))
+    result = run_cycle(connection, workspace, _cfg(), trace_records=[{"summary": "repeat", "trace_id": "t", "outcome": "success"}] * 3)
+    assert result.status == "paused" and result.selected_tasks == ()
+    connection.close()
+
+
+@pytest.mark.asyncio
+async def test_production_review_governance_pause_returns_before_candidate_evaluation(tmp_path, monkeypatch):
+    from nanobot.memory import phase6_trigger
+    from nanobot.memory.evolution_worker import worker_tick
+    from nanobot.memory.work_queue import enqueue_work
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    config = type("WorkerConfig", (), {
+        "workspace_path": workspace,
+        "phase6": type("Phase6", (), {
+            "enabled": True,
+            "kill_switch": False,
+            "evolution": Phase6EvolutionConfig(),
+        })(),
+    })()
+    connection = open_maintenance_db(workspace)
+    enqueue_work(connection, str(workspace.resolve()), "review", "paused-review")
+    connection.close()
+    observed = {"cycle": False}
+
+    monkeypatch.setattr(
+        phase6_trigger,
+        "collect_governance_metrics",
+        lambda *_args, **_kwargs: {"regression_failures": 3},
+    )
+
+    original_cycle = phase6_trigger.run_cycle
+
+    def paused_cycle(*args, **kwargs):
+        observed["cycle"] = True
+        assert load_state(workspace).paused
+        return original_cycle(*args, **kwargs)
+
+    monkeypatch.setattr(phase6_trigger, "run_cycle", paused_cycle)
+    result = await phase6_trigger.run_phase6_review_scan_async(workspace, config.phase6)
+    assert result.status == "paused" and not observed["cycle"]
+    worker_result = await worker_tick(config, owner="paused-worker")
+    assert worker_result["status"] == "paused"
+    connection = open_maintenance_db(workspace)
+    assert tuple(connection.execute("SELECT status,attempt_count FROM evolution_work_items").fetchone()) == ("queued", 0)
+    assert load_state(workspace).paused
+    connection.close()
+
+
+def test_resume_preserves_first_capacity_baseline(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    save_state(workspace, Phase6State(paused=True, pause_reason="reviewed", generation=2, baseline_assets=17))
+    resumed = resume_after_review(workspace, _cfg(), actor="reviewer", reason="verified the adopted revision")
+    assert not resumed.paused and resumed.generation == 3 and resumed.baseline_assets == 17
 
 
 def test_proposal_is_traceable_and_rollback_is_explicit_cas(tmp_path) -> None:

@@ -9,6 +9,8 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
+from nanobot.config.loader import load_config
+from nanobot.memory.continuous import resume_after_review
 from nanobot.memory.legacy_purge import PurgeError, preview_legacy_purge, purge_legacy_data
 from nanobot.memory.maintenance_purge import preview_maintenance_purge, purge_maintenance_data
 
@@ -52,5 +54,21 @@ def create_memory_app(*, console: Console) -> typer.Typer:
             console.print(f"维护清理未执行或已回滚：{message}", markup=False)
             raise typer.Exit(1) from None
         console.print_json(json.dumps(result, ensure_ascii=False))
+
+    @memory_app.command("governance-resume")
+    def governance_resume(
+        actor: str = typer.Option(..., "--actor", help="独立审核者标识"),
+        reason: str = typer.Option(..., "--reason", help="审核恢复理由"),
+        config_path: Path = typer.Option(Path.home() / ".nanobot/config.json", "--config"),
+    ) -> None:
+        """After independent review, resume the workspace-scoped Q6 guard."""
+        config = load_config(config_path)
+        try:
+            state = resume_after_review(config.workspace_path, config.phase6, actor=actor, reason=reason)
+        except (ValueError, RuntimeError) as exc:
+            console.print(f"治理状态未恢复：{exc}", markup=False)
+            raise typer.Exit(1) from None
+        console.print_json(json.dumps({"paused": state.paused, "generation": state.generation,
+                                       "baseline_assets": state.baseline_assets}, ensure_ascii=False))
 
     return memory_app

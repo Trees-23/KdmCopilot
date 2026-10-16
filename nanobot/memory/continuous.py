@@ -11,8 +11,9 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+from contextlib import closing
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any, Iterable, Mapping, Sequence
@@ -178,6 +179,7 @@ class Phase6State:
     pause_reason: str | None = None
     consecutive_regressions: int = 0
     generation: int = 0
+    baseline_assets: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -374,6 +376,7 @@ def load_state(workspace: str | Path) -> Phase6State:
             paused=bool(data.get("paused", False)), pause_reason=data.get("pause_reason"),
             consecutive_regressions=int(data.get("consecutive_regressions", 0)),
             generation=int(data.get("generation", 0)),
+            baseline_assets=(int(data["baseline_assets"]) if data.get("baseline_assets") is not None else None),
         )
     except (OSError, TypeError, ValueError, json.JSONDecodeError):
         return Phase6State(paused=True, pause_reason="state_unreadable")
@@ -427,6 +430,11 @@ def update_health(
         pause_reason=",".join(reasons) if reasons else previous.pause_reason,
         consecutive_regressions=regressions,
         generation=previous.generation + 1,
+        baseline_assets=(
+            previous.baseline_assets
+            if previous.baseline_assets is not None
+            else metrics.get("asset_baseline_count")
+        ),
     )
     save_state(workspace, state)
     append_evidence(
@@ -460,6 +468,112 @@ def collect_capacity_metrics(
         "memory_growth_ratio": growth,
         "capacity_exceeded": asset_count >= max_assets or retrieval_count >= max_retrieval_events,
     }
+
+
+def collect_governance_metrics(
+    connection: sqlite3.Connection,
+    *,
+    workspace: str,
+    baseline_assets: int | None,
+    audit_root: str | Path | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Collect bounded counters from live Q6 data, never legacy trace tables."""
+    current = _now(now)
+    since = _iso(current - timedelta(days=1))
+    capacity = collect_capacity_metrics(
+        connection,
+        baseline_assets=baseline_assets or 0,
+    )
+    if baseline_assets is None:
+        capacity["asset_baseline_count"] = max(1, capacity["memory_assets"])
+        capacity["memory_growth_ratio"] = 0.0
+    elif baseline_assets < 1:
+        capacity["asset_baseline_count"] = 1
+        capacity["memory_growth_ratio"] = float(capacity["memory_assets"] - 1)
+    regression = int(connection.execute(
+        "SELECT count(*) FROM eval_runs WHERE gate_result='gate_failed' AND started_at>=?",
+        (since,),
+    ).fetchone()[0])
+    permission = int(connection.execute(
+        "SELECT count(*) FROM evolution_step_evidence WHERE lower(coalesce(failure_family,'')) "
+        "IN ('permission_denied','permission-denied') AND created_at>=?", (since,),
+    ).fetchone()[0])
+    dead_letters = sum(int(connection.execute(
+        f"SELECT count(*) FROM {table} WHERE status='dead_letter'" +
+        (" AND workspace=?" if table == "proposal_deliveries" else ""),
+        (workspace,) if table == "proposal_deliveries" else (),
+    ).fetchone()[0]) for table in ("proposal_deliveries", "phase6_alert_deliveries"))
+    delivery_totals = connection.execute(
+        "SELECT count(*),sum(status IN ('retry_wait','dead_letter')) FROM proposal_deliveries "
+        "WHERE status IN ('sent','retry_wait','dead_letter')"
+    ).fetchone()
+    alert_totals = connection.execute(
+        "SELECT count(*),sum(status IN ('retry_wait','dead_letter')) FROM phase6_alert_deliveries "
+        "WHERE status IN ('sent','retry_wait','dead_letter')"
+    ).fetchone()
+    total = sum(int(row[0] or 0) for row in (delivery_totals, alert_totals))
+    failed = sum(int(row[1] or 0) for row in (delivery_totals, alert_totals))
+    unauthorized = int(connection.execute(
+        "SELECT count(*) FROM proposal_actions WHERE lower(result_status) "
+        "IN ('unauthorized','forbidden','scope_denied') AND created_at>=?", (since,),
+    ).fetchone()[0])
+    # The independent audit index stores event metadata only; do not open payloads.
+    if audit_root is not None:
+        index_path = Path(audit_root).expanduser() / "state" / "audit-index.sqlite"
+        if index_path.is_file():
+            with closing(sqlite3.connect(index_path.resolve().as_uri() + "?mode=ro", uri=True)) as audit:
+                audit.execute("PRAGMA query_only=ON")
+                blocked = int(audit.execute(
+                    "SELECT count(*) FROM events WHERE occurred_at>=? AND event_type='policy_blocked'",
+                    (since,),
+                ).fetchone()[0])
+            unauthorized += blocked
+    return {
+        **capacity,
+        "regression_failures": regression,
+        "permission_denials": permission,
+        "dead_letter_count": dead_letters,
+        "notification_failure_rate": failed / total if total else 0.0,
+        "notifications": total,
+        "unauthorized_attempts": unauthorized,
+    }
+
+
+def govern_workspace(
+    connection: sqlite3.Connection,
+    workspace: str | Path,
+    config: Any,
+    metrics: Mapping[str, Any],
+) -> tuple[Phase6State, tuple[tuple[str, bool], ...]]:
+    """Persist health, pause new work, and CAS-rollback any adopted workspace Skill."""
+    state = update_health(workspace, metrics, config)
+    if not state.paused:
+        return state, ()
+    targets = connection.execute(
+        "SELECT p.skill_id,p.baseline_revision_id,p.candidate_revision_id,p.proposal_id "
+        "FROM skill_proposals p JOIN skills s ON s.skill_id=p.skill_id "
+        "WHERE p.workspace=? AND p.target='workspace_adopt_proposal' AND p.status='adopted' "
+        "AND p.baseline_revision_id IS NOT NULL AND p.candidate_revision_id IS NOT NULL "
+        "AND s.current_revision_id=p.candidate_revision_id ORDER BY p.updated_at,p.proposal_id",
+        (str(Path(workspace).expanduser().resolve()),),
+    ).fetchall()
+    if not targets:
+        append_evidence(
+            workspace,
+            EvidenceRecord("rollback", _iso(), status="skipped", reason="no adopted workspace Skill matches the health trigger"),
+            config,
+        )
+        return state, ()
+    results = []
+    for skill_id, baseline, candidate, proposal_id in targets:
+        state, rolled_back = pause_and_rollback(
+            connection, workspace, metrics, config,
+            skill_id=str(skill_id), baseline_revision_id=str(baseline),
+            expected_current_revision_id=str(candidate), actor="phase6-regression-guard",
+        )
+        results.append((str(proposal_id), rolled_back))
+    return state, tuple(results)
 
 
 def pause_and_rollback(
@@ -532,7 +646,7 @@ def resume_after_review(workspace: str | Path, config: Any, *, actor: str, reaso
     if not actor.strip() or not reason.strip():
         raise ValueError("independent actor and reason are required")
     previous = load_state(workspace)
-    state = Phase6State(generation=previous.generation + 1)
+    state = Phase6State(generation=previous.generation + 1, baseline_assets=previous.baseline_assets)
     save_state(workspace, state)
     append_evidence(workspace, EvidenceRecord("resume", _iso(), status="ok", reason=f"{actor}: {reason}"), config)
     return state
@@ -641,4 +755,5 @@ __all__ = [
     "require_active", "resume_after_review",
     "rollback_skill_revision", "run_cycle", "save_state", "select_low_risk_tasks", "update_health",
     "collect_capacity_metrics", "pause_and_rollback",
+    "collect_governance_metrics", "govern_workspace",
 ]

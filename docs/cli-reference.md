@@ -82,6 +82,16 @@ P6 完成后，`nanobot memory purge-maintenance --database <已有数据库> --
 成功后重跑保留后来新写的维护任务和租约。锁文件与P6共享，完成标记分别记账。
 不备份、不清 `memory_outbox`、资产、审计、P6标记或文件目录；不自动停启服务。
 
+Q6 workspace 治理进入 `paused` 后，worker 会停止领取 review/lesson 任务，并保留队列等待独立审核。
+审核后通过以下命令恢复；actor 和 reason 都是必填项：
+
+```bash
+nanobot memory governance-resume --actor reviewer-id --reason "复核了触发指标与 Skill 当前版本"
+```
+
+命令记录恢复代次和审计证据，保留首次容量基线。它不清零失败计数、不删除队列数据，也不会恢复旧周期过期清理器。
+review 扫描按工作区持久状态先检查健康门禁，再进入候选评测；只有命中仍指向当前已采用版本的 workspace Skill 时才按基线版本 CAS 回滚。计数来自近一天失败门禁/权限步骤、独立审计索引中的 policy_blocked 元数据、投递死信与容量基线，不读取审计 payload。
+
 ## Common Patterns
 
 Most day-to-day commands use the default config and workspace. Advanced or multi-instance runs usually pass both paths explicitly:
