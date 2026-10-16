@@ -8,6 +8,7 @@ from dataclasses import replace
 from typing import Any
 
 from nanobot.memory.asset_projection import project_task_asset
+from nanobot.memory.asset_signals import settle_asset_injections
 from nanobot.memory.recovery_evidence import link_successful_correction, record_failed_episode
 from nanobot.memory.semantic_evidence import persist_turn_semantic_evidence
 from nanobot.memory.stepwise_evidence import build_task_evidence, persist_task_evidence
@@ -95,6 +96,13 @@ def capture_turn_evidence(connection: Any, workspace: str, ctx: Any, evolution: 
                 (workspace, original["task_id"]),
             ).fetchone():
                 project_task_asset(connection, original["task_id"])
+    if asset_enabled:
+        settle_asset_injections(connection, workspace=workspace, trace_id=ctx.audit_turn.trace_id, outcome=outcome)
+        if correction is not None:
+            settle_asset_injections(
+                connection, workspace=workspace, trace_id=correction.failure_trace_id,
+                outcome=resolve_task_outcome(recovery_status=correction.status),
+            )
     # The legacy candidate stream remains gated independently until its removal phase.
     if outcome != "success" or (
         stepwise and getattr(evolution, "stepwise_evidence_mode", "shadow") == "enforced"

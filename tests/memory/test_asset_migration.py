@@ -37,7 +37,7 @@ def test_upgrade_creates_empty_assets_and_never_backfills_legacy_completed(tmp_p
     assert connection.execute("SELECT count(*) FROM memory_assets").fetchone()[0]==0
     assert not any(s.lstrip().upper().startswith("DELETE") for s in statements)
     assert connection.execute("PRAGMA foreign_key_check").fetchall()==[]
-    assert {row[0] for row in connection.execute("SELECT version FROM schema_meta WHERE version>=20")}=={20,21,22,28,29}
+    assert {row[0] for row in connection.execute("SELECT version FROM schema_meta WHERE version>=20")}=={20,21,22,28,29,30}
 
 
 @pytest.mark.parametrize("field,value",[("steps_json",'[{}]'),("expires_at","2099-01-01"),

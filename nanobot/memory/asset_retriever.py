@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Protocol
 
 from nanobot.memory.asset_render import ASSET_TOKEN_BUDGET, fit_asset_budget, render_asset_body
+from nanobot.memory.asset_signals import account_asset_injection
 from nanobot.memory.db import connect_memory_db
 from nanobot.memory.intent import IntentDecision, IntentRouter
 from nanobot.memory.policy import MemoryScopePolicy
@@ -118,8 +119,9 @@ def retrieve_asset_context(
                 injected_context=[text], outcome=outcome, trace_id=trace_id, turn_id=turn_id,
                 query=query, tokens=tokens, error_code=error_code,
             ))
+            account_asset_injection(connection, retrieval_id, workspace=str(root))
             connection.commit()
-        except (OSError, sqlite3.Error):
+        except (OSError, sqlite3.Error, TypeError, ValueError):
             if connection is not None:
                 connection.rollback()
             return AssetRetrievalResult(outcome="degraded", error_code="asset_event_write_failed",

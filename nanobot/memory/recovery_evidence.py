@@ -268,6 +268,15 @@ def link_successful_correction(
     projection, _reason = _projection(user_text, tools)
     if projection is None:
         return None
+    existing = connection.execute(
+        "SELECT episode_id,failure_trace_id,recovery_trace_id,status FROM recovery_episodes "
+        "WHERE workspace=? AND session_key=? AND recovery_trace_id=? AND status='recovered'",
+        (workspace, session_key, trace_id),
+    ).fetchone()
+    if existing is not None:
+        # Replaying the same completed correction must retain its original
+        # association, including when a later derived settlement needs retrying.
+        return RecoveryEpisode(*existing)
     cutoff = _iso(_now() - timedelta(minutes=max_age_minutes))
     row = connection.execute(
         """SELECT episode_id,failure_trace_id,recovery_trace_id,status,failure_intent,task_family,operation_family
