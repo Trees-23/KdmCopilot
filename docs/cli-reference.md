@@ -33,6 +33,41 @@ python -m nanobot --version
 
 `python -m nanobot ...` is useful when the package is installed but the `nanobot` script is not on `PATH`.
 
+## 一次性 P6 历史数据清理
+
+`nanobot memory purge-legacy` 仅用于自进化重构的 P6 清理。默认与 `--dry-run` 都是只读预览，
+必须显式指定已有数据库路径；不创建数据库、不执行迁移、不清理文件目录：
+
+```bash
+nanobot memory purge-legacy --database runtime/workspace/.nanobot/memory.sqlite3 --dry-run
+```
+
+输出固定序 1→23 的表、筛选条件、操作、计数及 `plan_digest`。第 12 步包含两张评测预算派生表
+`evaluation_candidate_admissions`、`evaluation_model_call_reservations`，先清子表再清评测。
+序 19 先把待删 Skill 的 `current_revision_id` 置空，再删对应版本和 Skill；仅匹配
+`skill:m19:%`、`skill:recovery-%`、`skill:evolution-%` 与 `skill-overlay-hot-reload-m9`。
+全部 `retrieval_events` 及全部状态的 `memory_assets` 也在清理范围内。
+
+真实执行必须先获清理授权，并停止使用该数据库的 Gateway、worker、独立 CLI、定时任务等所有
+读写进程；停止期间重新预览、核对清单。`--writers-stopped` 是操作者确认，不能替代实际停进程。
+工具额外检查数据库独占访问及有效维护/评测租约，无法取得独占访问或租约仍有效时拒绝执行。
+
+确认后在同一停写窗口使用刚核对的摘要（下面的 `已核对的摘要` 需替换）：
+
+```bash
+nanobot memory purge-legacy --database runtime/workspace/.nanobot/memory.sqlite3 \
+  --execute --writers-stopped --confirm-plan 已核对的摘要
+```
+
+本操作不备份、不删除表或索引。删除、提交前外键校验及固定完成标记
+`data_purge_completions/self-evolution-p6-v1` 在一个独立事务内执行；失败全部回滚，外键恢复开启。
+清单计数变化会拒绝旧摘要。首次成功后，重复执行只报告 `already_completed`，保留后来新产生的
+证据、资产、检索事件和复用计数；不得删除或修改完成标记来重新执行。
+
+审计、手工 Skill、L0 文件记忆、`maintenance_jobs` 和 `maintenance_lock` 不在本操作的删除范围。
+五个历史运行目录需要另行授权和处理，数据库完成标记不代表文件已删除。
+成功后应在恢复写入前核对清空结果，再按部署流程恢复 Gateway；此入口不会自动停启服务。
+
 ## Common Patterns
 
 Most day-to-day commands use the default config and workspace. Advanced or multi-instance runs usually pass both paths explicitly:
