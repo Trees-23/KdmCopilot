@@ -619,7 +619,6 @@ class Phase6Config(Base):
     dead_letter_pause_threshold: int = Field(default=3, ge=1)
     notification_failure_rate_pause_threshold: float = Field(default=1.0, ge=0, le=1)
     unauthorized_pause_threshold: int = Field(default=1, ge=1)
-    cross_group_leak_pause_threshold: int = Field(default=1, ge=1)
     max_memory_growth_ratio: float = Field(default=0.5, ge=0)
     retention_days: int = Field(default=18, ge=1)
     payload_retention_days: int = Field(default=7, ge=1)

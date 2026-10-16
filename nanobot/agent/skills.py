@@ -40,7 +40,7 @@ class SkillsLoader:
             if not skill_dir.is_dir():
                 continue
             skill_file = skill_dir / "SKILL.md"
-            if not skill_file.exists():
+            if not skill_file.is_file() or not skill_file.read_text(encoding="utf-8").strip():
                 continue
             name = skill_dir.name
             if skip_names is not None and name in skip_names:
@@ -87,8 +87,8 @@ class SkillsLoader:
             roots.append(self.builtin_skills)
         for root in roots:
             path = root / name / "SKILL.md"
-            if path.exists():
-                return path.read_text(encoding="utf-8")
+            if path.is_file() and (content := path.read_text(encoding="utf-8")).strip():
+                return content
         return None
 
     def load_skills_for_context(self, skill_names: list[str]) -> str:

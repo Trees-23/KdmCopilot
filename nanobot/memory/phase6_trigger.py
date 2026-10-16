@@ -19,7 +19,6 @@ from nanobot.memory.continuous import (
     EvidenceRecord,
     Phase6RuntimeConfig,
     append_evidence,
-    load_failed_trace_records,
     run_cycle,
 )
 from nanobot.memory.db import connect_memory_db
@@ -303,7 +302,6 @@ async def run_phase6_review_scan_async(
             root,
             runtime,
             trace_records=semantic_records,
-            failed_traces=load_failed_trace_records(connection),
         )
         if cycle.status != "completed":
             return cycle
@@ -424,7 +422,6 @@ async def run_phase6_review_scan_async(
                 trace_records=semantic_records,
                 candidate_specs=specs,
                 evaluation_leases=ab_result.proposal_leases,
-                failed_traces=(),
                 overlay_pipeline=overlay_pipeline,
             )
             for lease in ab_result.proposal_leases:
@@ -462,7 +459,7 @@ async def run_phase6_review_scan_async(
                 if repair_ab.approved_specs:
                     repair_cycle = run_fixture_review_cycle(
                         connection, root, runtime, trace_records=repair_records,
-                        candidate_specs=repair_ab.approved_specs, failed_traces=(),
+                        candidate_specs=repair_ab.approved_specs,
                         evaluation_leases=repair_ab.proposal_leases,
                         overlay_pipeline=overlay_pipeline,
                     )

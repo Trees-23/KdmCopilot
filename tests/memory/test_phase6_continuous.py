@@ -22,7 +22,6 @@ from nanobot.memory.continuous import (
     persist_proposal,
     phase6_active,
     plan_retention,
-    regression_case_from_trace,
     resume_after_review,
     rollback_skill_revision,
     run_cycle,
@@ -102,21 +101,6 @@ def test_trace_index_loaders_remain_payload_free(tmp_path) -> None:
     assert len(load_trace_records(connection)) == 2
     assert load_failed_trace_records(connection)[0]["trace_id"] == "t2"
     assert "payload" not in load_trace_records(connection)[0]
-    connection.close()
-
-
-def test_failed_trace_becomes_redacted_staging_case_only(tmp_path) -> None:
-    workspace, connection = _db(tmp_path)
-    candidate = regression_case_from_trace(
-        connection,
-        {"trace_id": "trace-fail", "outcome": "timeout", "summary": "token: abc failed", "intent": "task"},
-        _cfg(),
-    )
-    row = connection.execute("SELECT status,outcome_json FROM cases WHERE case_id=?", (candidate.case_id,)).fetchone()
-    assert row[0] == "candidate"
-    assert "[redacted]" in row[1]
-    with pytest.raises(ValueError):
-        regression_case_from_trace(connection, {"trace_id": "ok", "outcome": "success"}, _cfg())
     connection.close()
 
 
@@ -234,11 +218,11 @@ def test_cycle_is_bounded_and_failed_trace_case_is_staged(tmp_path) -> None:
             {"trace_id": "ok-2", "summary": "repeat task", "outcome": "success"},
             {"trace_id": "ok-3", "summary": "repeat task", "outcome": "success"},
         ],
-        failed_traces=[{"trace_id": "bad-1", "outcome": "failed", "summary": "rejected"}],
     )
     assert result.status == "completed"
     assert result.selected_tasks[0].frequency == 3
-    assert result.regression_case_ids == ("case:bad-1",)
+    assert connection.execute("SELECT count(*) FROM cases").fetchone()[0] == 0
+    assert connection.execute("SELECT count(*) FROM wiki_pages").fetchone()[0] == 0
     assert (workspace / ".nanobot" / "phase6" / "evidence.jsonl").exists()
     assert run_cycle(connection, workspace, _cfg(kill_switch=True), trace_records=[]) .status == "disabled"
     connection.close()

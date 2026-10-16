@@ -25,7 +25,6 @@ from nanobot.memory.continuous import (
 from nanobot.memory.derivation import (
     EvalCase,
     build_eval_pack_draft,
-    derive_case_candidate,
     seal_eval_pack,
 )
 from nanobot.memory.evaluation import (
@@ -76,7 +75,6 @@ class CandidateSpec:
 class EvolutionCycleResult:
     status: str
     selected_count: int = 0
-    staged_case_ids: tuple[str, ...] = ()
     eval_run_ids: tuple[str, ...] = ()
     proposal_ids: tuple[str, ...] = ()
     rejected_task_keys: tuple[str, ...] = ()
@@ -98,7 +96,6 @@ def run_fixture_review_cycle(
     *,
     trace_records: Iterable[Mapping[str, Any]],
     candidate_specs: Sequence[CandidateSpec] = (),
-    failed_traces: Iterable[Mapping[str, Any]] = (),
     reviewer: str = "phase6-eval-reviewer",
     actor: str = "phase6-orchestrator",
     owner: str | None = None,
@@ -126,22 +123,6 @@ def run_fixture_review_cycle(
             return EvolutionCycleResult("paused", reason=state.pause_reason)
         selected = select_low_risk_tasks(trace_records, config)
         selected_keys = {item.task_key for item in selected}
-        staged_cases: list[str] = []
-        for trace in failed_traces:
-            trace_id = str(trace.get("trace_id") or "").strip()
-            if not trace_id:
-                continue
-            case = derive_case_candidate(
-                connection,
-                trace_id=trace_id,
-                intent=str(trace.get("intent") or "trace_regression"),
-                task_signature={"source": "phase6", "classification": str(trace.get("outcome") or "unknown")},
-                outcome={"status": str(trace.get("outcome") or "unknown"), "summary": str(trace.get("summary") or "")[:500]},
-                failure_patterns=tuple(str(value) for value in (trace.get("failure_patterns") or ())) or ("failure",),
-                confidence=float(trace.get("confidence") or 0.7),
-            )
-            staged_cases.append(case.case_id)
-
         eval_run_ids: list[str] = []
         proposal_ids: list[str] = []
         overlay_handoffs: list[str] = []
@@ -210,7 +191,7 @@ def run_fixture_review_cycle(
             proposal = make_proposal(
                 source_kind=spec.source_kind,
                 trace_ids=tuple(item.trace_ids for item in selected if item.task_key == spec.task_key)[0],
-                case_ids=spec.case_ids or tuple(staged_cases) or (f"case:{spec.task_key}",),
+                case_ids=spec.case_ids or (f"case:{spec.task_key}",),
                 eval_run_ids=(run_id,),
                 config=config,
             )
@@ -284,13 +265,13 @@ def run_fixture_review_cycle(
             root,
             EvidenceRecord(
                 "fixture_review_cycle", "", trace_ids=tuple(item.trace_ids[0] for item in selected if item.trace_ids),
-                case_ids=tuple(staged_cases), eval_run_ids=tuple(eval_run_ids),
+                eval_run_ids=tuple(eval_run_ids),
                 status="ok", metrics={"selected": len(selected), "proposals": len(proposal_ids), "rejected": len(rejected)},
             ),
             config,
         )
         return EvolutionCycleResult(
-            "completed", len(selected), tuple(staged_cases), tuple(eval_run_ids), tuple(proposal_ids),
+            "completed", len(selected), tuple(eval_run_ids), tuple(proposal_ids),
             tuple(rejected), tuple(deduped), tuple(overlay_handoffs),
             tuple(adopted_proposals), tuple(adopted_candidates),
         )

@@ -397,3 +397,20 @@ def test_get_skill_metadata_handles_yaml_types(tmp_path: Path) -> None:
     assert meta.get("always") is True
     # metadata is a parsed dict, not a JSON string
     assert isinstance(meta.get("metadata"), dict)
+def test_empty_workspace_skill_is_hidden_and_valid_builtin_can_supply_same_name(tmp_path):
+    from nanobot.agent.skills import SkillsLoader
+
+    workspace = tmp_path / "workspace"
+    builtin = tmp_path / "builtin"
+    for root in (workspace / "skills", builtin):
+        (root / "fixture").mkdir(parents=True)
+    (workspace / "skills/fixture/SKILL.md").write_text(" \n\t")
+    (builtin / "fixture/SKILL.md").write_text("# Fixture\nUseful builtin description.")
+    (workspace / "skills/empty").mkdir()
+    (workspace / "skills/empty/SKILL.md").write_bytes(b"")
+    loader = SkillsLoader(workspace, builtin_skills_dir=builtin)
+    entries = loader.list_skills(filter_unavailable=False)
+    assert [(s["name"], s["source"]) for s in entries] == [("fixture", "builtin")]
+    assert loader.load_skill("fixture").startswith("# Fixture")
+    assert loader.load_skill("empty") is None
+    assert "**empty**" not in loader.build_skills_summary()

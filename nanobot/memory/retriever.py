@@ -195,17 +195,6 @@ class MemoryRetriever:
                     (row for row in rows if _matches_query(query, str(row[2]), str(row[3]))), now
                 )
             )
-        if scope.allows("wiki"):
-            rows = connection.execute(
-                """SELECT p.page_id,p.page_type,p.title,p.summary,p.current_revision_id,p.source_path,p.updated_at
-                   FROM wiki_pages p WHERE p.status NOT IN ('archived','tombstone') AND p.page_type != 'case'
-                     AND (p.title LIKE ? OR p.summary LIKE ? OR p.tags_json LIKE ?)
-                     AND NOT EXISTS (SELECT 1 FROM tombstones t WHERE t.object_type='wiki_page' AND t.object_id=p.page_id)
-                   ORDER BY p.updated_at DESC LIMIT ?""", (needle, needle, needle, limit),
-            )
-            for row in rows:
-                if _matches_query(query, str(row[2]), str(row[3])):
-                    hits.append(self._hit_from_row("wiki", row, now, base=0.2, query=query))
         if scope.allows("skill"):
             rows = connection.execute(
                 """SELECT skill_id,name,description,current_revision_id,source_path,updated_at
