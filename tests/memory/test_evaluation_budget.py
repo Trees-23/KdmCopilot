@@ -116,7 +116,7 @@ async def test_fifo_queue_does_not_take_lease_when_daily_budget_is_insufficient(
     assert len(result.proposal_leases) == 1
 
 
-async def test_three_uncertain_attempts_charge_all_calls_and_converge_without_proposal(tmp_path):
+async def test_three_uncertain_attempts_charge_all_calls_and_converge_without_proposal(tmp_path, monkeypatch):
     connection = open_maintenance_db(tmp_path)
     config = Phase6RuntimeConfig(enabled=True, ab_evaluation_max_model_calls_per_day=120)
     calls = 0
@@ -132,13 +132,17 @@ async def test_three_uncertain_attempts_charge_all_calls_and_converge_without_pr
         return response
 
     for attempt in range(3):
+        # Wall clocks can move backwards (observed under WSL). The attempt order
+        # is insertion order, not timestamp order; exercise that case explicitly.
+        current_time = datetime(2030, 1, 1, 12, tzinfo=UTC) + timedelta(seconds=(0, -2, -1)[attempt])
+        monkeypatch.setattr(accounting, "_now", lambda: current_time)
         result = await evaluate_candidate_specs(connection, tmp_path, (_spec(),), config, executor=disagree)
         assert not result.approved_specs and result.model_calls_used == 40
         assert result.evaluated_count == int(attempt == 2)
         assert connection.execute("SELECT count(*) FROM evaluation_candidate_admissions").fetchone()[0] == 1
         assert connection.execute("SELECT settled FROM evaluation_candidate_admissions").fetchone()[0] == int(attempt == 2)
     assert [tuple(row) for row in connection.execute(
-        "SELECT status,reason_code FROM ab_evaluations ORDER BY created_at",
+        "SELECT status,reason_code FROM ab_evaluations ORDER BY rowid",
     )] == [("uncertain", "judge_disagreement"), ("uncertain", "judge_disagreement"), ("failed", "judge_unstable")]
     assert calls == 120
     assert connection.execute("SELECT count(*) FROM skill_proposals").fetchone()[0] == 0

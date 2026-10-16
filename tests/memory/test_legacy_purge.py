@@ -3,6 +3,8 @@
 import hashlib
 import json
 import sqlite3
+import subprocess
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from datetime import UTC, datetime, timedelta
@@ -283,6 +285,23 @@ def test_concurrent_invocations_recheck_marker_after_acquiring_lock(populated):
     def run():
         barrier.wait()
         return _execute(populated, plan)["status"]
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(run) for _ in range(2)]
+        assert sorted(future.result() for future in futures) == ["already_completed", "completed"]
+
+
+def test_separate_processes_serialize_before_opening_exclusive_wal_connections(populated):
+    plan = preview_legacy_purge(populated)["plan_digest"]
+    barrier = Barrier(2)
+    script = (
+        "import sys; from nanobot.memory.legacy_purge import purge_legacy_data; "
+        "print(purge_legacy_data(sys.argv[1], expected_plan=sys.argv[2], writers_stopped=True)['status'])"
+    )
+
+    def run():
+        barrier.wait()
+        return subprocess.check_output([sys.executable, "-c", script, str(populated), plan], text=True).strip()
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         futures = [executor.submit(run) for _ in range(2)]

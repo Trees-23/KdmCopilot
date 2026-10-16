@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from filelock import FileLock, Timeout
+
 PURGE_ID = "self-evolution-p6-v1"
 MARKER_TABLE = "data_purge_completions"
 SKILL_FILTER = (
@@ -195,8 +197,13 @@ def purge_legacy_data(database: str | Path, *, expected_plan: str, writers_stopp
     """
     if not writers_stopped or not expected_plan:
         raise PurgeError("必须先停止所有写入、核对 dry-run 并提供清单摘要")
-    with closing(_connect(database, readonly=False)) as connection:
-        try:
-            return _purge(connection, expected_plan)
-        except sqlite3.OperationalError as exc:
-            raise PurgeError("无法取得数据库独占访问或执行清理；确认所有使用者已停止且结构完整") from exc
+    path = Path(database).expanduser().resolve(strict=True)
+    # Serialize purgers BEFORE opening SQLite. Two exclusive-mode WAL connections
+    # can otherwise both hold shared WAL locks and prevent either upgrading them.
+    # Keep the advisory lock file: unlinking it could split waiting executors.
+    try:
+        with FileLock(str(path) + ".p6.lock", timeout=5):
+            with closing(_connect(path, readonly=False)) as connection:
+                return _purge(connection, expected_plan)
+    except (sqlite3.OperationalError, Timeout) as exc:
+        raise PurgeError("无法取得数据库独占访问或执行清理；确认所有使用者已停止且结构完整") from exc
