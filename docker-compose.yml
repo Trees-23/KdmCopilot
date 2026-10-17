@@ -70,6 +70,25 @@ services:
           cpus: "0.25"
           memory: 256M
 
+  nanobot-evolution-worker:
+    container_name: nanobot-evolution-worker
+    <<: *common-config
+    image: nanobot-nanobot-gateway:latest
+    command:
+      ["evolution-worker", "--config", "/home/nanobot/.nanobot/config.json",
+       "--gateway-health-url", "http://nanobot-gateway:18790/health"]
+    depends_on:
+      - nanobot-gateway
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 1G
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+
   nanobot-cli:
     <<: *common-config
     profiles:

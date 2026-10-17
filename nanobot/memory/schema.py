@@ -5,8 +5,8 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-MIGRATION_VERSION = 19
-MIGRATION_ID = "0019_failure_candidate_hash_retry"
+MIGRATION_VERSION = 32
+MIGRATION_ID = "0032_evolution_work_items"
 APP_BUILD = "memory-phase1"
 
 MIGRATIONS_DIR = Path(__file__).with_name("migrations")
@@ -30,23 +30,31 @@ FAILURE_CANDIDATE_CONTENT_HASHES_MIGRATION_PATH = MIGRATIONS_DIR / "0017_failure
 FAILURE_CANDIDATE_EVALUATION_HASHES_MIGRATION_PATH = MIGRATIONS_DIR / "0018_failure_candidate_evaluation_hashes.sql"
 FAILURE_CANDIDATE_HASH_RETRY_MIGRATION_PATH = MIGRATIONS_DIR / "0019_failure_candidate_hash_retry.sql"
 
+MEMORY_ASSETS_MIGRATION_PATH = MIGRATIONS_DIR / "0020_memory_assets.sql"
+ASSET_STEP_FACTS_MIGRATION_PATH = MIGRATIONS_DIR / "0029_asset_step_facts.sql"
+ASSET_REUSE_SIGNALS_MIGRATION_PATH = MIGRATIONS_DIR / "0030_asset_reuse_signals.sql"
+ASSET_LESSON_VERSIONS_MIGRATION_PATH = MIGRATIONS_DIR / "0031_asset_lesson_versions.sql"
+EVOLUTION_WORK_MIGRATION_PATH = MIGRATIONS_DIR / "0032_evolution_work_items.sql"
+
+QUEUE_LEASES_MIGRATION_PATH = MIGRATIONS_DIR / "0021_evolution_queue_leases.sql"
+JUDGE_FEEDBACK_MIGRATION_PATH = MIGRATIONS_DIR / "0022_judge_feedback.sql"
+DROP_ISSUE_MIGRATION_PATH = MIGRATIONS_DIR / "0025_drop_issue_line.sql"
+DROP_TRACE_MIGRATION_PATH = MIGRATIONS_DIR / "0026_drop_trace_index.sql"
+DROP_MEMORY_MIGRATION_PATH = MIGRATIONS_DIR / "0027_drop_memory_records.sql"
+
+EVALUATION_BUDGET_MIGRATION_PATH = MIGRATIONS_DIR / "0028_evaluation_budget_rounds.sql"
+
 
 def migration_sql() -> str:
     """Return the checked-in latest migration SQL."""
 
-    return FAILURE_CANDIDATE_HASH_RETRY_MIGRATION_PATH.read_text(encoding="utf-8")
+    return EVOLUTION_WORK_MIGRATION_PATH.read_text(encoding="utf-8")
 
 
 def latest_migration_sql() -> str:
     """Return the checked-in latest append-only migration SQL."""
 
     return migration_sql()
-
-
-def recovery_review_atomic_actions_migration_sql() -> str:
-    """Return the immutable v14 migration SQL for the migration runner."""
-
-    return RECOVERY_REVIEW_ATOMIC_ACTIONS_MIGRATION_PATH.read_text(encoding="utf-8")
 
 
 def candidate_staging_migration_sql() -> str:
@@ -77,14 +85,13 @@ def phase6_migration_sql() -> str:
 REQUIRED_TABLES = frozenset(
     {
         "schema_meta",
-        "memory_records",
-        "memory_revisions",
+        "memory_assets",
+        "evolution_work_items",
         "wiki_pages",
         "wiki_relations",
         "cases",
         "skills",
         "skill_revisions",
-        "trace_index",
         "eval_packs",
         "eval_runs",
         "eval_case_results",
@@ -102,38 +109,39 @@ REQUIRED_TABLES = frozenset(
         "semantic_task_evidence",
         "semantic_quality_reviews",
         "recovery_episodes",
-        "recovery_case_reviews",
         "ab_evaluations",
         "ab_case_results",
-        "failure_issues",
-        "failure_issue_actions",
-        "failure_issue_deliveries",
-        "failure_issue_candidates",
         "evolution_task_evidence",
         "evolution_step_evidence",
         "evolution_task_links",
         "evolution_candidate_staging",
     }
 )
-
+EVALUATION_BUDGET_TABLES = frozenset({"evaluation_candidate_admissions", "evaluation_model_call_reservations"})
+REQUIRED_TABLES = REQUIRED_TABLES | EVALUATION_BUDGET_TABLES
 BASE_REQUIRED_TABLES = REQUIRED_TABLES - frozenset(
     {
+        "evolution_work_items",
         "skill_proposals", "proposal_deliveries", "proposal_actions", "group_memory_scopes",
         "phase6_alert_deliveries", "eval_cases", "semantic_task_evidence",
-        "semantic_quality_reviews", "recovery_episodes", "recovery_case_reviews", "ab_evaluations",
-        "ab_case_results", "failure_issues", "failure_issue_actions", "failure_issue_deliveries",
-        "failure_issue_candidates",
+        "semantic_quality_reviews", "recovery_episodes", "ab_evaluations",
+        "ab_case_results",
         "evolution_task_evidence", "evolution_step_evidence", "evolution_task_links",
         "evolution_candidate_staging",
     }
 )
-
 STEPWISE_EVOLUTION_TABLES = frozenset(
     {"evolution_task_evidence", "evolution_step_evidence", "evolution_task_links"}
 )
-
 CANDIDATE_STAGING_TABLES = frozenset({"evolution_candidate_staging"})
 
 REQUIRED_COLUMNS = {
-    "failure_issues": frozenset({"group_openid"}),
+    "retrieval_events": frozenset({"asset_workspace", "asset_settled_outcome"}),
+    "memory_assets": frozenset({"asset_id", "asset_level", "origin_table", "origin_id", "steps_json", "family_key", "expires_at", "lesson_input_version", "lesson_source_ids_json", "lesson_output_digests_json", "lesson_trace_id"}),
+    "evolution_step_evidence": frozenset({"resource_class", "error_code", "error_type", "error_source", "retryability"}),
+    "ab_case_results": frozenset({"judge_feedback", "sample_round"}),
+    "ab_evaluations": frozenset({"protocol_version", "execution_deadline"}),
+    "evolution_candidate_staging": frozenset({
+        "lease_owner", "lease_expires_at", "attempt_count", "last_error",
+    }),
 }

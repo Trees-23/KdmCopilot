@@ -13,7 +13,6 @@ from nanobot.agent.status_overlay import (
     AGENT_STATUS_FAILURE_LEDGER_KEY,
     FailureLedgerHook,
     begin_logical_user_request,
-    build_failure_overlay,
     build_status_overlay,
     record_tool_terminal,
 )
@@ -67,7 +66,7 @@ def test_failure_ledger_uses_exact_operation_fingerprints_and_clears_on_success(
 
     ledger = metadata[AGENT_STATUS_FAILURE_LEDGER_KEY]
     assert len(ledger["failures"]) == 2
-    overlay = build_failure_overlay(metadata, message_metadata)
+    overlay = build_status_overlay(metadata, message_metadata)
     assert overlay is not None
     assert "same-operation failures=2" in overlay.content
     assert "missing-a.txt" not in overlay.content
@@ -81,7 +80,7 @@ def test_failure_ledger_uses_exact_operation_fingerprints_and_clears_on_success(
         params={"path": "missing-a.txt"},
         outcome=ToolAuditOutcome(status="ok", result="contents", source_event_id="event-a3"),
     )
-    assert build_failure_overlay(metadata, message_metadata) is None
+    assert build_status_overlay(metadata, message_metadata) is None
 
 
 def test_new_logical_user_request_resets_failure_ledger() -> None:
@@ -97,14 +96,14 @@ def test_new_logical_user_request_resets_failure_ledger() -> None:
             params={"path": "missing.txt"},
             outcome=_failure(source_event_id=f"event-{index}"),
         )
-    assert build_failure_overlay(metadata, first_message) is not None
+    assert build_status_overlay(metadata, first_message) is not None
 
     second_message: dict = {}
     begin_logical_user_request(second_message, metadata)
 
     assert metadata[AGENT_STATUS_FAILURE_LEDGER_KEY]["revision"] == 0
     assert metadata[AGENT_STATUS_FAILURE_LEDGER_KEY]["failures"] == {}
-    assert build_failure_overlay(metadata, second_message) is None
+    assert build_status_overlay(metadata, second_message) is None
 
 
 def test_goal_and_owner_status_are_partitioned_without_duplicate_replacements() -> None:
@@ -222,7 +221,7 @@ async def test_codex_overlay_is_transient_and_audited_without_status_body(tmp_pa
             session=session,
             sessions=sessions,
         ),
-        status_overlay_factory=lambda: build_failure_overlay(session.metadata, None),
+        status_overlay_factory=lambda: build_status_overlay(session.metadata, None),
         session_key=session.key,
         audit_context=AuditRunContext("trace", "turn", "run"),
     ))

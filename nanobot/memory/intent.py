@@ -17,7 +17,6 @@ MEMORY_INTENTS: Final[tuple[str, ...]] = (
     "memory_write",
     "forget",
     "skill_discovery",
-    "trace_query",
     "review",
 )
 
@@ -44,22 +43,17 @@ class IntentRouter:
         (
             "forget",
             ("forget", "delete from memory", "remove from memory", "tombstone", "忘记", "遗忘", "删除记忆"),
-            ("memory", "wiki", "case", "trace"),
+            (),
         ),
         (
             "memory_write",
             ("remember", "save to memory", "write to memory", "记住", "保存到记忆", "写入记忆"),
-            ("memory", "wiki", "case"),
-        ),
-        (
-            "trace_query",
-            ("trace", "traces", "run history", "运行轨迹", "轨迹", "审计记录"),
-            ("trace",),
+            (),
         ),
         (
             "history_query",
             ("history", "previous conversation", "what did we discuss", "历史", "之前聊过", "上次"),
-            ("memory", "history", "wiki", "case", "trace"),
+            ("asset",),
         ),
         (
             "skill_discovery",
@@ -69,7 +63,7 @@ class IntentRouter:
         (
             "review",
             ("review", "evaluate", "regression", "复盘", "评审", "评估", "回归"),
-            ("case", "trace", "skill"),
+            ("asset", "skill"),
         ),
     )
 
@@ -83,12 +77,12 @@ class IntentRouter:
                     query=query,
                     scopes=scopes,
                     explicit=True,
-                    failure_mode="visible_error" if intent in {"history_query", "trace_query", "review"} else "no_injection",
+                    failure_mode="visible_error" if intent in {"history_query", "review"} else "no_injection",
                 )
         return IntentDecision(
             intent="task",
             query=query,
-            scopes=("memory", "wiki", "case", "skill", "trace"),
+            scopes=("asset", "skill"),
             explicit=False,
             failure_mode="session_only",
         )
@@ -102,10 +96,4 @@ class IntentRouter:
     route = classify
 
 
-def route_intent(text: str | None) -> IntentDecision:
-    """Convenience wrapper for callers that do not need a router instance."""
-
-    return IntentRouter().classify(text)
-
-
-__all__ = ["IntentDecision", "IntentRouter", "MEMORY_INTENTS", "route_intent"]
+__all__ = ["IntentDecision", "IntentRouter", "MEMORY_INTENTS"]

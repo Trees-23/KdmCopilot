@@ -1,7 +1,7 @@
-"""Phase 5 derivation helpers for Case candidates and sealed EvalPack drafts.
+"""Sealed EvalPack draft helpers.
 
 This module only writes derived candidate/evaluation metadata.  Audit events,
-Wiki Markdown and the current Skill revision remain owned by their providers.
+The current Skill revision remains owned by its provider.
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Iterable, Mapping
 from uuid import uuid4
 
 OUTCOME_SUCCESS = "success"
@@ -43,89 +43,8 @@ def classify_outcome(outcome: str | None, *, error: bool = False) -> str:
     return OUTCOME_UNKNOWN
 
 
-@dataclass(frozen=True, slots=True)
-class CaseCandidate:
-    case_id: str
-    page_id: str
-    trace_id: str
-    intent: str
-    task_signature: dict[str, Any]
-    outcome: dict[str, Any]
-    failure_patterns: tuple[str, ...]
-    confidence: float
-    status: str = "candidate"
-
-
 def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
-
-
-def derive_case_candidate(
-    connection: Any,
-    *,
-    trace_id: str,
-    intent: str,
-    task_signature: Mapping[str, Any],
-    outcome: Mapping[str, Any] | None = None,
-    failure_patterns: Sequence[str] = (),
-    page_id: str | None = None,
-    source_case_ids: Sequence[str] = (),
-    confidence: float = 0.5,
-) -> CaseCandidate:
-    """Create or replace one staging Case candidate from a Trace summary.
-
-    The candidate contains only caller-supplied structured summaries.  If no
-    provider page exists, a derived ``wiki_pages`` index row is created with a
-    non-authoritative ``derived://`` source path.
-    """
-
-    if not trace_id.strip() or not intent.strip():
-        raise ValueError("trace_id and intent are required")
-    if not 0 <= confidence <= 1:
-        raise ValueError("confidence must be between 0 and 1")
-    payload = dict(outcome or {})
-    payload.setdefault("classification", classify_outcome(payload.get("status")))
-    page_id = page_id or f"case-page:{trace_id}"
-    case_id = f"case:{trace_id}"
-    now = _now()
-    connection.execute("BEGIN IMMEDIATE")
-    try:
-        connection.execute(
-            """INSERT INTO wiki_pages
-               (page_id,namespace,slug,page_type,source_path,content_hash,current_revision_id,
-                status,sensitivity,title,summary,tags_json,source_refs_json,created_at,updated_at)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-               ON CONFLICT(page_id) DO UPDATE SET content_hash=excluded.content_hash,
-                status='candidate',summary=excluded.summary,updated_at=excluded.updated_at""",
-            (
-                page_id, "workspace", f"case/{trace_id}", "case", f"derived://trace/{trace_id}",
-                digest({"trace_id": trace_id, "task_signature": dict(task_signature)}), None,
-                "candidate", "private", intent, json.dumps(payload, ensure_ascii=False),
-                "[]", json.dumps(list(source_case_ids), ensure_ascii=False), now, now,
-            ),
-        )
-        connection.execute(
-            """INSERT INTO cases
-               (case_id,page_id,skill_id,skill_version,intent,task_signature_json,preconditions_json,
-                steps_json,outcome_json,failure_patterns_json,trace_ids_json,confidence,user_confirmed,
-                status,revision_id,previous_revision_id,created_at,updated_at)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,0,'candidate',?,?,?,?)
-               ON CONFLICT(case_id) DO UPDATE SET intent=excluded.intent,
-                task_signature_json=excluded.task_signature_json,outcome_json=excluded.outcome_json,
-                failure_patterns_json=excluded.failure_patterns_json,confidence=excluded.confidence,
-                trace_ids_json=excluded.trace_ids_json,status='candidate',updated_at=excluded.updated_at""",
-            (
-                case_id, page_id, None, None, intent, _canonical(dict(task_signature)), "[]", "[]",
-                _canonical(payload), _canonical(list(failure_patterns)), _canonical([trace_id]), confidence,
-                digest({"case_id": case_id, "trace_id": trace_id, "revision": now}), None, now, now,
-            ),
-        )
-        connection.commit()
-    except Exception:
-        connection.rollback()
-        raise
-    return CaseCandidate(case_id, page_id, trace_id, intent, dict(task_signature), payload,
-                         tuple(failure_patterns), confidence)
 
 
 @dataclass(frozen=True, slots=True)
@@ -242,7 +161,7 @@ def seal_eval_pack(connection: Any, eval_pack_id: str, *, reviewer: str) -> bool
 
 
 __all__ = [
-    "CaseCandidate", "EvalCase", "EvalPackDraft", "OUTCOME_BLOCKED", "OUTCOME_FAILURE",
+    "EvalCase", "EvalPackDraft", "OUTCOME_BLOCKED", "OUTCOME_FAILURE",
     "OUTCOME_PARTIAL", "OUTCOME_SUCCESS", "OUTCOME_UNKNOWN", "build_eval_pack_draft",
-    "classify_outcome", "derive_case_candidate", "digest", "seal_eval_pack",
+    "classify_outcome", "digest", "seal_eval_pack",
 ]

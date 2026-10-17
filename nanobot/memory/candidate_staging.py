@@ -19,10 +19,6 @@ from typing import Any, Iterable
 from nanobot.memory.stepwise_evidence import TaskEvidence
 
 _NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
-_CANDIDATE_STATUSES = frozenset({
-    "candidate_staged", "manual_review_required", "evaluating", "rejected_by_quality_gate",
-    "insufficient_evidence", "proposal_eligible", "adopted", "closed",
-})
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,12 +148,12 @@ def stage_task_candidate(
              candidate_id, None, candidate_hash, candidate_content, json.dumps(task.source_trace_ids),
              json.dumps(tuple(str(item) for item in source_case_ids if str(item))), json.dumps(_risk_summary(task)),
              "匹配不确定，等待人工选择新 Skill 或已有 Skill", None, "m19-v1", "m18-v1",
-             "manual_review_required", "skill_match_uncertain", now, now),
+             "manual_review", "skill_match_uncertain", now, now),
         )
         connection.commit()
         return CandidateStagingRecord(candidate_id, workspace, task.task_id, "skill_candidate", None,
                                       skill_name, None, candidate_id, None, candidate_hash,
-                                      "manual_review_required", "skill_match_uncertain")
+                                      "manual_review", "skill_match_uncertain")
 
     skill_name = matched_skill_name or _safe_name(task.projection.intent if task.projection else "task", task.task_id)
     candidate_content = _candidate_content(task, skill_name)
@@ -217,7 +213,7 @@ def stage_task_candidate(
          json.dumps(task.source_trace_ids), json.dumps(tuple(str(item) for item in source_case_ids if str(item))),
          json.dumps(_risk_summary(task)),
          "新增脱敏行为抽象" if not baseline_content else "基线保留，生成独立修订候选",
-         baseline_revision_id, "m19-v1", "m18-v1", "candidate_staged", "", now, now),
+         baseline_revision_id, "m19-v1", "m18-v1", "queued", "", now, now),
     )
     connection.execute(
         """INSERT OR IGNORE INTO evolution_task_links
@@ -228,7 +224,7 @@ def stage_task_candidate(
     connection.commit()
     return CandidateStagingRecord(candidate_id, workspace, task.task_id, source_kind, skill_id,
                                   skill_name, baseline_revision_id, candidate_revision_id,
-                                  baseline_hash, candidate_hash, "candidate_staged", "")
+                                  baseline_hash, candidate_hash, "queued", "")
 
 
 def get_staged_candidate(connection: sqlite3.Connection, candidate_id: str) -> CandidateStagingRecord | None:
@@ -262,24 +258,7 @@ def list_staged_candidates(
     return tuple(CandidateStagingRecord(*row) for row in connection.execute(query, params).fetchall())
 
 
-def mark_candidate_status(
-    connection: sqlite3.Connection,
-    candidate_id: str,
-    *,
-    status: str,
-    reason: str = "",
-) -> CandidateStagingRecord | None:
-    if status not in _CANDIDATE_STATUSES:
-        raise ValueError(f"unsupported candidate status: {status}")
-    connection.execute(
-        "UPDATE evolution_candidate_staging SET status=?,reason=?,updated_at=? WHERE candidate_id=?",
-        (status, reason[:500], _now(), candidate_id),
-    )
-    connection.commit()
-    return get_staged_candidate(connection, candidate_id)
-
-
 __all__ = [
     "CandidateStagingRecord", "get_staged_candidate", "list_staged_candidates",
-    "mark_candidate_status", "stage_task_candidate",
+    "stage_task_candidate",
 ]

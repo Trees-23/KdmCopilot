@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import sqlite3
 from datetime import UTC, datetime
 
@@ -11,18 +9,31 @@ from nanobot.memory.schema import (
     AB_QUALITY_EVALUATIONS_MIGRATION_PATH,
     ALERT_DELIVERY_MIGRATION_PATH,
     APP_BUILD,
+    ASSET_LESSON_VERSIONS_MIGRATION_PATH,
+    ASSET_REUSE_SIGNALS_MIGRATION_PATH,
+    ASSET_STEP_FACTS_MIGRATION_PATH,
     BASE_REQUIRED_TABLES,
     CANDIDATE_ADOPTION_STATES_MIGRATION_PATH,
     CANDIDATE_STAGING_TABLES,
     DELIVERY_PAYLOAD_MIGRATION_PATH,
+    DROP_ISSUE_MIGRATION_PATH,
+    DROP_MEMORY_MIGRATION_PATH,
+    DROP_TRACE_MIGRATION_PATH,
+    EVALUATION_BUDGET_MIGRATION_PATH,
+    EVALUATION_BUDGET_TABLES,
+    EVOLUTION_WORK_MIGRATION_PATH,
+    FAILURE_CANDIDATE_CONTENT_HASHES_MIGRATION_PATH,
     FAILURE_CANDIDATE_EVALUATION_HASHES_MIGRATION_PATH,
     FAILURE_CANDIDATE_HASH_RETRY_MIGRATION_PATH,
     FAILURE_ISSUE_CANDIDATES_MIGRATION_PATH,
     FAILURE_ISSUE_GROUP_BINDING_MIGRATION_PATH,
     FAILURE_ISSUES_MIGRATION_PATH,
+    JUDGE_FEEDBACK_MIGRATION_PATH,
+    MEMORY_ASSETS_MIGRATION_PATH,
     MIGRATION_ID,
     MIGRATION_VERSION,
     PROPOSAL_REVIEW_MIGRATION_PATH,
+    QUEUE_LEASES_MIGRATION_PATH,
     RECOVERY_CASES_MIGRATION_PATH,
     RECOVERY_REVIEW_ATOMIC_ACTIONS_MIGRATION_PATH,
     RECOVERY_SEMANTIC_FAMILIES_MIGRATION_PATH,
@@ -86,58 +97,20 @@ def _verify_required_columns(connection: sqlite3.Connection) -> None:
         raise MigrationError(f"memory schema missing columns: {', '.join(sorted(missing))}")
 
 
-def _ensure_failure_issue_group_binding(connection: sqlite3.Connection) -> None:
-    if "group_openid" not in _column_names(connection, "failure_issues"):
-        connection.execute("ALTER TABLE failure_issues ADD COLUMN group_openid TEXT")
-
-
-def _repair_failure_candidate_content_hashes(connection: sqlite3.Connection) -> None:
-    """Align pre-v17 isolated candidate hashes with exact workspace file bytes."""
-
-    rows = connection.execute(
-        "SELECT candidate_id,candidate_revision_id,candidate_content FROM failure_issue_candidates"
-    ).fetchall()
-    for candidate_id, revision_id, content in rows:
-        content_hash = "sha256:" + hashlib.sha256(str(content).encode("utf-8")).hexdigest()
-        legacy_hash = "sha256:" + hashlib.sha256(
-            json.dumps(content, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
-        ).hexdigest()
-        connection.execute(
-            "UPDATE failure_issue_candidates SET candidate_hash=? WHERE candidate_id=?",
-            (content_hash, candidate_id),
-        )
-        connection.execute(
-            "UPDATE skill_revisions SET content_hash=? WHERE revision_id=?",
-            (content_hash, revision_id),
-        )
-        connection.execute(
-            "UPDATE skill_proposals SET candidate_hash=? WHERE candidate_revision_id=?",
-            (content_hash, revision_id),
-        )
-        connection.execute(
-            "UPDATE ab_evaluations SET candidate_hash=? WHERE candidate_hash=?",
-            (content_hash, legacy_hash),
-        )
-    empty_hash = "sha256:" + hashlib.sha256(b"").hexdigest()
-    connection.execute(
-        "UPDATE skill_revisions SET content_hash=? WHERE revision_id IN "
-        "(SELECT baseline_revision_id FROM failure_issue_candidates) AND content=''",
-        (empty_hash,),
-    )
-    connection.execute(
-        "UPDATE skill_proposals SET baseline_hash=? WHERE baseline_revision_id IN "
-        "(SELECT baseline_revision_id FROM failure_issue_candidates)",
-        (empty_hash,),
-    )
-    connection.execute(
-        """UPDATE skill_proposals SET status='approved',failure_reason=NULL,updated_at=?
-           WHERE status='failed' AND failure_reason='candidate hash mismatch'
-             AND candidate_revision_id IN (SELECT candidate_revision_id FROM failure_issue_candidates)
-             AND EXISTS (SELECT 1 FROM proposal_actions a
-                         WHERE a.proposal_id=skill_proposals.proposal_id
-                           AND a.action='automatic_gate_approval' AND a.result_status='approved')""",
-        (utc_now(),),
-    )
+def _validate_queue_upgrade(connection: sqlite3.Connection) -> None:
+    """Reject unmapped old states or duplicate content before rebuilding the queue."""
+    old_states = {
+        "candidate_staged", "manual_review_required", "evaluating", "rejected_by_quality_gate",
+        "insufficient_evidence", "proposal_eligible", "adopted", "closed",
+    }
+    actual = {row[0] for row in connection.execute("SELECT DISTINCT status FROM evolution_candidate_staging")}
+    if actual - old_states:
+        raise MigrationError("queue contains unmapped legacy states")
+    duplicate = connection.execute(
+        "SELECT 1 FROM evolution_candidate_staging GROUP BY workspace,candidate_hash HAVING count(*)>1 LIMIT 1"
+    ).fetchone()
+    if duplicate:
+        raise MigrationError("queue contains duplicate workspace/candidate_hash")
 
 
 def verify_schema(connection: sqlite3.Connection, expected_hash: str | None = None) -> None:
@@ -197,6 +170,12 @@ def apply_migrations(
 
     def apply_one(version: int, migration_id: str, migration_text: str,
                   required_tables: set[str] | frozenset[str], before_apply=None) -> None:
+        if version < 32:
+            required_tables = required_tables - {"evolution_work_items"}
+        if version < 28:
+            required_tables = required_tables - EVALUATION_BUDGET_TABLES
+        if version < 20:
+            required_tables = required_tables - {"memory_assets"}
         expected_hash = schema_hash(migration_text)
         current = connection.execute(
             "SELECT migration_id,schema_hash,status FROM schema_meta WHERE version=?", (version,)
@@ -246,22 +225,19 @@ def apply_migrations(
     # durable alert outbox for pipeline failures that have no publish candidate.
     phase6_required = REQUIRED_TABLES - {
         "phase6_alert_deliveries", "eval_cases", "semantic_task_evidence", "semantic_quality_reviews",
-        "recovery_episodes", "recovery_case_reviews", "ab_evaluations", "ab_case_results",
-        "failure_issues", "failure_issue_actions", "failure_issue_deliveries",
-        "failure_issue_candidates",
+        "recovery_episodes", "ab_evaluations", "ab_case_results",
         *STEPWISE_EVOLUTION_TABLES,
         *CANDIDATE_STAGING_TABLES,
     }
     apply_one(2, "0002_phase6_proposals", phase6_migration_sql(), phase6_required)
     apply_one(3, "0003_phase6_delivery_payload", DELIVERY_PAYLOAD_MIGRATION_PATH.read_text(encoding="utf-8"), phase6_required)
-    legacy_issue_tables = {"failure_issues", "failure_issue_actions", "failure_issue_deliveries", "failure_issue_candidates"}
     legacy = STEPWISE_EVOLUTION_TABLES | CANDIDATE_STAGING_TABLES
-    apply_one(4, "0004_phase6_alert_deliveries", ALERT_DELIVERY_MIGRATION_PATH.read_text(encoding="utf-8"), REQUIRED_TABLES - {"eval_cases", "semantic_task_evidence", "semantic_quality_reviews", "recovery_episodes", "recovery_case_reviews", "ab_evaluations", "ab_case_results", *legacy_issue_tables, *legacy})
-    apply_one(5, "0005_proposal_review_details", PROPOSAL_REVIEW_MIGRATION_PATH.read_text(encoding="utf-8"), REQUIRED_TABLES - {"semantic_task_evidence", "semantic_quality_reviews", "recovery_episodes", "recovery_case_reviews", "ab_evaluations", "ab_case_results", *legacy_issue_tables, *legacy})
-    apply_one(6, "0006_semantic_quality_gate", SEMANTIC_QUALITY_MIGRATION_PATH.read_text(encoding="utf-8"), REQUIRED_TABLES - {"recovery_episodes", "recovery_case_reviews", "ab_evaluations", "ab_case_results", *legacy_issue_tables, *legacy})
-    apply_one(7, "0007_recovery_cases", RECOVERY_CASES_MIGRATION_PATH.read_text(encoding="utf-8"), REQUIRED_TABLES - {"ab_evaluations", "ab_case_results", *legacy_issue_tables, *legacy})
-    apply_one(8, "0008_ab_quality_evaluations", AB_QUALITY_EVALUATIONS_MIGRATION_PATH.read_text(encoding="utf-8"), REQUIRED_TABLES - {"failure_issues", "failure_issue_actions", "failure_issue_deliveries", "failure_issue_candidates", *legacy})
-    apply_one(9, "0009_failure_issues", FAILURE_ISSUES_MIGRATION_PATH.read_text(encoding="utf-8"), REQUIRED_TABLES - {"failure_issue_candidates", *legacy})
+    apply_one(4, "0004_phase6_alert_deliveries", ALERT_DELIVERY_MIGRATION_PATH.read_text(encoding="utf-8"), REQUIRED_TABLES - {"eval_cases", "semantic_task_evidence", "semantic_quality_reviews", "recovery_episodes", "ab_evaluations", "ab_case_results", *legacy})
+    apply_one(5, "0005_proposal_review_details", PROPOSAL_REVIEW_MIGRATION_PATH.read_text(encoding="utf-8"), REQUIRED_TABLES - {"semantic_task_evidence", "semantic_quality_reviews", "recovery_episodes", "ab_evaluations", "ab_case_results", *legacy})
+    apply_one(6, "0006_semantic_quality_gate", SEMANTIC_QUALITY_MIGRATION_PATH.read_text(encoding="utf-8"), REQUIRED_TABLES - {"recovery_episodes", "ab_evaluations", "ab_case_results", *legacy})
+    apply_one(7, "0007_recovery_cases", RECOVERY_CASES_MIGRATION_PATH.read_text(encoding="utf-8"), REQUIRED_TABLES - {"ab_evaluations", "ab_case_results", *legacy})
+    apply_one(8, "0008_ab_quality_evaluations", AB_QUALITY_EVALUATIONS_MIGRATION_PATH.read_text(encoding="utf-8"), REQUIRED_TABLES - {*legacy})
+    apply_one(9, "0009_failure_issues", FAILURE_ISSUES_MIGRATION_PATH.read_text(encoding="utf-8"), REQUIRED_TABLES - {*legacy})
     apply_one(10, "0010_failure_issue_candidates", FAILURE_ISSUE_CANDIDATES_MIGRATION_PATH.read_text(encoding="utf-8"), REQUIRED_TABLES - (STEPWISE_EVOLUTION_TABLES | CANDIDATE_STAGING_TABLES))
     apply_one(11, "0011_recovery_semantic_families", RECOVERY_SEMANTIC_FAMILIES_MIGRATION_PATH.read_text(encoding="utf-8"), REQUIRED_TABLES - (STEPWISE_EVOLUTION_TABLES | CANDIDATE_STAGING_TABLES))
     apply_one(12, "0012_stepwise_evolution_evidence", STEPWISE_EVOLUTION_EVIDENCE_MIGRATION_PATH.read_text(encoding="utf-8"), REQUIRED_TABLES - CANDIDATE_STAGING_TABLES)
@@ -272,26 +248,53 @@ def apply_migrations(
         RECOVERY_REVIEW_ATOMIC_ACTIONS_MIGRATION_PATH.read_text(encoding="utf-8"),
         REQUIRED_TABLES,
     )
+    apply_one(15, "0015_candidate_adoption_states", CANDIDATE_ADOPTION_STATES_MIGRATION_PATH.read_text(encoding="utf-8"), REQUIRED_TABLES)
     apply_one(
         16,
         "0016_failure_issue_group_binding",
         FAILURE_ISSUE_GROUP_BINDING_MIGRATION_PATH.read_text(encoding="utf-8"),
         REQUIRED_TABLES,
-        _ensure_failure_issue_group_binding,
     )
+    apply_one(17, "0017_failure_candidate_content_hashes", FAILURE_CANDIDATE_CONTENT_HASHES_MIGRATION_PATH.read_text(encoding="utf-8"), REQUIRED_TABLES)
     apply_one(
         18,
         "0018_failure_candidate_evaluation_hashes",
         FAILURE_CANDIDATE_EVALUATION_HASHES_MIGRATION_PATH.read_text(encoding="utf-8"),
         REQUIRED_TABLES,
-        _repair_failure_candidate_content_hashes,
     )
     apply_one(
-        MIGRATION_VERSION,
-        MIGRATION_ID,
+        19,
+        "0019_failure_candidate_hash_retry",
         FAILURE_CANDIDATE_HASH_RETRY_MIGRATION_PATH.read_text(encoding="utf-8"),
         REQUIRED_TABLES,
     )
+    apply_one(20, "0020_memory_assets", MEMORY_ASSETS_MIGRATION_PATH.read_text(encoding="utf-8"), REQUIRED_TABLES - EVALUATION_BUDGET_TABLES)
+    apply_one(
+        21,
+        "0021_evolution_queue_leases",
+        QUEUE_LEASES_MIGRATION_PATH.read_text(encoding="utf-8"),
+        REQUIRED_TABLES,
+        _validate_queue_upgrade,
+    )
+    apply_one(
+        22,
+        "0022_judge_feedback",
+        JUDGE_FEEDBACK_MIGRATION_PATH.read_text(encoding="utf-8"),
+        REQUIRED_TABLES,
+    )
+    apply_one(25, "0025_drop_issue_line", DROP_ISSUE_MIGRATION_PATH.read_text(encoding="utf-8"), REQUIRED_TABLES - EVALUATION_BUDGET_TABLES)
+    apply_one(26, "0026_drop_trace_index", DROP_TRACE_MIGRATION_PATH.read_text(encoding="utf-8"), REQUIRED_TABLES - EVALUATION_BUDGET_TABLES)
+    apply_one(27, "0027_drop_memory_records", DROP_MEMORY_MIGRATION_PATH.read_text(encoding="utf-8"), REQUIRED_TABLES - EVALUATION_BUDGET_TABLES)
+    apply_one(
+        28,
+        "0028_evaluation_budget_rounds",
+        EVALUATION_BUDGET_MIGRATION_PATH.read_text(encoding="utf-8"),
+        REQUIRED_TABLES,
+    )
+    apply_one(29, "0029_asset_step_facts", ASSET_STEP_FACTS_MIGRATION_PATH.read_text(encoding="utf-8"), REQUIRED_TABLES)
+    apply_one(30, "0030_asset_reuse_signals", ASSET_REUSE_SIGNALS_MIGRATION_PATH.read_text(encoding="utf-8"), REQUIRED_TABLES)
+    apply_one(31, "0031_asset_lesson_versions", ASSET_LESSON_VERSIONS_MIGRATION_PATH.read_text(encoding="utf-8"), REQUIRED_TABLES)
+    apply_one(MIGRATION_VERSION, MIGRATION_ID, EVOLUTION_WORK_MIGRATION_PATH.read_text(encoding="utf-8"), REQUIRED_TABLES)
     verify_schema(connection, schema_hash(latest_migration_sql()))
 
 
@@ -318,9 +321,3 @@ def _record_failed_version(
     except Exception:
         connection.rollback()
         raise
-
-
-def migration_file_path() -> str:
-    """Expose the latest checked-in migration path for evidence and diagnostics."""
-
-    return str(CANDIDATE_ADOPTION_STATES_MIGRATION_PATH)

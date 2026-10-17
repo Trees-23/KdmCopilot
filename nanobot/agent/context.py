@@ -15,6 +15,7 @@ from nanobot.agent.tools import mcp as mcp_tools
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.apps.cli import utils as cli_app_utils
 from nanobot.bus.events import InboundMessage
+from nanobot.memory.asset_retriever import AssetRetrievalResult, retrieve_asset_context
 from nanobot.memory.retriever import MemoryRetriever, RetrievalResult
 from nanobot.runtime_context import (
     RUNTIME_CONTEXT_END,
@@ -42,6 +43,7 @@ class SystemPromptSections:
     stable: str
     dynamic: str
     retrieval: RetrievalResult | None = None
+    asset_retrieval: AssetRetrievalResult | None = None
 
     @property
     def content(self) -> str:
@@ -65,6 +67,16 @@ class SystemPromptSections:
                     "retrieval_tokens": self.retrieval.tokens,
                 }
             )
+        if self.asset_retrieval is not None:
+            metadata.update({
+                "asset_retrieval_digest": self.asset_retrieval.digest,
+                "asset_retrieval_outcome": self.asset_retrieval.outcome,
+                "asset_retrieval_tokens": self.asset_retrieval.tokens,
+            })
+            if self.asset_retrieval.retrieval_id:
+                metadata["asset_retrieval_id"] = self.asset_retrieval.retrieval_id
+            if self.asset_retrieval.error_code:
+                metadata["asset_retrieval_error_code"] = self.asset_retrieval.error_code
         return metadata
 
 
@@ -126,12 +138,14 @@ def _system_sections_metadata_from_messages(
             "stable_tokens": _non_negative_int(value.get("stable_tokens")),
             "dynamic_tokens": _non_negative_int(value.get("dynamic_tokens")),
         }
-        for key in ("retrieval_digest", "retrieval_intent", "retrieval_outcome"):
+        for key in ("retrieval_digest", "retrieval_intent", "retrieval_outcome",
+                    "asset_retrieval_digest", "asset_retrieval_outcome", "asset_retrieval_id", "asset_retrieval_error_code"):
             item = value.get(key)
             if isinstance(item, str):
                 result[key] = item
-        if "retrieval_tokens" in value:
-            result["retrieval_tokens"] = _non_negative_int(value.get("retrieval_tokens"))
+        for key in ("retrieval_tokens", "asset_retrieval_tokens"):
+            if key in value:
+                result[key] = _non_negative_int(value.get(key))
         return result
     return None
 
@@ -177,12 +191,16 @@ class ContextBuilder:
     _MAX_HISTORY_TOKENS = 8_000  # hard cap on recent history section size (tokens)
     _RUNTIME_CONTEXT_END = RUNTIME_CONTEXT_END
 
-    def __init__(self, workspace: Path, timezone: str | None = None, disabled_skills: list[str] | None = None):
+    def __init__(
+        self, workspace: Path, timezone: str | None = None,
+        disabled_skills: list[str] | None = None, *, asset_config: Any | None = None,
+    ):
         self.workspace = workspace
         self.timezone = timezone
         self.memory = MemoryStore(workspace)
         self.skills = SkillsLoader(workspace, disabled_skills=set(disabled_skills) if disabled_skills else None)
         self.memory_retriever = MemoryRetriever(workspace)
+        self.asset_config = asset_config
 
     def build_system_prompt(
         self,
@@ -239,6 +257,7 @@ class ContextBuilder:
 
         dynamic_parts: list[str] = []
         retrieval: RetrievalResult | None = None
+        asset_retrieval: AssetRetrievalResult | None = None
 
         if memory_query and session_key:
             retrieval = self.memory_retriever.retrieve(
@@ -252,6 +271,18 @@ class ContextBuilder:
             rendered_retrieval = retrieval.render()
             if rendered_retrieval:
                 dynamic_parts.append(rendered_retrieval)
+
+        evolution = getattr(self.asset_config, "evolution", self.asset_config)
+        if (memory_query and session_key and bool(getattr(evolution, "asset_layer_enabled", False))
+                and bool(getattr(evolution, "asset_retrieval_enabled", False))):
+            asset_retrieval = retrieve_asset_context(
+                memory_query, workspace=root, session_key=session_key, trace_id=trace_id, turn_id=turn_id,
+                token_budget=int(getattr(evolution, "asset_injection_token_budget", 600)),
+            )
+            if asset_retrieval.text:
+                dynamic_parts.append(asset_retrieval.text)
+            elif asset_retrieval.outcome == "degraded" and self.memory_retriever.router.classify(memory_query).failure_mode == "visible_error":
+                dynamic_parts.append(f"[Asset retrieval unavailable: {asset_retrieval.error_code}]")
 
         memory = self.memory.get_memory_context()
         if memory and not self._is_template_content(self.memory.read_memory(), "memory/MEMORY.md"):
@@ -288,6 +319,7 @@ class ContextBuilder:
             stable="\n\n---\n\n".join(stable_parts),
             dynamic="\n\n---\n\n".join(dynamic_parts),
             retrieval=retrieval,
+            asset_retrieval=asset_retrieval,
         )
 
     def _get_identity(self, channel: str | None = None, workspace: Path | None = None) -> str:

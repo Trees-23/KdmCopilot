@@ -4,6 +4,25 @@ This page explains how nanobot implements long-term AI agent memory: session
 history, compressed archives, durable knowledge files, Dream consolidation, and
 Git-backed memory changes.
 
+## 自进化资产与旧索引退役
+
+任务事实通过 `evolution_task_evidence`、步骤证据和 `recovery_episodes` 生成 L1，
+同类 L1 离线聚合为 L2，均存放在 `memory_assets`。运行时检索使用资产与 Skill 范围。
+成功、失败、已恢复和部分完成共用资产表；复用信号按实际注入事件记账。
+
+Q4 的 `0025`–`0027` 迁移删除旧人工 Issue 五表、`trace_index`、`memory_records` 和
+`memory_revisions`，同时移除每天12点的失败 Issue 汇总、修复候选与通知线路。
+`/evolve recovery` 和三项 `recovery*Enabled` 配置已移除；Proposal 的查询、通知与授权保留。
+旧 `retentionDays` / `payloadRetentionDays` 也已移除，不注册替代的周期删除任务。
+
+这些表与 L0 的 `memory/MEMORY.md`、会话归档是不同存储；L0 文件继续保留。
+WebUI 轨迹使用 `nanobot.audit` 的独立审计索引，审计 JSONL、payload 及其生命周期保持独立。
+历史迁移 SQL 和已记 hash 保持原样，新库先重放历史结构再应用删表迁移，升级后启动不会重建旧表。
+`memory_outbox` 的历史表结构保留，旧生产和消费代码退役。
+
+本期不实施 L3，不自动采用 Skill，不对历史数据回填。资产过期治理另期定义对象、溯源及授权范围；
+此前不填 `expires_at`，也不恢复旧 trace 索引或清理器。
+
 nanobot's memory is built on a simple belief: memory should feel alive, but it should not feel chaotic.
 
 Good memory is not a pile of notes. It is a quiet system of attention. It notices what is worth keeping, lets go of what no longer needs the spotlight, and turns lived experience into something calm, durable, and useful.

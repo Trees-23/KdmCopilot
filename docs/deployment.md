@@ -193,6 +193,39 @@ service runs in the same environment you used to install nanobot.
 > loginctl enable-linger $USER
 > ```
 
+# Evolution Worker
+
+Docker Compose runs `nanobot-evolution-worker` from the same image as
+`nanobot-gateway`, with the same `runtime/` mount and workspace. It exposes no
+ports. The worker verifies its `NANOBOT_BUILD_REF` against the Gateway health
+endpoint before claiming work and records the result at
+`runtime/evolution-worker/build.json`; a mismatch stops the worker.
+
+The Gateway's protected review and lesson schedules write durable work markers
+to the memory database. The worker claims those markers with renewable leases,
+runs the bounded review or lesson task, and acknowledges success or retryable
+failure. The Gateway remains the owner of channels and Proposal delivery.
+Inspect worker status and recent logs with:
+
+```bash
+docker compose ps nanobot-gateway nanobot-evolution-worker
+docker compose logs --tail 100 nanobot-evolution-worker
+```
+
+For a code update, stop both services first and verify that the fixed Gateway
+ports are closed. Then run `./scripts/rebuild_gateway_for_scenario.sh` to rebuild
+and replace the Gateway. The script only replaces the Gateway; recreate the
+worker from that same image afterwards:
+
+```bash
+docker compose up --no-build --force-recreate -d nanobot-evolution-worker
+```
+
+Verify that both container image IDs match and that
+`runtime/evolution-worker/build.json` reports `ready` with the new Gateway build
+reference. Do not run a separate worker image or point it at a different runtime
+directory.
+
 ## macOS LaunchAgent
 
 Use a LaunchAgent when you want `nanobot gateway` to stay online after you log in, without keeping a terminal open.

@@ -14,6 +14,10 @@ from nanobot.audit.ids import new_audit_id
 from nanobot.providers.base import LLMResponse
 
 
+class ProviderCallAdmissionError(RuntimeError):
+    """An authoritative pre-dispatch guard rejected this model request."""
+
+
 @dataclass(frozen=True, slots=True)
 class ProviderAttemptSnapshot:
     attempt_id: str
@@ -76,6 +80,9 @@ async def notify_observer(
         return
     try:
         await getattr(observer, method)(value)
+    except ProviderCallAdmissionError:
+        if method == "attempt_started":
+            raise
     except Exception as error:
         logger.warning(
             "Provider attempt observer callback failed method={} kind={}",

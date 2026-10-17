@@ -19,6 +19,53 @@ _MAX_TOOL_RESULT_CHARS = AgentDefaults().max_tool_result_chars
 _GOAL_RUNTIME_GUIDANCE_TAG = "[Goal Runtime Guidance — host instructions]"
 
 
+@pytest.mark.asyncio
+async def test_user_turn_reads_and_replies_without_updating_maintenance_jobs(tmp_path):
+    from nanobot.agent.loop import AgentLoop
+    from nanobot.bus.events import InboundMessage
+    from nanobot.bus.queue import MessageBus
+    from nanobot.memory.maintenance import open_maintenance_db
+
+    (tmp_path / "maintenance-cleanup-read.txt").write_text("retained read result", encoding="utf-8")
+    connection = open_maintenance_db(tmp_path)
+    connection.execute(
+        "INSERT INTO maintenance_jobs(job_id,workspace,session_key,activity_epoch,"
+        "last_activity_at,last_message_cursor,last_review_cursor,snapshot_cursor,due_at,"
+        "created_at,updated_at) VALUES(?,?,?,1,'before','old-message','','','before','before','before')",
+        ("existing-job", str(tmp_path.resolve()), "cli:maintenance-cleanup"),
+    )
+    connection.commit()
+    before = [tuple(row) for row in connection.execute("SELECT * FROM maintenance_jobs")]
+    provider = MagicMock()
+    provider.get_default_model.return_value = "test-model"
+    provider.chat_with_retry = AsyncMock(side_effect=[
+        LLMResponse(content="", tool_calls=[ToolCallRequest(
+            id="read-maintenance-cleanup", name="read_file",
+            arguments={"path": "maintenance-cleanup-read.txt"},
+        )], usage={}),
+        LLMResponse(content="Read completed.", tool_calls=[], usage={}),
+    ])
+    loop = AgentLoop(bus=MessageBus(), provider=provider, workspace=tmp_path, model="test-model")
+    loop.consolidator.maybe_consolidate_by_tokens = AsyncMock(return_value=None)
+    try:
+        result = await loop._process_message(InboundMessage(
+            channel="cli", sender_id="user", chat_id="maintenance-cleanup",
+            content="Read maintenance-cleanup-read.txt and report the result.",
+        ))
+        assert result is not None and result.content == "Read completed."
+        assert provider.chat_with_retry.await_count == 2
+        messages = provider.chat_with_retry.await_args.kwargs["messages"]
+        assert any(
+            message.get("role") == "tool" and "retained read result" in str(message.get("content"))
+            for message in messages
+        )
+        assert loop.sessions.get_or_create("cli:maintenance-cleanup").messages[-1]["content"] == result.content
+        assert [tuple(row) for row in connection.execute("SELECT * FROM maintenance_jobs")] == before
+    finally:
+        connection.close()
+        await loop.close_mcp()
+
+
 def _make_loop(tmp_path):
     from nanobot.agent.loop import AgentLoop
     from nanobot.bus.queue import MessageBus

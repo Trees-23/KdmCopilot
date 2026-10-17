@@ -7,7 +7,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, Callable, Mapping
+from typing import Any, Callable
 from uuid import uuid4
 
 from nanobot.memory.derivation import EvalCase
@@ -172,19 +172,6 @@ def evaluate_gate(
     return GateResult(eligible, reason, holdout_passed, cost_delta, latency_delta, security_clean)
 
 
-def replay_consistency(first: Mapping[str, ReplayEvidence], second: Mapping[str, ReplayEvidence]) -> str:
-    """Classify two independent replays without exposing their response text."""
-
-    if set(first) != set(second):
-        return "inconsistent"
-    for key in first:
-        if _response_digest(first[key].response) != _response_digest(second[key].response):
-            return "inconsistent"
-        if first[key].security_violation != second[key].security_violation:
-            return "inconsistent"
-    return "consistent"
-
-
 ReplayCallback = Callable[[EvalCase, Path], ReplayEvidence]
 
 
@@ -204,29 +191,7 @@ def replay_cases(
     return evidence
 
 
-def mark_stale_if_identity_changed(
-    connection: Any,
-    *,
-    eval_run_id: str,
-    tool_schema_digest: str,
-    fixture_hash: str,
-    dataset_hash: str,
-) -> bool:
-    row = connection.execute(
-        "SELECT tool_schema_digest,fixture_hash,dataset_hash,status FROM eval_runs WHERE eval_run_id=?",
-        (eval_run_id,),
-    ).fetchone()
-    if row is None:
-        raise ValueError("eval run not found")
-    stale = (row[0], row[1], row[2]) != (tool_schema_digest, fixture_hash, dataset_hash)
-    if stale:
-        connection.execute("UPDATE eval_runs SET status='failed',gate_result='stale_baseline' WHERE eval_run_id=?",
-                           (eval_run_id,))
-        connection.commit()
-    return stale
-
-
 __all__ = [
     "GateResult", "ReplayEvidence", "create_eval_run", "evaluate_gate", "finish_eval_run",
-    "mark_stale_if_identity_changed", "record_case_result", "replay_cases", "replay_consistency",
+    "record_case_result", "replay_cases",
 ]

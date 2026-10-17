@@ -29,10 +29,11 @@ class MemoryScope:
 class MemoryScopePolicy:
     """Convert an intent decision into an immutable, read-only scope."""
 
-    _ALIASES = {"skills": "skill", "cases": "case", "traces": "trace", "history": "memory"}
+    _ALIASES = {"skills": "skill", "asset": "asset", "assets": "asset"}
+    _SCOPES = frozenset({"asset", "skill"})
 
     def for_intent(self, decision: IntentDecision) -> MemoryScope:
-        scopes = tuple(dict.fromkeys(self._ALIASES.get(scope, scope) for scope in decision.scopes))
+        scopes = self.normalize(decision.scopes)
         return MemoryScope(
             intent=decision.intent,
             scopes=scopes,
@@ -45,7 +46,8 @@ class MemoryScopePolicy:
 
     @staticmethod
     def normalize(scopes: Iterable[str]) -> tuple[str, ...]:
-        return tuple(dict.fromkeys(MemoryScopePolicy._ALIASES.get(str(scope), str(scope)) for scope in scopes))
+        normalized = (MemoryScopePolicy._ALIASES.get(str(scope), str(scope)) for scope in scopes)
+        return tuple(dict.fromkeys(scope for scope in normalized if scope in MemoryScopePolicy._SCOPES))
 
 
 MemoryPolicy = MemoryScopePolicy

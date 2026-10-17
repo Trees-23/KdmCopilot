@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from typing import Any, Iterable, Mapping, Sequence
 from uuid import uuid4
 
+from nanobot.memory.asset_taxonomy import RESOURCE_CLASSES
 from nanobot.memory.semantic_evidence import SemanticProjection, project_user_task
 
 RISK_LEVELS = ("R0", "R1", "R2", "R3", "R4")
@@ -65,6 +66,11 @@ class StepEvidence:
     verification_kind: str | None
     candidate_use: str
     redaction_status: str = "safe"
+    resource_class: str = "unknown"
+    error_code: str | None = None
+    error_type: str | None = None
+    error_source: str | None = None
+    retryability: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -240,6 +246,11 @@ def build_step_evidence(
             resource_key=_safe_summary(event.get("resource_key"), 180),
             verification_kind=verification,
             candidate_use=_candidate_use(risk, status, verification),
+            resource_class=event.get("resource_class") if event.get("resource_class") in RESOURCE_CLASSES else "unknown",
+            error_code=_safe_summary(event.get("error_code"), 80),
+            error_type=_safe_summary(event.get("error_type"), 80),
+            error_source=_safe_summary(event.get("error_source"), 80),
+            retryability=event.get("retryability") if event.get("retryability") in {"retryable", "non_retryable", "unknown"} else None,
         ))
     return tuple(steps)
 
@@ -354,13 +365,14 @@ def persist_task_evidence(connection: sqlite3.Connection, task: TaskEvidence) ->
             """INSERT INTO evolution_step_evidence
                (step_id,task_id,workspace,sequence_no,trace_id,event_id,tool_name,operation_kind,input_summary,
                 output_summary,status,failure_family,side_effect_class,risk_level,resource_key,
-                verification_kind,candidate_use,redaction_status,created_at)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                verification_kind,candidate_use,redaction_status,created_at,resource_class,error_code,error_type,error_source,retryability)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             [
                 (f"{task.task_id}:step:{step.sequence_no}", task.task_id, task.workspace, step.sequence_no, step.trace_id,
                  step.event_id, step.tool_name, step.operation_kind, step.input_summary, step.output_summary,
                  step.status, step.failure_family, step.side_effect_class, step.risk_level, step.resource_key,
-                 step.verification_kind, step.candidate_use, step.redaction_status, now)
+                 step.verification_kind, step.candidate_use, step.redaction_status, now, step.resource_class,
+                 step.error_code, step.error_type, step.error_source, step.retryability)
                 for step in task.steps
             ],
         )

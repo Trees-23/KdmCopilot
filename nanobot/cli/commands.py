@@ -8,6 +8,7 @@ import sys
 import time
 from collections.abc import Callable, Iterable
 from contextlib import nullcontext, suppress
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -73,7 +74,9 @@ from nanobot.bus.outbound_events import (  # noqa: E402
     outbound_event_from_message,
 )
 from nanobot.cli.audit import create_audit_app  # noqa: E402
+from nanobot.cli.evolution import evolution_worker  # noqa: E402
 from nanobot.cli.gateway import create_gateway_app  # noqa: E402
+from nanobot.cli.memory import create_memory_app  # noqa: E402
 from nanobot.cli.stream import StreamRenderer, ThinkingSpinner  # noqa: E402
 from nanobot.config.paths import get_workspace_path, is_default_workspace  # noqa: E402
 from nanobot.config.schema import Config  # noqa: E402
@@ -228,7 +231,9 @@ app = typer.Typer(
 )
 
 console = Console()
+app.command("evolution-worker")(evolution_worker)
 app.add_typer(create_audit_app(console=console), name="audit")
+app.add_typer(create_memory_app(console=console), name="memory")
 EXIT_COMMANDS = {"exit", "quit", "/exit", "/quit", ":q"}
 _REASONING_SENTENCE_ENDINGS = (".", "!", "?", "。", "！", "？")
 _REASONING_FLUSH_CHARS = 60
@@ -1892,48 +1897,25 @@ def _run_gateway(
         # Phase 6 review is a protected system task.  It scans redacted Trace
         # projections directly; it never asks the Agent to interpret a prompt
         # or decide whether to write, notify, merge, or publish.
-        from nanobot.memory.phase6_runtime import build_overlay_pipeline
-        from nanobot.memory.phase6_trigger import (
-            PHASE6_REVIEW_JOB_ID,
-            RECOVERY_ISSUE_REVIEW_JOB_ID,
-            run_phase6_review_scan_async,
-            run_recovery_issue_scan,
-        )
+        from nanobot.memory.asset_lesson import ASSET_LESSON_JOB_ID
+        from nanobot.memory.maintenance import open_maintenance_db
+        from nanobot.memory.phase6_trigger import PHASE6_REVIEW_JOB_ID
+        from nanobot.memory.work_queue import enqueue_work
 
-        if job.name == PHASE6_REVIEW_JOB_ID:
-            from nanobot.config.paths import get_audit_dir
-
-            result = await run_phase6_review_scan_async(
-                config.workspace_path,
-                config.phase6,
-                audit_root=get_audit_dir(config.audit.path),
-                overlay_pipeline_factory=(
-                    lambda connection, workspace, phase6_config: build_overlay_pipeline(
-                        connection,
-                        workspace,
-                        phase6_config,
-                        notifier=channels.proposal_notifier,
-                    )
-                ),
-                notify_error=channels.proposal_notifier.enqueue_scan_failure,
-                active_agent=agent,
-            )
-            logger.info("Phase 6 scheduled review completed: {}", getattr(result, "status", result))
-            return str(getattr(result, "status", "completed"))
-
-        if job.name == RECOVERY_ISSUE_REVIEW_JOB_ID:
-            def _queue_issue(issue_id: str, group_openid: str) -> int:
-                return channels.proposal_notifier.enqueue_failure_issue(
-                    issue_id, group_openid=group_openid
+        if job.name in {ASSET_LESSON_JOB_ID, PHASE6_REVIEW_JOB_ID}:
+            trigger_id = f"{job.name}:{datetime.now(UTC).strftime('%Y%m%dT%H%M')}"
+            connection = open_maintenance_db(config.workspace_path)
+            try:
+                work_id = enqueue_work(
+                    connection,
+                    str(config.workspace_path.resolve()),
+                    "lesson" if job.name == ASSET_LESSON_JOB_ID else "review",
+                    trigger_id,
                 )
-
-            result = run_recovery_issue_scan(
-                config.workspace_path,
-                config.phase6,
-                notify_issue=_queue_issue,
-            )
-            logger.info("Phase 6 recovery Issue review completed: {}", result.get("status"))
-            return str(result.get("status", "completed"))
+            finally:
+                connection.close()
+            logger.info("Phase 6 worker trigger queued job={} work_id={}", job.name, work_id)
+            return "queued"
 
         if is_bound_cron_job(job):
             return await run_bound_cron_job(job, agent=agent, cron=cron)
@@ -2090,16 +2072,16 @@ def _run_gateway(
             payload=CronPayload(kind="system_event"),
         ))
 
+    from nanobot.memory.asset_lesson import register_asset_lesson_job
     from nanobot.memory.phase6_trigger import (
         register_phase6_review_job,
-        register_recovery_issue_review_job,
     )
 
+    cron.unregister_system_job("phase6-recovery-issue-review")
+    if register_asset_lesson_job(cron, config.phase6):
+        console.print("[green]✓[/green] Asset lesson abstraction: 每分钟检查新案例")
     if register_phase6_review_job(cron, config.phase6):
         console.print("[green]✓[/green] Phase 6 review: 每天 14:00（北京时间）")
-    if register_recovery_issue_review_job(cron, config.phase6):
-        console.print("[green]✓[/green] 失败 Issue 汇总: 每天 12:00（北京时间）")
-
     async def _open_browser_when_ready() -> None:
         """Wait for the gateway to bind, then point the user's browser at the webui."""
         if not open_browser_url:

@@ -2,30 +2,30 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 import pytest
 
-from nanobot.config.schema import Config, Phase6Config
+from nanobot.config.schema import Config, Phase6EvolutionConfig
 from nanobot.memory.continuous import (
     EvidenceRecord,
     Phase6Disabled,
     Phase6RuntimeConfig,
+    Phase6State,
     append_evidence,
     build_versioned_evalpack,
     collect_capacity_metrics,
-    load_failed_trace_records,
+    collect_governance_metrics,
+    govern_workspace,
     load_state,
-    load_trace_records,
     make_proposal,
     pause_and_rollback,
     persist_proposal,
     phase6_active,
-    plan_retention,
-    regression_case_from_trace,
     resume_after_review,
     rollback_skill_revision,
     run_cycle,
+    save_state,
     select_low_risk_tasks,
     update_health,
 )
@@ -61,9 +61,6 @@ def _skill(connection: sqlite3.Connection) -> None:
 def test_phase6_is_off_by_default_and_kill_switch_is_immediate() -> None:
     assert phase6_active(Phase6RuntimeConfig()) is False
     assert Config().phase6.enabled is False
-    assert Phase6Config(payload_retention_days=7, retention_days=18).retention_days == 18
-    with pytest.raises(ValueError):
-        Phase6Config(payload_retention_days=19, retention_days=18)
     with pytest.raises(Phase6Disabled):
         select_low_risk_tasks([], Phase6RuntimeConfig())
     assert phase6_active(_cfg(kill_switch=True)) is False
@@ -84,40 +81,6 @@ def test_low_risk_selector_requires_repetition_and_excludes_sensitive_or_write_t
     assert len(candidates) == 1
     assert candidates[0].trace_ids == ("t1", "t2", "t3")
     assert candidates[0].frequency == 3
-
-
-def test_trace_index_loaders_remain_payload_free(tmp_path) -> None:
-    _workspace, connection = _db(tmp_path)
-    connection.execute(
-        "INSERT INTO trace_index(trace_id,workspace,started_at,outcome,summary,event_count,tool_count,redaction_version,source_path,created_at,updated_at) "
-        "VALUES('t1',?,'now','success','read only',1,0,'v1','derived://trace','now','now')",
-        (str(tmp_path),),
-    )
-    connection.execute(
-        "INSERT INTO trace_index(trace_id,workspace,started_at,outcome,summary,event_count,tool_count,redaction_version,source_path,created_at,updated_at) "
-        "VALUES('t2',?,'now','failure','secret: hidden',1,1,'v1','derived://trace','now','now')",
-        (str(tmp_path),),
-    )
-    connection.commit()
-    assert len(load_trace_records(connection)) == 2
-    assert load_failed_trace_records(connection)[0]["trace_id"] == "t2"
-    assert "payload" not in load_trace_records(connection)[0]
-    connection.close()
-
-
-def test_failed_trace_becomes_redacted_staging_case_only(tmp_path) -> None:
-    workspace, connection = _db(tmp_path)
-    candidate = regression_case_from_trace(
-        connection,
-        {"trace_id": "trace-fail", "outcome": "timeout", "summary": "token: abc failed", "intent": "task"},
-        _cfg(),
-    )
-    row = connection.execute("SELECT status,outcome_json FROM cases WHERE case_id=?", (candidate.case_id,)).fetchone()
-    assert row[0] == "candidate"
-    assert "[redacted]" in row[1]
-    with pytest.raises(ValueError):
-        regression_case_from_trace(connection, {"trace_id": "ok", "outcome": "success"}, _cfg())
-    connection.close()
 
 
 def test_versioned_evalpack_and_evidence_are_append_only_and_redacted(tmp_path) -> None:
@@ -158,6 +121,8 @@ def test_health_pauses_and_requires_independent_resume(tmp_path) -> None:
     assert state.pause_reason == "regression_threshold"
     with pytest.raises(ValueError):
         resume_after_review(tmp_path, _cfg(), actor="", reason="review")
+    with pytest.raises(ValueError):
+        resume_after_review(tmp_path, _cfg(), actor="reviewer", reason=" ")
     resumed = resume_after_review(tmp_path, _cfg(), actor="reviewer", reason="checked evidence")
     assert resumed.paused is False
     assert load_state(tmp_path).generation == 2
@@ -165,23 +130,130 @@ def test_health_pauses_and_requires_independent_resume(tmp_path) -> None:
     assert "health_check" in evidence and "resume" in evidence
 
 
-def test_retention_never_deletes_long_lived_summary(tmp_path) -> None:
-    _workspace, connection = _db(tmp_path)
-    now = datetime(2026, 2, 1, tzinfo=UTC)
-    for trace_id, ended_at in (("recent", now - timedelta(days=1)), ("payload", now - timedelta(days=8)),
-                               ("long", now - timedelta(days=20))):
-        connection.execute(
-            "INSERT INTO trace_index(trace_id,workspace,started_at,ended_at,outcome,summary,redaction_version,source_path,created_at,updated_at) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?)",
-            (trace_id, str(tmp_path), ended_at.isoformat(), ended_at.isoformat(), "success", "long summary", "v1", "derived://trace", ended_at.isoformat(), ended_at.isoformat()),
-        )
+def test_governance_metrics_use_live_tables_and_persist_workspace_asset_baseline(tmp_path):
+    workspace, connection = _db(tmp_path)
+    from tests.memory.test_asset_retrieval import _asset
+
+    _asset(connection, workspace, "baseline")
+    connection.execute(
+        "INSERT INTO phase6_alert_deliveries(alert_id,workspace,group_openid,category,fingerprint,payload,status,"
+        "next_attempt_at,created_at,updated_at) VALUES('dead',?,'g','scan','f','safe','dead_letter','now','now','now')",
+        (str(workspace.resolve()),),
+    )
+    connection.execute(
+        "INSERT INTO phase6_alert_deliveries(alert_id,workspace,group_openid,category,fingerprint,payload,status,"
+        "next_attempt_at,created_at,updated_at) VALUES('foreign-dead','other','g','scan','ff','safe','dead_letter','now','now','now')"
+    )
     connection.commit()
-    plan = plan_retention(connection, now=now)
-    assert plan.payload_expiry_trace_ids == ("long", "payload")
-    assert plan.summary_review_trace_ids == ("long",)
-    assert plan.protected_summary_trace_ids == ("long",)
-    assert connection.execute("SELECT count(*) FROM trace_index").fetchone()[0] == 3
+    metrics = collect_governance_metrics(connection, workspace=str(workspace.resolve()), baseline_assets=None)
+    assert metrics["asset_baseline_count"] == 1 and metrics["memory_growth_ratio"] == 0
+    assert metrics["dead_letter_count"] == 1 and metrics["unauthorized_attempts"] == 0
+    assert metrics["notification_failure_rate"] == 1.0 and metrics["notifications"] == 1
+    state, rollbacks = govern_workspace(connection, workspace, _cfg(dead_letter_pause_threshold=1), metrics)
+    assert state.paused and "dead_letter_threshold" in state.pause_reason
+    assert state.baseline_assets == 1 and not rollbacks
+    assert load_state(workspace).paused
     connection.close()
+
+
+def test_governance_counts_only_policy_block_events_from_the_read_only_audit_index(tmp_path):
+    workspace, connection = _db(tmp_path)
+    audit_root = tmp_path / "audit"
+    (audit_root / "state").mkdir(parents=True)
+    index = sqlite3.connect(audit_root / "state/audit-index.sqlite")
+    index.execute("CREATE TABLE events(event_type TEXT NOT NULL, occurred_at TEXT NOT NULL)")
+    since = datetime.now(UTC).isoformat(timespec="microseconds")
+    index.executemany("INSERT INTO events VALUES(?,?)", [("policy_blocked", since), ("tool_finished", since)])
+    index.commit()
+    index.close()
+    metrics = collect_governance_metrics(
+        connection, workspace=str(workspace.resolve()), baseline_assets=None, audit_root=audit_root,
+    )
+    assert metrics["unauthorized_attempts"] == 1
+    assert metrics["permission_denials"] == 0
+    assert metrics["asset_baseline_count"] == 1
+    assert connection.execute("SELECT count(*) FROM memory_assets").fetchone()[0] == 0
+    connection.close()
+
+
+def test_governance_auto_rollback_is_cas_scoped_to_adopted_workspace_skills(tmp_path):
+    from nanobot.memory.skill_adoption import adopt_workspace_proposal
+    from tests.memory.test_skill_adoption import _config, _setup
+
+    # Use an actually adopted file, not a database-only pointer fixture.
+    workspace, connection, _ = _setup(tmp_path)
+    assert adopt_workspace_proposal(
+        connection, workspace, "prop-adopt-test", actor="admin", config=_config(),
+    ).status == "adopted"
+    state, rollbacks = govern_workspace(connection, workspace, _cfg(), {"regression_failures": 3})
+    assert state.paused and rollbacks == (("prop-adopt-test", True),)
+    assert (workspace / "skills/demo/SKILL.md").read_text() == "# Demo\n\nold\n"
+    assert connection.execute("SELECT current_revision_id FROM skills").fetchone()[0] == "base-1"
+    assert connection.execute("SELECT status FROM skill_proposals").fetchone()[0] == "rolled_back"
+    assert connection.execute("SELECT action FROM proposal_actions ORDER BY rowid DESC").fetchone()[0] == "governance_rollback"
+    assert govern_workspace(connection, workspace, _cfg(), {"regression_failures": 3})[1] == ()
+    connection.close()
+
+
+def test_review_cycle_does_not_select_candidates_after_workspace_pause(tmp_path):
+    workspace, connection = _db(tmp_path)
+    save_state(workspace, Phase6State(paused=True, pause_reason="permission_denial", baseline_assets=0))
+    result = run_cycle(connection, workspace, _cfg(), trace_records=[{"summary": "repeat", "trace_id": "t", "outcome": "success"}] * 3)
+    assert result.status == "paused" and result.selected_tasks == ()
+    connection.close()
+
+
+@pytest.mark.asyncio
+async def test_production_review_governance_pause_returns_before_candidate_evaluation(tmp_path, monkeypatch):
+    from nanobot.memory import phase6_trigger
+    from nanobot.memory.evolution_worker import worker_tick
+    from nanobot.memory.work_queue import enqueue_work
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    config = type("WorkerConfig", (), {
+        "workspace_path": workspace,
+        "phase6": type("Phase6", (), {
+            "enabled": True,
+            "kill_switch": False,
+            "evolution": Phase6EvolutionConfig(),
+        })(),
+    })()
+    connection = open_maintenance_db(workspace)
+    enqueue_work(connection, str(workspace.resolve()), "review", "paused-review")
+    connection.close()
+    observed = {"cycle": False}
+
+    monkeypatch.setattr(
+        phase6_trigger,
+        "collect_governance_metrics",
+        lambda *_args, **_kwargs: {"regression_failures": 3},
+    )
+
+    original_cycle = phase6_trigger.run_cycle
+
+    def paused_cycle(*args, **kwargs):
+        observed["cycle"] = True
+        assert load_state(workspace).paused
+        return original_cycle(*args, **kwargs)
+
+    monkeypatch.setattr(phase6_trigger, "run_cycle", paused_cycle)
+    result = await phase6_trigger.run_phase6_review_scan_async(workspace, config.phase6)
+    assert result.status == "paused" and not observed["cycle"]
+    worker_result = await worker_tick(config, owner="paused-worker")
+    assert worker_result["status"] == "paused"
+    connection = open_maintenance_db(workspace)
+    assert tuple(connection.execute("SELECT status,attempt_count FROM evolution_work_items").fetchone()) == ("queued", 0)
+    assert load_state(workspace).paused
+    connection.close()
+
+
+def test_resume_preserves_first_capacity_baseline(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    save_state(workspace, Phase6State(paused=True, pause_reason="reviewed", generation=2, baseline_assets=17))
+    resumed = resume_after_review(workspace, _cfg(), actor="reviewer", reason="verified the adopted revision")
+    assert not resumed.paused and resumed.generation == 3 and resumed.baseline_assets == 17
 
 
 def test_proposal_is_traceable_and_rollback_is_explicit_cas(tmp_path) -> None:
@@ -234,11 +306,11 @@ def test_cycle_is_bounded_and_failed_trace_case_is_staged(tmp_path) -> None:
             {"trace_id": "ok-2", "summary": "repeat task", "outcome": "success"},
             {"trace_id": "ok-3", "summary": "repeat task", "outcome": "success"},
         ],
-        failed_traces=[{"trace_id": "bad-1", "outcome": "failed", "summary": "rejected"}],
     )
     assert result.status == "completed"
     assert result.selected_tasks[0].frequency == 3
-    assert result.regression_case_ids == ("case:bad-1",)
+    assert connection.execute("SELECT count(*) FROM cases").fetchone()[0] == 0
+    assert connection.execute("SELECT count(*) FROM wiki_pages").fetchone()[0] == 0
     assert (workspace / ".nanobot" / "phase6" / "evidence.jsonl").exists()
     assert run_cycle(connection, workspace, _cfg(kill_switch=True), trace_records=[]) .status == "disabled"
     connection.close()
@@ -247,7 +319,7 @@ def test_cycle_is_bounded_and_failed_trace_case_is_staged(tmp_path) -> None:
 def test_capacity_alert_and_regression_pause_roll_back_current(tmp_path) -> None:
     workspace, connection = _db(tmp_path)
     _skill(connection)
-    metrics = collect_capacity_metrics(connection, baseline_memory_records=1, max_memory_records=0)
+    metrics = collect_capacity_metrics(connection, baseline_assets=1, max_assets=0)
     assert metrics["capacity_exceeded"] is True
     state, rolled_back = pause_and_rollback(
         connection, workspace, {"regression_failures": 3}, _cfg(), skill_id="s",
@@ -255,4 +327,91 @@ def test_capacity_alert_and_regression_pause_roll_back_current(tmp_path) -> None
     )
     assert state.paused is True and rolled_back is True
     assert connection.execute("SELECT current_revision_id FROM skills WHERE skill_id='s'").fetchone()[0] == "r1"
+    connection.close()
+
+
+@pytest.mark.parametrize("change", ["manual_edit", "new_pointer", "outside_path", "write_failure"])
+def test_governance_rollback_preserves_changes_and_recovers_failed_file_write(tmp_path, monkeypatch, change):
+    from nanobot.memory import skill_adoption
+    from tests.memory.test_skill_adoption import _config, _setup
+
+    workspace, connection, _ = _setup(tmp_path)
+    assert skill_adoption.adopt_workspace_proposal(
+        connection, workspace, "prop-adopt-test", actor="admin", config=_config(),
+    ).status == "adopted"
+    path = workspace / "skills/demo/SKILL.md"
+    expected = path.read_text()
+    pointer = "candidate-1"
+    if change == "manual_edit":
+        expected = "user changed this file"
+        path.write_text(expected)
+    elif change == "new_pointer":
+        pointer = "base-1"
+        connection.execute("UPDATE skills SET current_revision_id=?", (pointer,))
+        connection.commit()
+    elif change == "outside_path":
+        outside = tmp_path / "protected.md"
+        outside.write_text(expected)
+        path.unlink()
+        path.symlink_to(outside)
+    elif change == "write_failure":
+        original = skill_adoption._atomic_write
+
+        def fail_after_replace(*args):
+            original(*args)
+            raise OSError("disk failure after replace")
+
+        monkeypatch.setattr(skill_adoption, "_atomic_write", fail_after_replace)
+    state, rollbacks = govern_workspace(connection, workspace, _cfg(), {"regression_failures": 3})
+    assert state.paused and not any(applied for _, applied in rollbacks)
+    assert path.read_text() == expected
+    assert connection.execute("SELECT current_revision_id FROM skills").fetchone()[0] == pointer
+    assert connection.execute("SELECT status FROM skill_proposals").fetchone()[0] == "adopted"
+    assert not connection.execute("SELECT 1 FROM proposal_actions WHERE action='governance_rollback'").fetchone()
+    connection.close()
+
+
+def test_capacity_limit_pauses_even_without_asset_growth(tmp_path):
+    state = update_health(tmp_path, {"capacity_exceeded": True, "memory_growth_ratio": 0}, _cfg())
+    assert state.paused and state.pause_reason == "memory_capacity"
+
+
+def test_cross_process_health_updates_preserve_every_generation(tmp_path):
+    import subprocess
+    import sys
+
+    code = (
+        "import sys; from nanobot.memory.continuous import update_health, Phase6RuntimeConfig; "
+        "[update_health(sys.argv[1], {}, Phase6RuntimeConfig(enabled=True)) for _ in range(6)]"
+    )
+    processes = [subprocess.Popen([sys.executable, "-c", code, str(tmp_path)]) for _ in range(3)]
+    assert all(process.wait(timeout=30) == 0 for process in processes)
+    assert load_state(tmp_path).generation == 18
+
+
+
+def test_governance_permission_and_action_counts_exclude_other_workspaces(tmp_path):
+    from tests.memory.test_skill_adoption import _setup
+
+    workspace, connection, _ = _setup(tmp_path)
+    stamp = datetime.now(UTC).isoformat(timespec="seconds")
+    for scope in (str(workspace.resolve()), "foreign-workspace"):
+        connection.execute(
+            "INSERT INTO evolution_task_evidence(task_id,workspace,qualification,redaction_status,created_at,updated_at) "
+            "VALUES(?,?,'manual_review_required','safe',?,?)", (scope, scope, stamp, stamp),
+        )
+        connection.execute(
+            "INSERT INTO evolution_step_evidence(step_id,task_id,workspace,sequence_no,tool_name,status,"
+            "failure_family,risk_level,candidate_use,redaction_status,created_at) "
+            "VALUES(?,?,?,0,'read_file','error','permission_denied','R0','archive_only','safe',?)",
+            (scope, scope, scope, stamp),
+        )
+        connection.execute(
+            "INSERT INTO proposal_actions(action_id,proposal_id,workspace,action,actor_openid,idempotency_key,"
+            "request_digest,result_status,created_at) VALUES(?,'prop-adopt-test',?,'approve','tester',?,"
+            "'safe','forbidden',?)", (scope, scope, scope, stamp),
+        )
+    connection.commit()
+    metrics = collect_governance_metrics(connection, workspace=str(workspace.resolve()), baseline_assets=None)
+    assert metrics["permission_denials"] == metrics["unauthorized_attempts"] == 1
     connection.close()

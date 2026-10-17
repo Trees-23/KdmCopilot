@@ -54,14 +54,16 @@ async def test_ab_gate_runs_two_sides_and_enforces_daily_budget(tmp_path) -> Non
     first = await evaluate_candidate_specs(connection, workspace, (_spec(),), config, executor=_executor)
     assert first.status == "completed"
     assert first.approved_specs == (_spec(),)
-    assert first.model_calls_used == 20
-    assert tuple(connection.execute("SELECT status,model_calls_used FROM ab_evaluations").fetchone()) == ("passed", 20)
-    assert connection.execute("SELECT count(*) FROM ab_case_results").fetchone()[0] == 8
+    assert first.model_calls_used == 40
+    assert tuple(connection.execute("SELECT status,model_calls_used FROM ab_evaluations").fetchone()) == ("passed", 40)
+    assert connection.execute("SELECT count(*) FROM ab_case_results").fetchone()[0] == 16
 
     second = await evaluate_candidate_specs(connection, workspace, (_spec(),), config, executor=_executor)
     assert second.status == "completed"
-    assert second.model_calls_used == 20
-    exhausted = await evaluate_candidate_specs(connection, workspace, (_spec(),), config, executor=_executor)
+    assert second.model_calls_used == 0
+    exhausted = await evaluate_candidate_specs(
+        connection, workspace, (replace(_spec(), candidate_hash="different-content"),), config, executor=_executor,
+    )
     assert exhausted.status == "budget_exhausted"
     assert exhausted.approved_specs == ()
     connection.close()

@@ -59,9 +59,3 @@ def connect_memory_db_path(path: str | Path) -> sqlite3.Connection:
     db_path = Path(path).expanduser()
     db_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     return _configure_connection(sqlite3.connect(db_path, timeout=5.0))
-
-
-def foreign_keys_enabled(connection: sqlite3.Connection) -> bool:
-    """Return whether the supplied connection has foreign keys enabled."""
-
-    return connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1

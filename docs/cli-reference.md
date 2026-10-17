@@ -33,6 +33,65 @@ python -m nanobot --version
 
 `python -m nanobot ...` is useful when the package is installed but the `nanobot` script is not on `PATH`.
 
+## 一次性 P6 历史数据清理
+
+`nanobot memory purge-legacy` 仅用于自进化重构的 P6 清理。默认与 `--dry-run` 都是只读预览，
+必须显式指定已有数据库路径；不创建数据库、不执行迁移、不清理文件目录：
+
+```bash
+nanobot memory purge-legacy --database runtime/workspace/.nanobot/memory.sqlite3 --dry-run
+```
+
+输出固定序 1→23 的表、筛选条件、操作、计数及 `plan_digest`。第 12 步包含两张评测预算派生表
+`evaluation_candidate_admissions`、`evaluation_model_call_reservations`，先清子表再清评测。
+序 19 先把待删 Skill 的 `current_revision_id` 置空，再删对应版本和 Skill；仅匹配
+`skill:m19:%`、`skill:recovery-%`、`skill:evolution-%` 与 `skill-overlay-hot-reload-m9`。
+全部 `retrieval_events` 及全部状态的 `memory_assets` 也在清理范围内。
+
+真实执行必须先获清理授权，并停止使用该数据库的 Gateway、worker、独立 CLI、定时任务等所有
+读写进程；停止期间重新预览、核对清单。`--writers-stopped` 是操作者确认，不能替代实际停进程。
+工具额外检查数据库独占访问及有效维护/评测租约，无法取得独占访问或租约仍有效时拒绝执行。
+并发清理执行者通过数据库旁的 `.p6.lock` 互斥文件串行进入 SQLite，再在写事务内核对完成标记；
+该锁文件不是备份，也不是完成标记，不要在执行者运行期间删除。
+
+确认后在同一停写窗口使用刚核对的摘要（下面的 `已核对的摘要` 需替换）：
+
+```bash
+nanobot memory purge-legacy --database runtime/workspace/.nanobot/memory.sqlite3 \
+  --execute --writers-stopped --confirm-plan 已核对的摘要
+```
+
+本操作不备份、不删除表或索引。删除、提交前外键校验及固定完成标记
+`data_purge_completions/self-evolution-p6-v1` 在一个独立事务内执行；失败全部回滚，外键恢复开启。
+清单计数变化会拒绝旧摘要。首次成功后，重复执行只报告 `already_completed`，保留后来新产生的
+证据、资产、检索事件和复用计数；不得删除或修改完成标记来重新执行。
+
+审计、手工 Skill、L0 文件记忆、`maintenance_jobs` 和 `maintenance_lock` 不在本操作的删除范围。
+五个历史运行目录需要另行授权和处理，数据库完成标记不代表文件已删除。
+成功后应在恢复写入前核对清空结果，再按部署流程恢复 Gateway；此入口不会自动停启服务。
+
+## 独立 C-P6 维护表清理
+
+P6 完成后，`nanobot memory purge-maintenance --database <已有数据库> --dry-run` 只读预览
+`maintenance_jobs` → `maintenance_lock` 两张表；默认行为同样是预览。它不属于 P6 的23步，
+真实执行必须另获 C-P6 授权、暂停所有相关执行者、确认无有效租约，并重新核对预览摘要。
+
+独立授权后的执行参数为 `--execute --writers-stopped --confirm-plan <最新摘要>`。
+本入口保持外键开启，在独立事务内删除两表历史行、检查外键并写固定标记
+`legacy-maintenance-cp6-v1`；表/索引与活锁函数保留。未完成P6时拒绝，失败回滚；
+成功后重跑保留后来新写的维护任务和租约。锁文件与P6共享，完成标记分别记账。
+不备份、不清 `memory_outbox`、资产、审计、P6标记或文件目录；不自动停启服务。
+
+Q6 workspace 治理进入 `paused` 后，worker 会停止领取 review/lesson 任务，并保留队列等待独立审核。
+审核后通过以下命令恢复；actor 和 reason 都是必填项：
+
+```bash
+nanobot memory governance-resume --actor reviewer-id --reason "复核了触发指标与 Skill 当前版本"
+```
+
+命令记录恢复代次和审计证据，保留首次容量基线。它不清零失败计数、不删除队列数据，也不会恢复旧周期过期清理器。
+review 扫描按工作区持久状态先检查健康门禁，再进入候选评测；只有命中仍指向当前已采用版本的 workspace Skill 时才按基线版本 CAS 回滚。计数来自近一天失败门禁/权限步骤、独立审计索引中的 policy_blocked 元数据、投递死信与容量基线，不读取审计 payload。
+
 ## Common Patterns
 
 Most day-to-day commands use the default config and workspace. Advanced or multi-instance runs usually pass both paths explicitly:

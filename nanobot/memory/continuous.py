@@ -11,14 +11,19 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+from contextlib import closing
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
+from functools import wraps
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any, Iterable, Mapping, Sequence
 from uuid import uuid4
 
-from nanobot.memory.derivation import CaseCandidate, classify_outcome, derive_case_candidate
+from filelock import FileLock
+
+from nanobot.memory.derivation import classify_outcome
+from nanobot.memory.queue_state import EvaluationLease
 
 PHASE6_DIR = ".nanobot/phase6"
 EVIDENCE_FILE = "evidence.jsonl"
@@ -47,22 +52,26 @@ class Phase6RuntimeConfig:
     dead_letter_pause_threshold: int = 3
     notification_failure_rate_pause_threshold: float = 1.0
     unauthorized_pause_threshold: int = 1
-    cross_group_leak_pause_threshold: int = 1
     max_memory_growth_ratio: float = 0.5
-    retention_days: int = 18
-    payload_retention_days: int = 7
     ab_evaluation_mode: str = "enforced"
     ab_evaluation_model: str = "glm-5.3-flash"
     ab_evaluation_reasoning_effort: str = "high"
     ab_evaluation_max_candidates_per_day: int = 2
     ab_evaluation_max_model_calls_per_day: int = 40
+    asset_layer_enabled: bool = False
+    asset_retrieval_enabled: bool = False
+    asset_injection_token_budget: int = 600
+    lesson_min_cases: int = 3
+    lesson_abstraction_enabled: bool = False
+    evaluation_lease_seconds: int = 900
+    evaluation_timeout_seconds: int = 900
+    evaluation_max_attempts: int = 3
     adoption_enabled: bool = False
     workspace_skill_allowlist: tuple[str, ...] = ()
     stepwise_evidence_enabled: bool = False
     stepwise_evidence_mode: str = "shadow"
     mixed_risk_policy: str = "manual"
     stepwise_candidate_enabled: bool = False
-    case_candidate_promotion: bool = False
 
     @classmethod
     def from_config(cls, config: Any) -> "Phase6RuntimeConfig":
@@ -87,15 +96,26 @@ class Phase6RuntimeConfig:
                     "draft_pr_enabled", "ab_evaluation_mode", "ab_evaluation_model",
                     "ab_evaluation_reasoning_effort", "ab_evaluation_max_candidates_per_day",
                     "ab_evaluation_max_model_calls_per_day",
+                    "evaluation_lease_seconds", "evaluation_timeout_seconds", "evaluation_max_attempts",
+                    "asset_layer_enabled", "asset_retrieval_enabled", "asset_injection_token_budget",
+                    "lesson_min_cases", "lesson_abstraction_enabled",
                     "adoption_enabled", "workspace_skill_allowlist",
                     "stepwise_evidence_enabled", "stepwise_evidence_mode", "mixed_risk_policy",
-                    "stepwise_candidate_enabled", "case_candidate_promotion",
+                    "stepwise_candidate_enabled",
                 ):
                     if hasattr(evolution, name):
                         values[name] = getattr(evolution, name)
         return cls(**values)
 
     def __post_init__(self) -> None:
+        if not 1 <= self.asset_injection_token_budget <= 600:
+            raise ValueError("asset token budget must be between 1 and 600")
+        if self.asset_retrieval_enabled and not self.asset_layer_enabled:
+            raise ValueError("asset retrieval requires asset layer")
+        if self.lesson_min_cases < 1:
+            raise ValueError("lesson minimum must be positive")
+        if self.lesson_abstraction_enabled and not self.asset_layer_enabled:
+            raise ValueError("lesson abstraction requires asset layer")
         if self.min_repeat_count < 3:
             raise ValueError("min_repeat_count must be at least 3")
         if self.max_candidates_per_cycle < 1:
@@ -108,12 +128,8 @@ class Phase6RuntimeConfig:
             raise ValueError("notification_failure_rate_pause_threshold must be between 0 and 1")
         if self.unauthorized_pause_threshold < 1:
             raise ValueError("unauthorized_pause_threshold must be positive")
-        if self.cross_group_leak_pause_threshold < 1:
-            raise ValueError("cross_group_leak_pause_threshold must be positive")
         if not 0 <= self.max_memory_growth_ratio:
             raise ValueError("max_memory_growth_ratio must not be negative")
-        if self.payload_retention_days < 1 or self.retention_days < self.payload_retention_days:
-            raise ValueError("retention_days must be >= payload_retention_days >= 1")
         if self.ab_evaluation_mode not in {"disabled", "shadow", "enforced"}:
             raise ValueError("ab_evaluation_mode must be disabled, shadow, or enforced")
         if self.ab_evaluation_reasoning_effort not in {"low", "medium", "high"}:
@@ -122,6 +138,10 @@ class Phase6RuntimeConfig:
             raise ValueError("ab_evaluation_max_candidates_per_day must be positive")
         if self.ab_evaluation_max_model_calls_per_day < 1:
             raise ValueError("ab_evaluation_max_model_calls_per_day must be positive")
+        if self.evaluation_lease_seconds < 1 or self.evaluation_timeout_seconds < 1:
+            raise ValueError("evaluation lease and timeout must be positive")
+        if not 1 <= self.evaluation_max_attempts <= 3:
+            raise ValueError("evaluation_max_attempts must be between 1 and 3")
         if self.stepwise_evidence_mode not in {"disabled", "shadow", "enforced"}:
             raise ValueError("stepwise_evidence_mode must be disabled, shadow, or enforced")
         if self.mixed_risk_policy not in {"partial", "manual", "reject"}:
@@ -161,20 +181,13 @@ class Phase6State:
     pause_reason: str | None = None
     consecutive_regressions: int = 0
     generation: int = 0
-
-
-@dataclass(frozen=True, slots=True)
-class RetentionPlan:
-    payload_expiry_trace_ids: tuple[str, ...]
-    summary_review_trace_ids: tuple[str, ...]
-    protected_summary_trace_ids: tuple[str, ...]
+    baseline_assets: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class Phase6CycleResult:
     status: str
     selected_tasks: tuple[TraceCandidate, ...] = ()
-    regression_case_ids: tuple[str, ...] = ()
     paused: bool = False
     rollback_applied: bool = False
 
@@ -284,69 +297,6 @@ def select_low_risk_tasks(
     return tuple(candidates[: int(_config_value(config, "max_candidates_per_cycle", 20))])
 
 
-def load_trace_records(connection: sqlite3.Connection) -> tuple[dict[str, Any], ...]:
-    """Read only redacted Trace index summaries for the selector."""
-
-    rows = connection.execute(
-        "SELECT trace_id,outcome,summary,event_count,tool_count FROM trace_index ORDER BY started_at"
-    ).fetchall()
-    records: list[dict[str, Any]] = []
-    for row in rows:
-        record: dict[str, Any] = {
-            "trace_id": row[0], "outcome": row[1], "summary": row[2],
-            "event_count": row[3], "tool_count": row[4],
-        }
-        # Tool names are already part of the redacted summary projection. Do
-        # not read Audit payloads here; expose only this safe category metadata.
-        try:
-            parsed = json.loads(str(row[2] or ""))
-            tools = parsed.get("tool_names", []) if isinstance(parsed, Mapping) else []
-            if isinstance(tools, list):
-                record["tools"] = tuple(str(tool) for tool in tools if str(tool))
-        except (TypeError, ValueError, json.JSONDecodeError):
-            pass
-        records.append(record)
-    return tuple(records)
-
-
-def load_failed_trace_records(connection: sqlite3.Connection) -> tuple[dict[str, Any], ...]:
-    """Return failed/partial/blocked summaries without provider payloads."""
-
-    rows = connection.execute(
-        "SELECT trace_id,outcome,summary FROM trace_index "
-        "WHERE outcome IN ('failure','failed','partial','blocked') ORDER BY started_at"
-    ).fetchall()
-    return tuple({"trace_id": row[0], "outcome": row[1], "summary": row[2]} for row in rows)
-
-
-def regression_case_from_trace(
-    connection: sqlite3.Connection,
-    trace: Mapping[str, Any],
-    config: Any,
-    *,
-    actor: str = "phase6-regression",
-) -> CaseCandidate:
-    """Convert a failed Trace summary into a staging Case, never a Skill."""
-
-    require_active(config)
-    trace_id = str(trace.get("trace_id") or "").strip()
-    if not trace_id:
-        raise ValueError("trace_id is required")
-    classification = classify_outcome(str(trace.get("outcome") or trace.get("status") or ""))
-    if classification == "success":
-        raise ValueError("successful traces cannot become regression cases")
-    summary = _SECRET_RE.sub("[redacted]", str(trace.get("summary") or "trace failure"))[:500]
-    return derive_case_candidate(
-        connection,
-        trace_id=trace_id,
-        intent=str(trace.get("intent") or "trace_regression"),
-        task_signature={"source": "phase6", "classification": classification},
-        outcome={"status": classification, "summary": summary, "actor": actor},
-        failure_patterns=tuple(str(item) for item in (trace.get("failure_patterns") or ())) or (classification,),
-        confidence=float(trace.get("confidence") or 0.7),
-    )
-
-
 def next_evalpack_version(connection: sqlite3.Connection, skill_revision_id: str) -> int:
     rows = connection.execute(
         "SELECT split_policy_json FROM eval_packs WHERE skill_revision_id=? ORDER BY created_at",
@@ -369,6 +319,7 @@ def build_versioned_evalpack(
     cases: Iterable[Mapping[str, Any]],
     fixture_hash: str,
     config: Any,
+    actor: str = "phase6",
 ):
     """Build a new EvalPack version from changed regression cases."""
 
@@ -382,8 +333,8 @@ def build_versioned_evalpack(
         skill_revision_id=skill_revision_id,
         cases=cases,
         fixture_hash=fixture_hash,
-        split_policy={"seed": "stable-digest", "phase6_version": version},
-        actor="phase6",
+        split_policy={"seed": "stable-digest", "phase6": "fixture", "phase6_version": version},
+        actor=actor,
     )
 
 
@@ -428,6 +379,7 @@ def load_state(workspace: str | Path) -> Phase6State:
             paused=bool(data.get("paused", False)), pause_reason=data.get("pause_reason"),
             consecutive_regressions=int(data.get("consecutive_regressions", 0)),
             generation=int(data.get("generation", 0)),
+            baseline_assets=(int(data["baseline_assets"]) if data.get("baseline_assets") is not None else None),
         )
     except (OSError, TypeError, ValueError, json.JSONDecodeError):
         return Phase6State(paused=True, pause_reason="state_unreadable")
@@ -446,6 +398,15 @@ def save_state(workspace: str | Path, state: Phase6State) -> None:
     temp.replace(target)
 
 
+def _locked_state_update(function):
+    @wraps(function)
+    def locked(workspace, *args, **kwargs):
+        with FileLock(str(_phase6_dir(workspace) / "state.lock")):
+            return function(workspace, *args, **kwargs)
+    return locked
+
+
+@_locked_state_update
 def update_health(
     workspace: str | Path,
     metrics: Mapping[str, Any],
@@ -461,10 +422,8 @@ def update_health(
         reasons.append("regression_threshold")
     if int(metrics.get("permission_denials", 0)) > 0:
         reasons.append("permission_denial")
-    if bool(metrics.get("fts_rebuild_failed", False)):
-        reasons.append("fts_rebuild_failed")
     growth = float(metrics.get("memory_growth_ratio", 0.0))
-    if growth > float(_config_value(config, "max_memory_growth_ratio", 0.5)):
+    if metrics.get("capacity_exceeded") or growth > float(_config_value(config, "max_memory_growth_ratio", 0.5)):
         reasons.append("memory_capacity")
     if int(metrics.get("dead_letter_count", 0)) >= int(
         _config_value(config, "dead_letter_pause_threshold", 3)
@@ -478,15 +437,16 @@ def update_health(
         _config_value(config, "unauthorized_pause_threshold", 1)
     ):
         reasons.append("unauthorized_attempt")
-    if int(metrics.get("cross_group_leaks", 0)) >= int(
-        _config_value(config, "cross_group_leak_pause_threshold", 1)
-    ):
-        reasons.append("cross_group_leak")
     state = Phase6State(
         paused=bool(reasons) or previous.paused,
         pause_reason=",".join(reasons) if reasons else previous.pause_reason,
         consecutive_regressions=regressions,
         generation=previous.generation + 1,
+        baseline_assets=(
+            previous.baseline_assets
+            if previous.baseline_assets is not None
+            else metrics.get("asset_baseline_count")
+        ),
     )
     save_state(workspace, state)
     append_evidence(
@@ -501,31 +461,131 @@ def update_health(
 def collect_capacity_metrics(
     connection: sqlite3.Connection,
     *,
-    baseline_memory_records: int = 0,
-    max_memory_records: int = 100_000,
+    baseline_assets: int = 0,
+    max_assets: int = 100_000,
     max_retrieval_events: int = 200_000,
 ) -> dict[str, Any]:
     """Collect bounded counts without reading or deleting provider payloads."""
 
-    memory_count = int(connection.execute("SELECT count(*) FROM memory_records").fetchone()[0])
+    asset_count = int(connection.execute("SELECT count(*) FROM memory_assets").fetchone()[0])
     retrieval_count = int(connection.execute("SELECT count(*) FROM retrieval_events").fetchone()[0])
-    trace_count = int(connection.execute("SELECT count(*) FROM trace_index").fetchone()[0])
+    queue_count = int(connection.execute("SELECT count(*) FROM evolution_candidate_staging").fetchone()[0])
     growth = 0.0
-    if baseline_memory_records > 0:
-        growth = (memory_count - baseline_memory_records) / baseline_memory_records
+    if baseline_assets > 0:
+        growth = (asset_count - baseline_assets) / baseline_assets
     return {
-        "memory_records": memory_count,
+        "memory_assets": asset_count,
         "retrieval_events": retrieval_count,
-        "trace_index": trace_count,
+        "evolution_candidate_staging": queue_count,
         "memory_growth_ratio": growth,
-        "capacity_exceeded": memory_count >= max_memory_records or retrieval_count >= max_retrieval_events,
+        "capacity_exceeded": asset_count >= max_assets or retrieval_count >= max_retrieval_events,
     }
 
 
-def record_index_failure(workspace: str | Path, error: str, config: Any) -> Phase6State:
-    """Persist a redacted index failure and enter the normal pause path."""
+def collect_governance_metrics(
+    connection: sqlite3.Connection,
+    *,
+    workspace: str,
+    baseline_assets: int | None,
+    audit_root: str | Path | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Collect bounded counters from live Q6 data, never legacy trace tables."""
+    current = _now(now)
+    since = _iso(current - timedelta(days=1))
+    capacity = collect_capacity_metrics(
+        connection,
+        baseline_assets=baseline_assets or 0,
+    )
+    if baseline_assets is None:
+        capacity["asset_baseline_count"] = max(1, capacity["memory_assets"])
+        capacity["memory_growth_ratio"] = 0.0
+    elif baseline_assets < 1:
+        capacity["asset_baseline_count"] = 1
+        capacity["memory_growth_ratio"] = float(capacity["memory_assets"] - 1)
+    regression = int(connection.execute(
+        "SELECT count(*) FROM eval_runs WHERE gate_result='gate_failed' AND started_at>=?",
+        (since,),
+    ).fetchone()[0])
+    permission = int(connection.execute(
+        "SELECT count(*) FROM evolution_step_evidence WHERE lower(coalesce(failure_family,'')) "
+        "IN ('permission_denied','permission-denied') AND workspace=? AND created_at>=?", (workspace, since),
+    ).fetchone()[0])
+    dead_letters = sum(int(connection.execute(
+        f"SELECT count(*) FROM {table} WHERE workspace=? AND status='dead_letter'",
+        (workspace,),
+    ).fetchone()[0]) for table in ("proposal_deliveries", "phase6_alert_deliveries"))
+    delivery_totals = connection.execute(
+        "SELECT count(*),sum(status IN ('retry_wait','dead_letter')) FROM proposal_deliveries "
+        "WHERE workspace=? AND status IN ('sent','retry_wait','dead_letter')", (workspace,),
+    ).fetchone()
+    alert_totals = connection.execute(
+        "SELECT count(*),sum(status IN ('retry_wait','dead_letter')) FROM phase6_alert_deliveries "
+        "WHERE workspace=? AND status IN ('sent','retry_wait','dead_letter')", (workspace,),
+    ).fetchone()
+    total = sum(int(row[0] or 0) for row in (delivery_totals, alert_totals))
+    failed = sum(int(row[1] or 0) for row in (delivery_totals, alert_totals))
+    unauthorized = int(connection.execute(
+        "SELECT count(*) FROM proposal_actions WHERE lower(result_status) "
+        "IN ('unauthorized','forbidden','scope_denied') AND workspace=? AND created_at>=?", (workspace, since),
+    ).fetchone()[0])
+    # The independent audit index stores event metadata only; do not open payloads.
+    if audit_root is not None:
+        index_path = Path(audit_root).expanduser() / "state" / "audit-index.sqlite"
+        if index_path.is_file():
+            with closing(sqlite3.connect(index_path.resolve().as_uri() + "?mode=ro", uri=True)) as audit:
+                audit.execute("PRAGMA query_only=ON")
+                blocked = int(audit.execute(
+                    "SELECT count(*) FROM events WHERE occurred_at>=? AND event_type='policy_blocked'",
+                    (since,),
+                ).fetchone()[0])
+            unauthorized += blocked
+    return {
+        **capacity,
+        "regression_failures": regression,
+        "permission_denials": permission,
+        "dead_letter_count": dead_letters,
+        "notification_failure_rate": failed / total if total else 0.0,
+        "notifications": total,
+        "unauthorized_attempts": unauthorized,
+    }
 
-    return update_health(workspace, {"fts_rebuild_failed": True, "error": error}, config)
+
+def govern_workspace(
+    connection: sqlite3.Connection,
+    workspace: str | Path,
+    config: Any,
+    metrics: Mapping[str, Any],
+) -> tuple[Phase6State, tuple[tuple[str, bool], ...]]:
+    """Persist health, pause new work, and CAS-rollback any adopted workspace Skill."""
+    state = update_health(workspace, metrics, config)
+    if not state.paused:
+        return state, ()
+    targets = connection.execute(
+        "SELECT p.skill_id,p.baseline_revision_id,p.candidate_revision_id,p.proposal_id "
+        "FROM skill_proposals p JOIN skills s ON s.skill_id=p.skill_id "
+        "WHERE p.workspace=? AND p.target='workspace_adopt_proposal' AND p.status='adopted' "
+        "AND p.baseline_revision_id IS NOT NULL AND p.candidate_revision_id IS NOT NULL "
+        "AND s.current_revision_id=p.candidate_revision_id ORDER BY p.updated_at,p.proposal_id",
+        (str(Path(workspace).expanduser().resolve()),),
+    ).fetchall()
+    if not targets:
+        append_evidence(
+            workspace,
+            EvidenceRecord("rollback", _iso(), status="skipped", reason="no adopted workspace Skill matches the health trigger"),
+            config,
+        )
+        return state, ()
+    results = []
+    for skill_id, baseline, candidate, proposal_id in targets:
+        state, rolled_back = pause_and_rollback(
+            connection, workspace, metrics, config,
+            skill_id=str(skill_id), baseline_revision_id=str(baseline),
+            expected_current_revision_id=str(candidate), actor="phase6-regression-guard",
+            proposal_id=str(proposal_id),
+        )
+        results.append((str(proposal_id), rolled_back))
+    return state, tuple(results)
 
 
 def pause_and_rollback(
@@ -538,6 +598,7 @@ def pause_and_rollback(
     baseline_revision_id: str,
     expected_current_revision_id: str | None,
     actor: str = "phase6-regression-guard",
+    proposal_id: str | None = None,
 ) -> tuple[Phase6State, bool]:
     """Pause candidate processing and restore a known baseline with CAS."""
 
@@ -552,6 +613,8 @@ def pause_and_rollback(
             config=config,
             actor=actor,
             confirm=True,
+            workspace=workspace if proposal_id is not None else None,
+            proposal_id=proposal_id,
         )
         append_evidence(
             workspace,
@@ -568,7 +631,6 @@ def run_cycle(
     config: Any,
     *,
     trace_records: Iterable[Mapping[str, Any]],
-    failed_traces: Iterable[Mapping[str, Any]] = (),
     metrics: Mapping[str, Any] | None = None,
 ) -> Phase6CycleResult:
     """Run one bounded opt-in cycle; no automatic adoption or publication."""
@@ -583,55 +645,27 @@ def run_cycle(
         if state.paused:
             return Phase6CycleResult("paused", paused=True)
     selected = select_low_risk_tasks(trace_records, config)
-    failed = tuple(failed_traces)
-    case_ids: list[str] = []
-    for trace in failed:
-        case_ids.append(regression_case_from_trace(connection, trace, config).case_id)
     append_evidence(
         workspace,
         EvidenceRecord("cycle", _iso(),
-                       trace_ids=tuple(str(item.get("trace_id")) for item in failed if item.get("trace_id")),
-                       case_ids=tuple(case_ids), status="ok",
-                       metrics={"selected_tasks": len(selected), "regression_cases": len(case_ids)}),
+                       trace_ids=tuple(trace_id for task in selected for trace_id in task.trace_ids),
+                       status="ok",
+                       metrics={"selected_tasks": len(selected)}),
         config,
     )
-    return Phase6CycleResult("completed", selected, tuple(case_ids))
+    return Phase6CycleResult("completed", selected)
 
 
+@_locked_state_update
 def resume_after_review(workspace: str | Path, config: Any, *, actor: str, reason: str) -> Phase6State:
     require_active(config)
     if not actor.strip() or not reason.strip():
         raise ValueError("independent actor and reason are required")
     previous = load_state(workspace)
-    state = Phase6State(generation=previous.generation + 1)
+    state = Phase6State(generation=previous.generation + 1, baseline_assets=previous.baseline_assets)
     save_state(workspace, state)
     append_evidence(workspace, EvidenceRecord("resume", _iso(), status="ok", reason=f"{actor}: {reason}"), config)
     return state
-
-
-def plan_retention(
-    connection: sqlite3.Connection,
-    *,
-    now: datetime | None = None,
-    payload_days: int = 7,
-    trace_days: int = 18,
-) -> RetentionPlan:
-    """Plan expiry without deleting traces or long-lived summaries."""
-
-    current = _now(now)
-    payload_cutoff = _iso(current - timedelta(days=payload_days))
-    trace_cutoff = _iso(current - timedelta(days=trace_days))
-    rows = connection.execute(
-        "SELECT trace_id,ended_at,summary FROM trace_index WHERE ended_at IS NOT NULL AND ended_at<=?",
-        (payload_cutoff,),
-    ).fetchall()
-    payload = tuple(sorted(str(row[0]) for row in rows))
-    old = connection.execute(
-        "SELECT trace_id FROM trace_index WHERE ended_at IS NOT NULL AND ended_at<=?",
-        (trace_cutoff,),
-    ).fetchall()
-    summary = tuple(sorted(str(row[0]) for row in old))
-    return RetentionPlan(payload, summary, summary)
 
 
 def make_proposal(
@@ -666,6 +700,7 @@ def persist_proposal(
     candidate_revision_id: str | None = None,
     skill_id: str | None = None,
     gate_snapshot: Mapping[str, Any] | None = None,
+    evaluation_lease: EvaluationLease | None = None,
 ) -> Phase6Proposal:
     """Persist a generated Proposal without changing any current Skill pointer."""
 
@@ -686,6 +721,7 @@ def persist_proposal(
         case_ids=proposal.case_ids,
         eval_run_ids=proposal.eval_run_ids,
         gate_snapshot=gate_snapshot,
+        evaluation_lease=evaluation_lease,
         status="eligible_for_confirmation",
     )
     return proposal
@@ -700,6 +736,8 @@ def rollback_skill_revision(
     config: Any,
     actor: str,
     confirm: bool = False,
+    workspace: str | Path | None = None,
+    proposal_id: str | None = None,
 ) -> bool:
     """Atomically restore an existing revision after explicit confirmation."""
 
@@ -708,6 +746,14 @@ def rollback_skill_revision(
         raise ValueError("rollback actor is required")
     if not confirm:
         return False
+    if workspace is not None:
+        from nanobot.memory.skill_adoption import rollback_governed_proposal
+
+        return rollback_governed_proposal(
+            connection, workspace, proposal_id=proposal_id, skill_id=skill_id,
+            baseline_revision_id=target_revision_id,
+            expected_current_revision_id=expected_current_revision_id, actor=actor,
+        )
     row = connection.execute(
         "SELECT skill_id,skill_version FROM skill_revisions WHERE revision_id=?",
         (target_revision_id,),
@@ -729,10 +775,11 @@ def rollback_skill_revision(
 __all__ = [
     "EvidenceRecord", "Phase6CycleResult", "Phase6Disabled", "Phase6DisabledError", "Phase6Proposal",
     "Phase6RuntimeConfig", "Phase6State",
-    "RetentionPlan", "TraceCandidate", "append_evidence", "build_versioned_evalpack",
-    "load_failed_trace_records", "load_state", "load_trace_records", "make_proposal", "persist_proposal",
-    "next_evalpack_version", "phase6_active", "plan_retention",
-    "record_index_failure", "regression_case_from_trace", "require_active", "resume_after_review",
+    "TraceCandidate", "append_evidence", "build_versioned_evalpack",
+    "load_state", "make_proposal", "persist_proposal",
+    "next_evalpack_version", "phase6_active",
+    "require_active", "resume_after_review",
     "rollback_skill_revision", "run_cycle", "save_state", "select_low_risk_tasks", "update_health",
     "collect_capacity_metrics", "pause_and_rollback",
+    "collect_governance_metrics", "govern_workspace",
 ]

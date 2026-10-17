@@ -538,3 +538,20 @@ async def test_web_fetch_does_not_request_private_redirect_target(monkeypatch):
     assert "error" in data
     assert "redirect blocked" in data["error"].lower()
     assert requested == ["https://attacker.example/start"]
+
+
+async def test_invalid_url_is_structured_error_without_dispatch_or_json_hint(monkeypatch):
+    from nanobot.agent.tools.base import ToolResult
+    from nanobot.agent.tools.registry import ToolRegistry, is_tool_error_result
+
+    def unexpected_client(*args, **kwargs):
+        raise AssertionError("invalid URL must not dispatch HTTP")
+    monkeypatch.setattr(web_module.httpx,"AsyncClient",unexpected_client)
+    tool=WebFetchTool()
+    registry=ToolRegistry()
+    registry.register(tool)
+    result=await registry.execute("web_fetch",{"url":"https://["})
+    assert isinstance(result,ToolResult) and is_tool_error_result("web_fetch",result)
+    assert result.error_code=="invalid_url" and result.error_source=="validation"
+    assert not result.append_retry_hint
+    assert json.loads(result)=={"error":"URL validation failed: Invalid IPv6 URL","url":"https://["}

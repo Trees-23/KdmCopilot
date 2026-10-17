@@ -224,7 +224,7 @@ def build_candidate_specs(
                     """SELECT candidate_id,skill_id,skill_name,baseline_revision_id,candidate_revision_id,
                               baseline_hash,candidate_hash,candidate_content
                        FROM evolution_candidate_staging
-                      WHERE task_id=? AND status IN ('evaluating','candidate_staged','proposal_eligible')
+                      WHERE task_id=? AND status IN ('evaluating','queued','proposal_eligible')
                       ORDER BY created_at DESC LIMIT 1""", (task_id,)
                 ).fetchone()
         if staged_row is not None:

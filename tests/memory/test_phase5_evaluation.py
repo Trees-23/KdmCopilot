@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-import json
-
 import pytest
 
 from nanobot.memory.derivation import (
     build_eval_pack_draft,
     classify_outcome,
-    derive_case_candidate,
     seal_eval_pack,
 )
 from nanobot.memory.evaluation import (
@@ -15,10 +12,8 @@ from nanobot.memory.evaluation import (
     create_eval_run,
     evaluate_gate,
     finish_eval_run,
-    mark_stale_if_identity_changed,
     record_case_result,
     replay_cases,
-    replay_consistency,
 )
 from nanobot.memory.maintenance import open_maintenance_db
 
@@ -47,25 +42,6 @@ def test_outcome_classification_is_conservative():
     assert classify_outcome("timeout") == "partial"
     assert classify_outcome("denied") == "blocked"
     assert classify_outcome("future-status") == "unknown"
-
-
-def test_case_candidate_is_staging_and_does_not_touch_skill_current(tmp_path):
-    workspace, connection = _db(tmp_path)
-    _skill(connection)
-    candidate = derive_case_candidate(
-        connection,
-        trace_id="trace-1",
-        intent="tool recovery",
-        task_signature={"tool": "read_file", "failure": "missing"},
-        outcome={"status": "succeeded", "summary": "recovered"},
-        failure_patterns=["missing_file"],
-    )
-    assert candidate.status == "candidate"
-    row = connection.execute("SELECT status,trace_ids_json FROM cases WHERE case_id=?", (candidate.case_id,)).fetchone()
-    assert row[0] == "candidate"
-    assert json.loads(row[1]) == ["trace-1"]
-    assert connection.execute("SELECT current_revision_id FROM skills WHERE skill_id='skill:test'").fetchone()[0] is None
-    connection.close()
 
 
 def test_eval_pack_split_boundaries_and_independent_seal(tmp_path):
@@ -109,9 +85,6 @@ def test_replay_results_gate_and_stale_identity(tmp_path):
     finish_eval_run(connection, run_id)
     gate = evaluate_gate(connection, eval_run_id=run_id)
     assert gate.eligible is True
-    assert mark_stale_if_identity_changed(connection, eval_run_id=run_id, tool_schema_digest="changed",
-                                          fixture_hash="fixture", dataset_hash=draft.dataset_hash)
-    assert connection.execute("SELECT gate_result FROM eval_runs WHERE eval_run_id=?", (run_id,)).fetchone()[0] == "stale_baseline"
     connection.close()
 
 
@@ -128,10 +101,3 @@ def test_replay_cases_removes_fixture_after_failure(tmp_path):
     with pytest.raises(RuntimeError):
         replay_cases((type("Case", (), {"case_key": "bad", "prompt": "x"})(),), replay)
     assert seen and not seen[0].exists()
-
-
-def test_limited_replay_consistency_is_explicit():
-    first = {"case": ReplayEvidence("ok", security_violation=False)}
-    second = {"case": ReplayEvidence("ok", security_violation=False)}
-    assert replay_consistency(first, second) == "consistent"
-    assert replay_consistency(first, {"case": ReplayEvidence("different")}) == "inconsistent"

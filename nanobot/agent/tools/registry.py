@@ -224,7 +224,7 @@ class ToolRegistry:
             assert tool is not None  # guarded by prepare_call()
             result = await tool.execute(**params)
             if is_tool_error_result(name, result):
-                return result.with_content(str(result) + hint)
+                return result.with_content(str(result) + (hint if result.append_retry_hint else ""))
             return result
         except Exception as e:
             return ToolResult.error(

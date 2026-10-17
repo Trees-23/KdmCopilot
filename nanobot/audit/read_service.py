@@ -297,7 +297,7 @@ class AuditReadService:
         ):
             if value:
                 clauses.append(
-                    f"EXISTS (SELECT 1 FROM events x WHERE x.trace_id=e.trace_id AND x.{field}=?)"
+                    f"e.trace_id IN (SELECT trace_id FROM events WHERE {field}=?)"
                 )
                 params.append(value)
         if filters.query:
@@ -307,7 +307,7 @@ class AuditReadService:
         for field, value in (("model", filters.model), ("tool_name", filters.tool)):
             if value:
                 clauses.append(
-                    f"EXISTS (SELECT 1 FROM events x WHERE x.trace_id=e.trace_id AND x.{field}=?)"
+                    f"e.trace_id IN (SELECT trace_id FROM events WHERE {field}=?)"
                 )
                 params.append(value)
         cursor_clause = ""

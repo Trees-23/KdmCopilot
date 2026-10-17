@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from nanobot.memory.continuous import Phase6RuntimeConfig
 from nanobot.memory.evolution_orchestrator import CandidateSpec, run_fixture_review_cycle
 from nanobot.memory.lock import acquire_lock
@@ -68,14 +70,17 @@ def test_fixture_cycle_connects_trace_to_eval_gate_and_proposal(tmp_path):
             {"trace_id": "trace-2", "summary": "repeat fixture", "outcome": "success"},
             {"trace_id": "trace-3", "summary": "repeat fixture", "outcome": "success"},
         ],
-        failed_traces=[{"trace_id": "failed-1", "outcome": "failed", "summary": "fixture failure"}],
         candidate_specs=[_spec()],
     )
     assert result.status == "completed"
     assert result.selected_count == 1
     assert len(result.eval_run_ids) == 1
+    policy, manifest = connection.execute("SELECT split_policy_json,source_manifest_json FROM eval_packs").fetchone()
+    assert json.loads(policy)["phase6_version"] == 1
+    assert json.loads(manifest)["actor"] == "phase6-orchestrator"
     assert len(result.proposal_ids) == 1
-    assert result.staged_case_ids == ("case:failed-1",)
+    assert connection.execute("SELECT count(*) FROM cases").fetchone()[0] == 0
+    assert connection.execute("SELECT count(*) FROM wiki_pages").fetchone()[0] == 0
     assert connection.execute("SELECT status FROM eval_runs").fetchone()[0] == "completed"
     assert connection.execute("SELECT gate_result FROM eval_runs").fetchone()[0] == "eligible_for_confirmation"
     assert connection.execute("SELECT status FROM skill_proposals").fetchone()[0] == "eligible_for_confirmation"

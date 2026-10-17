@@ -429,11 +429,6 @@ class AuditConfig(Base):
 class Phase6EvolutionConfig(Base):
     """Independent gates for the Proposal notification and release lifecycle."""
 
-    shadow_mode: bool = Field(
-        default=False,
-        validation_alias=AliasChoices("shadowMode", "shadow_mode"),
-        serialization_alias="shadowMode",
-    )
     notifications_enabled: bool = Field(
         default=False,
         validation_alias=AliasChoices("notificationsEnabled", "notifications_enabled"),
@@ -544,21 +539,14 @@ class Phase6EvolutionConfig(Base):
         ),
         serialization_alias="abEvaluationMaxModelCallsPerDay",
     )
-    recovery_review_enabled: bool = Field(
-        default=True,
-        validation_alias=AliasChoices("recoveryReviewEnabled", "recovery_review_enabled"),
-        serialization_alias="recoveryReviewEnabled",
-    )
-    recovery_notifications_enabled: bool = Field(
-        default=False,
-        validation_alias=AliasChoices("recoveryNotificationsEnabled", "recovery_notifications_enabled"),
-        serialization_alias="recoveryNotificationsEnabled",
-    )
-    recovery_skill_candidate_enabled: bool = Field(
-        default=False,
-        validation_alias=AliasChoices("recoverySkillCandidateEnabled", "recovery_skill_candidate_enabled"),
-        serialization_alias="recoverySkillCandidateEnabled",
-    )
+    asset_layer_enabled: bool = False
+    asset_retrieval_enabled: bool = False
+    asset_injection_token_budget: int = Field(default=600, ge=1, le=600)
+    lesson_min_cases: int = Field(default=3, ge=1)
+    lesson_abstraction_enabled: bool = False
+    evaluation_lease_seconds: int = Field(default=900, ge=1)
+    evaluation_timeout_seconds: int = Field(default=900, ge=1)
+    evaluation_max_attempts: int = Field(default=3, ge=1, le=3)
     stepwise_evidence_enabled: bool = Field(
         default=False,
         validation_alias=AliasChoices("stepwiseEvidenceEnabled", "stepwise_evidence_enabled"),
@@ -579,11 +567,13 @@ class Phase6EvolutionConfig(Base):
         validation_alias=AliasChoices("stepwiseCandidateEnabled", "stepwise_candidate_enabled"),
         serialization_alias="stepwiseCandidateEnabled",
     )
-    case_candidate_promotion: bool = Field(
-        default=False,
-        validation_alias=AliasChoices("caseCandidatePromotion", "case_candidate_promotion"),
-        serialization_alias="caseCandidatePromotion",
-    )
+    @model_validator(mode="after")
+    def validate_asset_dependencies(self):
+        if self.asset_retrieval_enabled and not self.asset_layer_enabled:
+            raise ValueError("asset retrieval requires asset layer")
+        if self.lesson_abstraction_enabled and not self.asset_layer_enabled:
+            raise ValueError("lesson abstraction requires asset layer")
+        return self
 
 
 class Phase6Config(Base):
@@ -603,16 +593,7 @@ class Phase6Config(Base):
     dead_letter_pause_threshold: int = Field(default=3, ge=1)
     notification_failure_rate_pause_threshold: float = Field(default=1.0, ge=0, le=1)
     unauthorized_pause_threshold: int = Field(default=1, ge=1)
-    cross_group_leak_pause_threshold: int = Field(default=1, ge=1)
     max_memory_growth_ratio: float = Field(default=0.5, ge=0)
-    retention_days: int = Field(default=18, ge=1)
-    payload_retention_days: int = Field(default=7, ge=1)
-
-    @model_validator(mode="after")
-    def _validate_retention_window(self) -> "Phase6Config":
-        if self.payload_retention_days > self.retention_days:
-            raise ValueError("payload_retention_days must not exceed retention_days")
-        return self
 
 
 class Config(BaseSettings):

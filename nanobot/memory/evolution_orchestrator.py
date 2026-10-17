@@ -17,6 +17,7 @@ from nanobot.memory.continuous import (
     EvidenceRecord,
     Phase6RuntimeConfig,
     append_evidence,
+    build_versioned_evalpack,
     load_state,
     make_proposal,
     persist_proposal,
@@ -24,8 +25,6 @@ from nanobot.memory.continuous import (
 )
 from nanobot.memory.derivation import (
     EvalCase,
-    build_eval_pack_draft,
-    derive_case_candidate,
     seal_eval_pack,
 )
 from nanobot.memory.evaluation import (
@@ -37,6 +36,11 @@ from nanobot.memory.evaluation import (
     replay_cases,
 )
 from nanobot.memory.lock import acquire_lock, release_lock
+from nanobot.memory.queue_state import (
+    EvaluationLease,
+    StaleEvaluationLeaseError,
+    evaluation_lease_is_current,
+)
 
 ReplayFixture = Callable[[EvalCase, Path], ReplayEvidence]
 
@@ -71,7 +75,6 @@ class CandidateSpec:
 class EvolutionCycleResult:
     status: str
     selected_count: int = 0
-    staged_case_ids: tuple[str, ...] = ()
     eval_run_ids: tuple[str, ...] = ()
     proposal_ids: tuple[str, ...] = ()
     rejected_task_keys: tuple[str, ...] = ()
@@ -93,11 +96,11 @@ def run_fixture_review_cycle(
     *,
     trace_records: Iterable[Mapping[str, Any]],
     candidate_specs: Sequence[CandidateSpec] = (),
-    failed_traces: Iterable[Mapping[str, Any]] = (),
     reviewer: str = "phase6-eval-reviewer",
     actor: str = "phase6-orchestrator",
     owner: str | None = None,
     overlay_pipeline: Any | None = None,
+    evaluation_leases: Sequence[EvaluationLease] = (),
 ) -> EvolutionCycleResult:
     """Run one bounded review cycle under a workspace lease.
 
@@ -120,22 +123,6 @@ def run_fixture_review_cycle(
             return EvolutionCycleResult("paused", reason=state.pause_reason)
         selected = select_low_risk_tasks(trace_records, config)
         selected_keys = {item.task_key for item in selected}
-        staged_cases: list[str] = []
-        for trace in failed_traces:
-            trace_id = str(trace.get("trace_id") or "").strip()
-            if not trace_id:
-                continue
-            case = derive_case_candidate(
-                connection,
-                trace_id=trace_id,
-                intent=str(trace.get("intent") or "trace_regression"),
-                task_signature={"source": "phase6", "classification": str(trace.get("outcome") or "unknown")},
-                outcome={"status": str(trace.get("outcome") or "unknown"), "summary": str(trace.get("summary") or "")[:500]},
-                failure_patterns=tuple(str(value) for value in (trace.get("failure_patterns") or ())) or ("failure",),
-                confidence=float(trace.get("confidence") or 0.7),
-            )
-            staged_cases.append(case.case_id)
-
         eval_run_ids: list[str] = []
         proposal_ids: list[str] = []
         overlay_handoffs: list[str] = []
@@ -145,6 +132,11 @@ def run_fixture_review_cycle(
         deduped: list[str] = []
         for spec in candidate_specs:
             if spec.task_key not in selected_keys:
+                continue
+            evaluation_lease = next((item for item in evaluation_leases
+                                     if item.candidate_id == spec.origin_candidate_id), None)
+            if evaluation_lease is not None and not evaluation_lease_is_current(connection, evaluation_lease):
+                rejected.append(spec.task_key)
                 continue
             # A daily Cron can observe the same repeated Trace group again.
             # Reuse the existing Proposal instead of attempting a duplicate
@@ -159,13 +151,13 @@ def run_fixture_review_cycle(
             if existing is not None:
                 deduped.append(spec.task_key)
                 continue
-            eval_pack = build_eval_pack_draft(
+            eval_pack = build_versioned_evalpack(
                 connection,
                 skill_id=spec.skill_id,
                 skill_revision_id=spec.candidate_revision_id,
                 cases=spec.cases,
                 fixture_hash=spec.fixture_hash,
-                split_policy={"seed": "stable-digest", "phase6": "fixture"},
+                config=config,
                 actor=actor,
             )
             if not seal_eval_pack(connection, eval_pack.eval_pack_id, reviewer=reviewer):
@@ -199,7 +191,7 @@ def run_fixture_review_cycle(
             proposal = make_proposal(
                 source_kind=spec.source_kind,
                 trace_ids=tuple(item.trace_ids for item in selected if item.task_key == spec.task_key)[0],
-                case_ids=spec.case_ids or tuple(staged_cases) or (f"case:{spec.task_key}",),
+                case_ids=spec.case_ids or (f"case:{spec.task_key}",),
                 eval_run_ids=(run_id,),
                 config=config,
             )
@@ -216,6 +208,7 @@ def run_fixture_review_cycle(
                     candidate_revision_id=spec.candidate_revision_id,
                     skill_id=spec.skill_id,
                     gate_snapshot={"holdout_passed": gate.holdout_passed, "security_clean": gate.security_clean},
+                    evaluation_lease=evaluation_lease,
                 )
                 proposal_ids.append(proposal.proposal_id)
                 if (
@@ -261,6 +254,8 @@ def run_fixture_review_cycle(
                 if proposal.target == "git_pr_proposal" and overlay_pipeline is not None:
                     handoff = overlay_pipeline.handoff(connection, proposal.proposal_id, config)
                     overlay_handoffs.append(handoff.status)
+            except StaleEvaluationLeaseError:
+                rejected.append(spec.task_key)
             except Exception as exc:
                 if "UNIQUE constraint failed" in str(exc):
                     deduped.append(spec.task_key)
@@ -270,13 +265,13 @@ def run_fixture_review_cycle(
             root,
             EvidenceRecord(
                 "fixture_review_cycle", "", trace_ids=tuple(item.trace_ids[0] for item in selected if item.trace_ids),
-                case_ids=tuple(staged_cases), eval_run_ids=tuple(eval_run_ids),
+                eval_run_ids=tuple(eval_run_ids),
                 status="ok", metrics={"selected": len(selected), "proposals": len(proposal_ids), "rejected": len(rejected)},
             ),
             config,
         )
         return EvolutionCycleResult(
-            "completed", len(selected), tuple(staged_cases), tuple(eval_run_ids), tuple(proposal_ids),
+            "completed", len(selected), tuple(eval_run_ids), tuple(proposal_ids),
             tuple(rejected), tuple(deduped), tuple(overlay_handoffs),
             tuple(adopted_proposals), tuple(adopted_candidates),
         )

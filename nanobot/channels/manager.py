@@ -652,13 +652,9 @@ class ChannelManager:
         """Drain queued Proposal notifications without involving an Agent turn."""
         while self._started:
             try:
-                if (
-                    self.proposal_notifier._enabled()
-                    or self.proposal_notifier._recovery_enabled()
-                ):
+                if self.proposal_notifier._enabled():
                     await self.proposal_notifier.deliver_once(worker_id="gateway-proposal-notifier")
                     await self.proposal_notifier.deliver_alert_once(worker_id="gateway-phase6-alerts")
-                    await self.proposal_notifier.deliver_failure_issue_once()
                     await asyncio.sleep(1)
                 else:
                     # Keep the disabled path cheap and side-effect free.

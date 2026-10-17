@@ -1811,6 +1811,9 @@ def test_heartbeat_empty_response_still_retains_recent_messages(
         def register_system_job(self, _job: CronJob) -> None:
             raise _StopGatewayError("stop")
 
+        def unregister_system_job(self, _job_id: str) -> bool:
+            return False
+
     class _FakeAgentLoop:
         @classmethod
         def from_config(cls, config, bus=None, **extra):
@@ -2668,6 +2671,29 @@ def test_gateway_bound_cron_runs_as_session_turn(
     assert msg.metadata["message_id"] == "om_root123"
     assert msg.metadata["thread_id"] == "om_root123"
 
+    from nanobot.memory.asset_lesson import ASSET_LESSON_JOB_ID
+    from nanobot.memory.maintenance import open_maintenance_db
+
+    config.workspace_path.mkdir(parents=True, exist_ok=True)
+    connection = open_maintenance_db(config.workspace_path)
+    config.phase6.evolution.asset_layer_enabled = True
+    config.phase6.evolution.lesson_abstraction_enabled = True
+    lesson_job = CronJob(id=ASSET_LESSON_JOB_ID, name=ASSET_LESSON_JOB_ID,
+                         payload=CronPayload(kind="system_event"))
+    assert asyncio.run(cron.on_job(lesson_job)) == "queued"
+    assert tuple(connection.execute("SELECT kind,status FROM evolution_work_items").fetchone()) == ("lesson", "queued")
+    assert connection.execute("SELECT count(*) FROM memory_assets WHERE asset_level='L2'").fetchone()[0] == 0
+    from nanobot.memory.phase6_trigger import PHASE6_REVIEW_JOB_ID
+
+    review_job = CronJob(id=PHASE6_REVIEW_JOB_ID, name=PHASE6_REVIEW_JOB_ID,
+                         payload=CronPayload(kind="system_event"))
+    assert asyncio.run(cron.on_job(review_job)) == "queued"
+    assert {tuple(row) for row in connection.execute(
+        "SELECT kind,status FROM evolution_work_items ORDER BY kind"
+    )} == {("lesson", "queued"), ("review", "queued")}
+    assert connection.execute("SELECT count(*) FROM memory_assets WHERE asset_level='L2'").fetchone()[0] == 0
+    connection.close()
+
 
 def test_gateway_local_trigger_queue_submits_agent_turns(
     monkeypatch,
@@ -2723,6 +2749,9 @@ def test_gateway_local_trigger_queue_submits_agent_turns(
 
         def register_system_job(self, _job) -> None:
             return None
+
+        def unregister_system_job(self, _job_id: str) -> bool:
+            return False
 
     class _FakeAgentLoop:
         @classmethod
@@ -3012,6 +3041,9 @@ def test_gateway_health_endpoint_binds_and_serves_expected_responses(
         def register_system_job(self, _job) -> None:
             return None
 
+        def unregister_system_job(self, _job_id: str) -> bool:
+            return False
+
     class _FakeServer:
         async def __aenter__(self):
             return self
@@ -3214,6 +3246,9 @@ def test_gateway_shutdown_lets_agent_task_own_mcp_cleanup(
         def register_system_job(self, _job) -> None:
             return None
 
+        def unregister_system_job(self, _job_id: str) -> bool:
+            return False
+
     class _FakeServer:
         async def __aenter__(self):
             return self
@@ -3316,6 +3351,9 @@ def test_gateway_shutdown_event_exits_forever_runtime_tasks(
 
         def register_system_job(self, _job) -> None:
             return None
+
+        def unregister_system_job(self, _job_id: str) -> bool:
+            return False
 
     class _FakeServer:
         async def __aenter__(self):
