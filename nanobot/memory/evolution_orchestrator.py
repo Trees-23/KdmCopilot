@@ -17,6 +17,7 @@ from nanobot.memory.continuous import (
     EvidenceRecord,
     Phase6RuntimeConfig,
     append_evidence,
+    build_versioned_evalpack,
     load_state,
     make_proposal,
     persist_proposal,
@@ -24,7 +25,6 @@ from nanobot.memory.continuous import (
 )
 from nanobot.memory.derivation import (
     EvalCase,
-    build_eval_pack_draft,
     seal_eval_pack,
 )
 from nanobot.memory.evaluation import (
@@ -151,13 +151,13 @@ def run_fixture_review_cycle(
             if existing is not None:
                 deduped.append(spec.task_key)
                 continue
-            eval_pack = build_eval_pack_draft(
+            eval_pack = build_versioned_evalpack(
                 connection,
                 skill_id=spec.skill_id,
                 skill_revision_id=spec.candidate_revision_id,
                 cases=spec.cases,
                 fixture_hash=spec.fixture_hash,
-                split_policy={"seed": "stable-digest", "phase6": "fixture"},
+                config=config,
                 actor=actor,
             )
             if not seal_eval_pack(connection, eval_pack.eval_pack_id, reviewer=reviewer):

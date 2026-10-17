@@ -121,6 +121,8 @@ def test_health_pauses_and_requires_independent_resume(tmp_path) -> None:
     assert state.pause_reason == "regression_threshold"
     with pytest.raises(ValueError):
         resume_after_review(tmp_path, _cfg(), actor="", reason="review")
+    with pytest.raises(ValueError):
+        resume_after_review(tmp_path, _cfg(), actor="reviewer", reason=" ")
     resumed = resume_after_review(tmp_path, _cfg(), actor="reviewer", reason="checked evidence")
     assert resumed.paused is False
     assert load_state(tmp_path).generation == 2
@@ -175,19 +177,22 @@ def test_governance_counts_only_policy_block_events_from_the_read_only_audit_ind
 
 
 def test_governance_auto_rollback_is_cas_scoped_to_adopted_workspace_skills(tmp_path):
-    workspace, connection = _db(tmp_path)
-    _skill(connection)
-    connection.execute(
-        "INSERT INTO skill_proposals(proposal_id,workspace,skill_id,skill_name,source_kind,target,"
-        "baseline_revision_id,candidate_revision_id,baseline_hash,candidate_hash,gate_result,status,created_at,updated_at) "
-        "VALUES('adopted',?,'s','demo','workspace','workspace_adopt_proposal','r1','r2','sha256:r1','sha256:r2',"
-        "'passed','adopted','now','now')", (str(workspace.resolve()),),
-    )
-    connection.commit()
+    from nanobot.memory.skill_adoption import adopt_workspace_proposal
+    from tests.memory.test_skill_adoption import _config, _setup
+
+    # Use an actually adopted file, not a database-only pointer fixture.
+    workspace, connection, _ = _setup(tmp_path)
+    assert adopt_workspace_proposal(
+        connection, workspace, "prop-adopt-test", actor="admin", config=_config(),
+    ).status == "adopted"
     state, rollbacks = govern_workspace(connection, workspace, _cfg(), {"regression_failures": 3})
-    assert state.paused and rollbacks == (("adopted", True),)
-    assert connection.execute("SELECT current_revision_id FROM skills WHERE skill_id='s'").fetchone()[0] == 'r1'
-    assert any('rollback' in line for line in (workspace / '.nanobot/phase6/evidence.jsonl').read_text().splitlines())
+    assert state.paused and rollbacks == (("prop-adopt-test", True),)
+    assert (workspace / "skills/demo/SKILL.md").read_text() == "# Demo\n\nold\n"
+    assert connection.execute("SELECT current_revision_id FROM skills").fetchone()[0] == "base-1"
+    assert connection.execute("SELECT status FROM skill_proposals").fetchone()[0] == "rolled_back"
+    assert connection.execute("SELECT action FROM proposal_actions ORDER BY rowid DESC").fetchone()[0] == "governance_rollback"
+    assert govern_workspace(connection, workspace, _cfg(), {"regression_failures": 3})[1] == ()
+    connection.close()
 
 
 def test_review_cycle_does_not_select_candidates_after_workspace_pause(tmp_path):
@@ -322,4 +327,91 @@ def test_capacity_alert_and_regression_pause_roll_back_current(tmp_path) -> None
     )
     assert state.paused is True and rolled_back is True
     assert connection.execute("SELECT current_revision_id FROM skills WHERE skill_id='s'").fetchone()[0] == "r1"
+    connection.close()
+
+
+@pytest.mark.parametrize("change", ["manual_edit", "new_pointer", "outside_path", "write_failure"])
+def test_governance_rollback_preserves_changes_and_recovers_failed_file_write(tmp_path, monkeypatch, change):
+    from nanobot.memory import skill_adoption
+    from tests.memory.test_skill_adoption import _config, _setup
+
+    workspace, connection, _ = _setup(tmp_path)
+    assert skill_adoption.adopt_workspace_proposal(
+        connection, workspace, "prop-adopt-test", actor="admin", config=_config(),
+    ).status == "adopted"
+    path = workspace / "skills/demo/SKILL.md"
+    expected = path.read_text()
+    pointer = "candidate-1"
+    if change == "manual_edit":
+        expected = "user changed this file"
+        path.write_text(expected)
+    elif change == "new_pointer":
+        pointer = "base-1"
+        connection.execute("UPDATE skills SET current_revision_id=?", (pointer,))
+        connection.commit()
+    elif change == "outside_path":
+        outside = tmp_path / "protected.md"
+        outside.write_text(expected)
+        path.unlink()
+        path.symlink_to(outside)
+    elif change == "write_failure":
+        original = skill_adoption._atomic_write
+
+        def fail_after_replace(*args):
+            original(*args)
+            raise OSError("disk failure after replace")
+
+        monkeypatch.setattr(skill_adoption, "_atomic_write", fail_after_replace)
+    state, rollbacks = govern_workspace(connection, workspace, _cfg(), {"regression_failures": 3})
+    assert state.paused and not any(applied for _, applied in rollbacks)
+    assert path.read_text() == expected
+    assert connection.execute("SELECT current_revision_id FROM skills").fetchone()[0] == pointer
+    assert connection.execute("SELECT status FROM skill_proposals").fetchone()[0] == "adopted"
+    assert not connection.execute("SELECT 1 FROM proposal_actions WHERE action='governance_rollback'").fetchone()
+    connection.close()
+
+
+def test_capacity_limit_pauses_even_without_asset_growth(tmp_path):
+    state = update_health(tmp_path, {"capacity_exceeded": True, "memory_growth_ratio": 0}, _cfg())
+    assert state.paused and state.pause_reason == "memory_capacity"
+
+
+def test_cross_process_health_updates_preserve_every_generation(tmp_path):
+    import subprocess
+    import sys
+
+    code = (
+        "import sys; from nanobot.memory.continuous import update_health, Phase6RuntimeConfig; "
+        "[update_health(sys.argv[1], {}, Phase6RuntimeConfig(enabled=True)) for _ in range(6)]"
+    )
+    processes = [subprocess.Popen([sys.executable, "-c", code, str(tmp_path)]) for _ in range(3)]
+    assert all(process.wait(timeout=30) == 0 for process in processes)
+    assert load_state(tmp_path).generation == 18
+
+
+
+def test_governance_permission_and_action_counts_exclude_other_workspaces(tmp_path):
+    from tests.memory.test_skill_adoption import _setup
+
+    workspace, connection, _ = _setup(tmp_path)
+    stamp = datetime.now(UTC).isoformat(timespec="seconds")
+    for scope in (str(workspace.resolve()), "foreign-workspace"):
+        connection.execute(
+            "INSERT INTO evolution_task_evidence(task_id,workspace,qualification,redaction_status,created_at,updated_at) "
+            "VALUES(?,?,'manual_review_required','safe',?,?)", (scope, scope, stamp, stamp),
+        )
+        connection.execute(
+            "INSERT INTO evolution_step_evidence(step_id,task_id,workspace,sequence_no,tool_name,status,"
+            "failure_family,risk_level,candidate_use,redaction_status,created_at) "
+            "VALUES(?,?,?,0,'read_file','error','permission_denied','R0','archive_only','safe',?)",
+            (scope, scope, scope, stamp),
+        )
+        connection.execute(
+            "INSERT INTO proposal_actions(action_id,proposal_id,workspace,action,actor_openid,idempotency_key,"
+            "request_digest,result_status,created_at) VALUES(?,'prop-adopt-test',?,'approve','tester',?,"
+            "'safe','forbidden',?)", (scope, scope, scope, stamp),
+        )
+    connection.commit()
+    metrics = collect_governance_metrics(connection, workspace=str(workspace.resolve()), baseline_assets=None)
+    assert metrics["permission_denials"] == metrics["unauthorized_attempts"] == 1
     connection.close()

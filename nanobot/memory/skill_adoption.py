@@ -310,6 +310,90 @@ def adopt_workspace_proposal(
     return AdoptionResult("adopted", proposal_id, candidate_revision, str(path))
 
 
+def rollback_governed_proposal(
+    connection: sqlite3.Connection,
+    workspace: str | Path,
+    *,
+    proposal_id: str | None,
+    skill_id: str,
+    baseline_revision_id: str,
+    expected_current_revision_id: str | None,
+    actor: str,
+) -> bool:
+    """Restore an adopted file and its metadata under the same SQLite CAS lock.
+
+    The caller has already persisted a health pause. Manual edits, changed
+    pointers and non-workspace Skills are never overwritten by this guard.
+    """
+    root = str(Path(workspace).expanduser().resolve())
+    path = None
+    written = False
+    old_bytes = old_mode = None
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        row = connection.execute(
+            "SELECT p.skill_name,p.baseline_hash,p.candidate_hash,p.version_epoch,"
+            "r.content,r.content_hash,r.skill_version FROM skill_proposals p "
+            "JOIN skills s ON s.skill_id=p.skill_id "
+            "JOIN skill_revisions r ON r.revision_id=p.baseline_revision_id AND r.skill_id=s.skill_id "
+            "WHERE p.proposal_id=? AND p.workspace=? AND p.skill_id=? "
+            "AND p.source_kind='workspace' AND s.source_kind='workspace' "
+            "AND p.target='workspace_adopt_proposal' AND p.status='adopted' "
+            "AND p.baseline_revision_id=? AND p.candidate_revision_id=? "
+            "AND s.current_revision_id=p.candidate_revision_id",
+            (proposal_id, root, skill_id, baseline_revision_id, expected_current_revision_id),
+        ).fetchone()
+        if row is None:
+            connection.rollback()
+            return False
+        name, baseline_hash, candidate_hash, epoch, content, content_hash, version = row
+        if content_hash != baseline_hash or _digest(content) != baseline_hash:
+            connection.rollback()
+            return False
+        path = _skill_path(workspace, name)
+        old_bytes = path.read_bytes()
+        old_mode = path.stat().st_mode & 0o777
+        if "sha256:" + hashlib.sha256(old_bytes).hexdigest() != candidate_hash:
+            connection.rollback()
+            return False
+        timestamp = _iso()
+        connection.execute(
+            "UPDATE skills SET current_revision_id=?,current_version=?,status='active',updated_at=? "
+            "WHERE skill_id=? AND current_revision_id=?",
+            (baseline_revision_id, version, timestamp, skill_id, expected_current_revision_id),
+        )
+        if connection.execute("SELECT changes()").fetchone()[0] != 1:
+            raise RuntimeError("governance rollback pointer CAS failed")
+        connection.execute("UPDATE skill_revisions SET status='active' WHERE revision_id=?", (baseline_revision_id,))
+        connection.execute("UPDATE skill_revisions SET status='rolled_back' WHERE revision_id=?", (expected_current_revision_id,))
+        connection.execute(
+            "UPDATE skill_proposals SET status='rolled_back',version_epoch=version_epoch+1,updated_at=? "
+            "WHERE proposal_id=? AND status='adopted' AND version_epoch=?", (timestamp, proposal_id, epoch),
+        )
+        if connection.execute("SELECT changes()").fetchone()[0] != 1:
+            raise RuntimeError("governance rollback proposal CAS failed")
+        connection.execute(
+            "UPDATE evolution_candidate_staging SET status='closed',reason=?,updated_at=?,"
+            "lease_owner=NULL,lease_expires_at=NULL WHERE workspace=? AND candidate_revision_id=?",
+            ("health guard restored baseline", timestamp, root, expected_current_revision_id),
+        )
+        _record_action(
+            connection, proposal_id=proposal_id, workspace=root, action="governance_rollback",
+            actor=actor, idempotency_key=f"governance-rollback:{proposal_id}:{epoch}",
+            result_status="rolled_back", result={"revision_id": baseline_revision_id, "path": str(path)},
+        )
+        # Mark before replacement so failures after os.replace also restore it.
+        written = True
+        _atomic_write(path, content)
+        connection.commit()
+        return True
+    except (OSError, ValueError, RuntimeError, sqlite3.Error):
+        connection.rollback()
+        if written:
+            _restore(path, old_bytes, old_mode)
+        return False
+
+
 def rollback_workspace_proposal(
     connection: sqlite3.Connection,
     workspace: str | Path,

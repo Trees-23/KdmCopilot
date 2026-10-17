@@ -14,10 +14,13 @@ import sqlite3
 from contextlib import closing
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
+from functools import wraps
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any, Iterable, Mapping, Sequence
 from uuid import uuid4
+
+from filelock import FileLock
 
 from nanobot.memory.derivation import classify_outcome
 from nanobot.memory.queue_state import EvaluationLease
@@ -316,6 +319,7 @@ def build_versioned_evalpack(
     cases: Iterable[Mapping[str, Any]],
     fixture_hash: str,
     config: Any,
+    actor: str = "phase6",
 ):
     """Build a new EvalPack version from changed regression cases."""
 
@@ -329,8 +333,8 @@ def build_versioned_evalpack(
         skill_revision_id=skill_revision_id,
         cases=cases,
         fixture_hash=fixture_hash,
-        split_policy={"seed": "stable-digest", "phase6_version": version},
-        actor="phase6",
+        split_policy={"seed": "stable-digest", "phase6": "fixture", "phase6_version": version},
+        actor=actor,
     )
 
 
@@ -394,6 +398,15 @@ def save_state(workspace: str | Path, state: Phase6State) -> None:
     temp.replace(target)
 
 
+def _locked_state_update(function):
+    @wraps(function)
+    def locked(workspace, *args, **kwargs):
+        with FileLock(str(_phase6_dir(workspace) / "state.lock")):
+            return function(workspace, *args, **kwargs)
+    return locked
+
+
+@_locked_state_update
 def update_health(
     workspace: str | Path,
     metrics: Mapping[str, Any],
@@ -410,7 +423,7 @@ def update_health(
     if int(metrics.get("permission_denials", 0)) > 0:
         reasons.append("permission_denial")
     growth = float(metrics.get("memory_growth_ratio", 0.0))
-    if growth > float(_config_value(config, "max_memory_growth_ratio", 0.5)):
+    if metrics.get("capacity_exceeded") or growth > float(_config_value(config, "max_memory_growth_ratio", 0.5)):
         reasons.append("memory_capacity")
     if int(metrics.get("dead_letter_count", 0)) >= int(
         _config_value(config, "dead_letter_pause_threshold", 3)
@@ -496,7 +509,7 @@ def collect_governance_metrics(
     ).fetchone()[0])
     permission = int(connection.execute(
         "SELECT count(*) FROM evolution_step_evidence WHERE lower(coalesce(failure_family,'')) "
-        "IN ('permission_denied','permission-denied') AND created_at>=?", (since,),
+        "IN ('permission_denied','permission-denied') AND workspace=? AND created_at>=?", (workspace, since),
     ).fetchone()[0])
     dead_letters = sum(int(connection.execute(
         f"SELECT count(*) FROM {table} WHERE workspace=? AND status='dead_letter'",
@@ -514,7 +527,7 @@ def collect_governance_metrics(
     failed = sum(int(row[1] or 0) for row in (delivery_totals, alert_totals))
     unauthorized = int(connection.execute(
         "SELECT count(*) FROM proposal_actions WHERE lower(result_status) "
-        "IN ('unauthorized','forbidden','scope_denied') AND created_at>=?", (since,),
+        "IN ('unauthorized','forbidden','scope_denied') AND workspace=? AND created_at>=?", (workspace, since),
     ).fetchone()[0])
     # The independent audit index stores event metadata only; do not open payloads.
     if audit_root is not None:
@@ -569,6 +582,7 @@ def govern_workspace(
             connection, workspace, metrics, config,
             skill_id=str(skill_id), baseline_revision_id=str(baseline),
             expected_current_revision_id=str(candidate), actor="phase6-regression-guard",
+            proposal_id=str(proposal_id),
         )
         results.append((str(proposal_id), rolled_back))
     return state, tuple(results)
@@ -584,6 +598,7 @@ def pause_and_rollback(
     baseline_revision_id: str,
     expected_current_revision_id: str | None,
     actor: str = "phase6-regression-guard",
+    proposal_id: str | None = None,
 ) -> tuple[Phase6State, bool]:
     """Pause candidate processing and restore a known baseline with CAS."""
 
@@ -598,6 +613,8 @@ def pause_and_rollback(
             config=config,
             actor=actor,
             confirm=True,
+            workspace=workspace if proposal_id is not None else None,
+            proposal_id=proposal_id,
         )
         append_evidence(
             workspace,
@@ -639,6 +656,7 @@ def run_cycle(
     return Phase6CycleResult("completed", selected)
 
 
+@_locked_state_update
 def resume_after_review(workspace: str | Path, config: Any, *, actor: str, reason: str) -> Phase6State:
     require_active(config)
     if not actor.strip() or not reason.strip():
@@ -718,6 +736,8 @@ def rollback_skill_revision(
     config: Any,
     actor: str,
     confirm: bool = False,
+    workspace: str | Path | None = None,
+    proposal_id: str | None = None,
 ) -> bool:
     """Atomically restore an existing revision after explicit confirmation."""
 
@@ -726,6 +746,14 @@ def rollback_skill_revision(
         raise ValueError("rollback actor is required")
     if not confirm:
         return False
+    if workspace is not None:
+        from nanobot.memory.skill_adoption import rollback_governed_proposal
+
+        return rollback_governed_proposal(
+            connection, workspace, proposal_id=proposal_id, skill_id=skill_id,
+            baseline_revision_id=target_revision_id,
+            expected_current_revision_id=expected_current_revision_id, actor=actor,
+        )
     row = connection.execute(
         "SELECT skill_id,skill_version FROM skill_revisions WHERE revision_id=?",
         (target_revision_id,),

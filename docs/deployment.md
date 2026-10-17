@@ -212,9 +212,19 @@ docker compose ps nanobot-gateway nanobot-evolution-worker
 docker compose logs --tail 100 nanobot-evolution-worker
 ```
 
-Stopping or replacing the fixed Gateway deployment also stops/recreates its
-same-image worker through the repository rebuild script. Do not run a separate
-worker image or point it at a different runtime directory.
+For a code update, stop both services first and verify that the fixed Gateway
+ports are closed. Then run `./scripts/rebuild_gateway_for_scenario.sh` to rebuild
+and replace the Gateway. The script only replaces the Gateway; recreate the
+worker from that same image afterwards:
+
+```bash
+docker compose up --no-build --force-recreate -d nanobot-evolution-worker
+```
+
+Verify that both container image IDs match and that
+`runtime/evolution-worker/build.json` reports `ready` with the new Gateway build
+reference. Do not run a separate worker image or point it at a different runtime
+directory.
 
 ## macOS LaunchAgent
 
